@@ -509,6 +509,16 @@
                           </StackPanel>
                         </Button>
                       </UniformGrid>
+                      <UniformGrid Columns="1">
+                        <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Margin="4" Padding="4"
+                                ToolTip="{sd:Localize Auto place light probes, Context=ToolTip}"
+                                Command="{Binding Lighting.AutoPlaceLightProbesCommand}">
+                          <StackPanel Orientation="Horizontal">
+                            <Image Source="{StaticResource ImageLightProbesCompute}" Width="24" Height="24" RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                            <TextBlock Text="Auto Place" VerticalAlignment="Center" Margin="4"/>
+                          </StackPanel>
+                        </Button>
+                      </UniformGrid>
                     </StackPanel>
                     <Border Padding="8,2" Background="{StaticResource NormalBrush}" HorizontalAlignment="Stretch">
                       <TextBlock Text="{sd:Localize Cubemap}" FontWeight="Bold"/>

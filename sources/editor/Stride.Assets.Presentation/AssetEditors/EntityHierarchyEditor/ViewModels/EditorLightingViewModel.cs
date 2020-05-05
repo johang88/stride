@@ -18,6 +18,10 @@ using Stride.Assets.Presentation.AssetEditors.GameEditor.Services;
 using Stride.Engine;
 using Stride.Graphics;
 using Stride.Rendering.LightProbes;
+using Stride.Assets.Entities;
+using Stride.Core.Assets;
+using Stride.Physics;
+using Stride.Core.Assets.Quantum;
 
 namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewModels
 {
@@ -43,6 +47,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewMode
 
             RequestLightProbesComputeCommand = new AnonymousTaskCommand(ServiceProvider, () => RebuildLightProbes(LightProbeBounces));
             RequestLightProbesResetCommand = new AnonymousTaskCommand(ServiceProvider, () => RebuildLightProbes(0));
+            AutoPlaceLightProbesCommand = new AnonymousTaskCommand(ServiceProvider, () => AutoPlaceLightProbes());
 
             CaptureCubemapCommand = new AnonymousTaskCommand(ServiceProvider, CaptureCubemap);
         }
@@ -53,12 +58,109 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewMode
 
         public ICommandBase RequestLightProbesComputeCommand { get; }
         public ICommandBase RequestLightProbesResetCommand { get; }
+        public ICommandBase AutoPlaceLightProbesCommand { get; }
 
         public ICommandBase CaptureCubemapCommand { get; }
 
         private IEditorGameLightProbeService LightProbeService => controller.GetService<IEditorGameLightProbeService>();
 
         private IEditorGameCubemapService CubemapService => controller.GetService<IEditorGameCubemapService>();
+
+        private static string AutoLightProbesEntityName = "Light Probes (Auto)";
+        private Task AutoPlaceLightProbes()
+        {
+            using (var transaction = editor.UndoRedoService.CreateTransaction())
+            {
+                // Find or create parent light probe entity
+                var parentEntityViewModel = editor.HierarchyRoot.Children.OfType<EntityViewModel>().FirstOrDefault(x => x.Name == AutoLightProbesEntityName);
+                Entity parentEntity = null;
+                if (parentEntityViewModel == null)
+                {
+                    parentEntity = new Entity { Name = AutoLightProbesEntityName };
+                }
+                else
+                {
+                    // TODO: Delete existing childrent instead of aborting
+                    // User has to manually delete the parent entity first for now ...
+                    return Task.CompletedTask;
+                }
+
+                // Just refetch it for now, it's not pretty but it works ^^ 
+                //parentEntityViewModel = editor.HierarchyRoot.Children.OfType<EntityViewModel>().FirstOrDefault(x => x.Name == AutoLightProbesEntityName);
+
+                // Find the height map of the level, must be at root level for now ..
+                // and only one
+                // TODO: Don't use the reflection stuff, plugin system would be nice :D
+                var terrainComponent = editor.HierarchyRoot.Children.OfType<EntityViewModel>()
+                    .SelectMany(x => x.Components)
+                    .Where(x => x.GetType().Name == "TerrainComponent")
+                    .FirstOrDefault();
+
+                if (terrainComponent == null)
+                {
+                    // Not much to do here
+                    return Task.CompletedTask;
+                }
+
+                // Get component properties
+                var terrainComponentAssetNode = (IAssetObjectNode)editor.NodeContainer.GetOrCreateNode(terrainComponent);
+                terrainComponent = (EntityComponent)terrainComponentAssetNode.GetContent("Game").Retrieve(); // Very pretty ^^
+
+                var size = (float)terrainComponent.GetType().GetProperty("Size").GetValue(terrainComponent);
+                var terrainOffset = size / 2.0f;
+
+                var getHeightMethod = terrainComponent.GetType().GetMethod("GetHeightAt");
+
+                // Do the placement
+                var probeDistance = 32.0f; // TODO: Should be configureable
+                var baseHeightOffset = 2.0f;
+                var probeDistanceY = 4.0f;
+                var probesPerRow = (int)(size / probeDistance);
+                var i = 0;
+                for (var z = 0; z < probesPerRow; z++)
+                {
+                    for (var x = 0; x < probesPerRow; x++)
+                    {
+                        var position = new Vector3(x * probeDistance, 0, z * probeDistance);
+                        position.Y = (float)getHeightMethod.Invoke(terrainComponent, new object[] { position.X, position.Z }) + baseHeightOffset;
+
+                        position.X -= terrainOffset;
+                        position.Z -= terrainOffset;
+
+                        position += terrainComponent.Entity.Transform.Position;
+
+                        parentEntity.AddChild(CreateLightProbeEntity(position, i++));
+                        parentEntity.AddChild(CreateLightProbeEntity(position + new Vector3(0, probeDistanceY, 0), i++));
+                    }
+                }
+
+                AssetCollectionItemIdHelper.GenerateMissingItemIds(parentEntity);
+
+                var parent = editor.HierarchyRoot;
+                var parentEntityDesign = new EntityDesign(parentEntity);
+                var collection = new AssetPartCollection<EntityDesign, Entity> { parentEntityDesign };
+
+                foreach (var childTransform in parentEntity.Transform.Children)
+                {
+                    collection.Add(new EntityDesign(childTransform.Entity));
+                }
+
+                parent.Asset.AssetHierarchyPropertyGraph.AddPartToAsset(collection, parentEntityDesign, (parent.Owner as EntityViewModel)?.AssetSideEntity, parent.Owner.EntityCount);
+
+                editor.UndoRedoService.SetName(transaction, $"Auto place light probes'");
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private Entity CreateLightProbeEntity(Vector3 position, int index)
+        {
+            var entity = new Entity { Name = $"Light Probe ({index})" };
+            entity.Transform.Position = position;
+            entity.Components.Add(new LightProbeComponent());
+
+            return entity;
+        }
 
         private async Task RebuildLightProbes(int bounces)
         {
