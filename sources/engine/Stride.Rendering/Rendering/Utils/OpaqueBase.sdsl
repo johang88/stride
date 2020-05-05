@@ -1,0 +1,20 @@
+// Copyright (c) Stride contributors (https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+/// <summary>
+/// Defines a depth texture.
+/// Various helper functions to extract information from a depth buffer.
+/// </summary>
+shader OpaqueBase : Texturing
+{
+    // -------------------------------------
+    // Resources
+    // -------------------------------------
+    rgroup PerView.OpaqueRenderTarget
+    {
+        stage Texture2D OpaqueRenderTarget;
+    }
+
+    float3 GetOpaqueColor(float2 uv) {
+        return OpaqueRenderTarget.SampleLevel(PointSampler, uv, 0.0).xyz;
+    }
+};

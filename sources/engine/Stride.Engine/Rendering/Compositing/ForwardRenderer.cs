@@ -547,7 +547,17 @@ namespace Stride.Rendering.Compositing
                         if (depthStencilSRV == null)
                             depthStencilSRV = ResolveDepthAsSRV(drawContext);
 
+                        var renderTarget = drawContext.CommandList.RenderTargets[0];
+                        // TODO: Modify description to indicate it's not a render target?
+                        var opaqueRenderTargetTexture = Context.Allocator.GetTemporaryTexture2D(renderTarget.Description);
+                        // Blit opaque pass to temporary texture
+                        drawContext.CommandList.Copy(renderTarget, opaqueRenderTargetTexture);
+
+                        BindOpaqueRenderTarget(drawContext, opaqueRenderTargetTexture);
+
                         renderSystem.Draw(drawContext, context.RenderView, TransparentRenderStage);
+
+                        Context.Allocator.ReleaseReference(opaqueRenderTargetTexture);
                     }
                 }
 
@@ -802,6 +812,31 @@ namespace Stride.Rendering.Compositing
             context.CommandList.SetRenderTargets(depthStencilROCached, context.CommandList.RenderTargetCount, context.CommandList.RenderTargets);
 
             return depthStencilSRV;
+        }
+
+        private void BindOpaqueRenderTarget(RenderDrawContext context, Texture texture)
+        {
+            var renderView = context.RenderContext.RenderView;
+
+            foreach (var renderFeature in context.RenderContext.RenderSystem.RenderFeatures)
+            {
+                if (!(renderFeature is RootEffectRenderFeature))
+                    continue;
+
+                var opaqueLogicalKey = ((RootEffectRenderFeature)renderFeature).CreateViewLogicalGroup("OpaqueRenderTarget");
+                var viewFeature = renderView.Features[renderFeature.Index];
+
+                foreach (var viewLayout in viewFeature.Layouts)
+                {
+                    var resourceGroup = viewLayout.Entries[renderView.Index].Resources;
+
+                    var opaqueLogicalRenderGroup = viewLayout.GetLogicalGroup(opaqueLogicalKey);
+                    if (opaqueLogicalRenderGroup.Hash == ObjectId.Empty)
+                        continue;
+
+                    resourceGroup.DescriptorSet.SetShaderResourceView(opaqueLogicalRenderGroup.DescriptorSlotStart, texture);
+                }
+            }
         }
 
         private void PrepareRenderTargets(RenderDrawContext drawContext, Texture outputRenderTarget, Texture outputDepthStencil)

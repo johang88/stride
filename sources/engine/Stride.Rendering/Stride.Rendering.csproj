@@ -27,6 +27,20 @@
   <ItemGroup>
     <Service Include="{508349B6-6B84-4DF5-91F0-309BEEBAD82D}" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Update="Rendering\Utils\OpaqueBase.sdsl.cs">
+      <DesignTime>True</DesignTime>
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>OpaqueBase.sdsl</DependentUpon>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="Rendering\Utils\OpaqueBase.sdsl">
+      <Generator>StrideShaderKeyGenerator</Generator>
+      <LastGenOutput>OpaqueBase.sdsl.cs</LastGenOutput>
+    </None>
+  </ItemGroup>
   <Import Project="$(StridePostSettingsTargets)" />
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
 </Project>
