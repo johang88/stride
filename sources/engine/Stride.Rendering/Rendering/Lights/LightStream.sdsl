@@ -19,6 +19,7 @@ namespace Stride.Rendering.Lights
         stage stream float NdotL;
 
         stage stream float lightDirectAmbientOcclusion;
+        stage stream float subsurfaceLightingAmount;
 
         void ResetLightStream()
         {
@@ -31,6 +32,7 @@ namespace Stride.Rendering.Lights
             streams.envLightSpecularColor = 0;
             streams.lightDirectAmbientOcclusion = 1.0f;
             streams.NdotL = 0;
+            streams.subsurfaceLightingAmount = 0;
         }
     };
 }

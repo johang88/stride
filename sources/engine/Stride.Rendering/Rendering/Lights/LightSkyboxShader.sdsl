@@ -33,6 +33,15 @@ namespace Stride.Rendering.Lights
 
             streams.envLightDiffuseColor = lightDiffuseColor.Compute(sampleDirection).rgb * Intensity * ambientAccessibility * streams.matDiffuseSpecularAlphaBlend.x;
 
+            if (streams.subsurfaceLightingAmount > 0.0)
+            {
+                float viewDependantSplit = 0.5;
+                float3 subsurfaceLighting = streams.envLightDiffuseColor * viewDependantSplit;
+                subsurfaceLighting += lightDiffuseColor.Compute(-sampleDirection).rgb * Intensity * ambientAccessibility * streams.matDiffuseSpecularAlphaBlend.x * (1.0 - viewDependantSplit);
+
+                streams.envLightDiffuseColor += subsurfaceLighting * streams.subsurfaceLightingAmount;
+            }
+
             // -----------------------------------------
             // Specular lighting
             // -----------------------------------------
