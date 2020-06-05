@@ -8,18 +8,22 @@ namespace Stride.Particles.Tests
 {
     public class VisualTestSoftEdge : GameTest
     {
-        public VisualTestSoftEdge() : base("VisualTestSoftEdge") { }
+        public VisualTestSoftEdge() : this(GraphicsProfile.Level_11_0) { }
+
+        private VisualTestSoftEdge(GraphicsProfile profile) : base("VisualTestSoftEdge", profile) { }
 
         [Fact]
         public void RunVisualTests10()
         {
-            RunGameTest(new GameTest("VisualTestSoftEdge", GraphicsProfile.Level_10_0));
+            Assert.False(GraphicsDevice.Platform == GraphicsPlatform.Vulkan, "Particle tests crash on Vulkan");
+            RunGameTest(new VisualTestSoftEdge(GraphicsProfile.Level_10_0));
         }
 
         [Fact]
         public void RunVisualTests11()
         {
-            RunGameTest(new GameTest("VisualTestSoftEdge", GraphicsProfile.Level_11_0));
+            Assert.False(GraphicsDevice.Platform == GraphicsPlatform.Vulkan, "Particle tests crash on Vulkan");
+            RunGameTest(new VisualTestSoftEdge(GraphicsProfile.Level_11_0));
         }
 
     }
