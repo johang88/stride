@@ -209,6 +209,9 @@ namespace Stride.Core.Assets
             // Reload project with first TargetFramework and/or RuntimeIdentifier
             void TryReloadWithFirstValue(string valuePropertyName, string valuesPropertyName)
             {
+                if (globalProperties.ContainsKey(valuePropertyName))
+                    return;
+
                 var propertyValue = project.GetPropertyValue(valuePropertyName);
                 var propertyValues = project.GetPropertyValue(valuesPropertyName);
                 if (string.IsNullOrWhiteSpace(propertyValue) && !string.IsNullOrWhiteSpace(propertyValues))
@@ -224,6 +227,7 @@ namespace Stride.Core.Assets
             }
 
             // We need to go through them one by one (because a MSBuild Condition might depend on previous step)
+            // TODO: We should deduct TFM from referencing project(s) (if any) rather than default one.
             TryReloadWithFirstValue("TargetFramework", "TargetFrameworks");
             TryReloadWithFirstValue("RuntimeIdentifier", "RuntimeIdentifiers");
             TryReloadWithFirstValue("StrideGraphicsApi", "StrideGraphicsApis");
