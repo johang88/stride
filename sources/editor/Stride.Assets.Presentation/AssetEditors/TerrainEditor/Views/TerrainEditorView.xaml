@@ -1,0 +1,94 @@
+<UserControl x:Class="Stride.Assets.Presentation.AssetEditors.TerrainEditor.Views.TerrainEditorView"
+       xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+       xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+       xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+       xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+       xmlns:vm="clr-namespace:Stride.Assets.Presentation.ViewModel"
+       xmlns:sd="http://schemas.stride3d.net/xaml/presentation"
+       xmlns:i="http://schemas.microsoft.com/xaml/behaviors"
+       xmlns:behaviors="clr-namespace:Stride.Assets.Presentation.View.Behaviors"
+       xmlns:valueConverters="clr-namespace:Stride.Assets.Presentation.ValueConverters"
+       xmlns:strings="clr-namespace:Stride.Assets.Presentation.Resources.Strings"
+       xmlns:view="clr-namespace:Stride.Assets.Presentation.AssetEditors.TerrainEditor.Views"
+       xmlns:tevm="clr-namespace:Stride.Assets.Presentation.AssetEditors.TerrainEditor.ViewModels"
+       mc:Ignorable="d" 
+       d:DesignHeight="300" d:DesignWidth="300" d:DataContext="{d:DesignInstance vm:TerrainDataViewModel}">
+  <UserControl.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="/Stride.Core.Assets.Editor;component/View/CommonResources.xaml"/>
+        <ResourceDictionary Source="/Stride.Assets.Presentation;component/View/ImageDictionary.xaml"/>
+      </ResourceDictionary.MergedDictionaries>
+
+      <!-- TODO: Put the styles in generic! -->
+      <Style TargetType="sd:EditableContentListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}"/>
+      <Style TargetType="sd:EditableContentListBox" BasedOn="{StaticResource {x:Type ListBox}}"/>
+    </ResourceDictionary>
+  </UserControl.Resources>
+  <UserControl.InputBindings>
+  </UserControl.InputBindings>
+  <i:Interaction.Behaviors>
+  </i:Interaction.Behaviors>
+  <Grid DataContext="{Binding Editor}" d:DataContext="{d:DesignInstance tevm:TerrainEditorViewModel}">
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="*"/>
+    </Grid.ColumnDefinitions>
+
+    <!-- Left panel -->
+    <DockPanel Grid.Column="0">
+      <ToolBarTray DockPanel.Dock="Top">
+        <ToolBar>
+          <Button Command="{Binding Viewport.ZoomOutCommand}" Background="Transparent" Margin="2"
+                  ToolTip="{sd:Localize Zoom out, Context=ToolTip}" sd:ToolTipHelper.Status="{Binding Session.Editor.Status}" ToolTipService.ShowOnDisabled="True">
+            <Image Source="{StaticResource ImageZoomOut}" RenderOptions.BitmapScalingMode="NearestNeighbor" Width="16" Height="16" />
+          </Button>
+          <Button Command="{Binding Viewport.ZoomInCommand}" Background="Transparent" Margin="2"
+                  ToolTip="{sd:Localize Zoom in, Context=ToolTip}" sd:ToolTipHelper.Status="{Binding Session.Editor.Status}" ToolTipService.ShowOnDisabled="True">
+            <Image Source="{StaticResource ImageZoomIn}" RenderOptions.BitmapScalingMode="NearestNeighbor" Width="16" Height="16" />
+          </Button>
+          <Button Command="{Binding Viewport.ScaleToRealSizeCommand}" Background="Transparent" Margin="2"
+                  ToolTip="{sd:Localize Scale to real pixel size, Context=ToolTip}" sd:ToolTipHelper.Status="{Binding Session.Editor.Status}" ToolTipService.ShowOnDisabled="True">
+            <Image Source="{StaticResource ImageScaleOnRealSize}" RenderOptions.BitmapScalingMode="NearestNeighbor" Width="16" Height="16" />
+          </Button>
+          <Button Command="{Binding Viewport.FitOnScreenCommand}" Background="Transparent" Margin="2"
+                  ToolTip="{sd:Localize Fit image to screen, Context=ToolTip}" sd:ToolTipHelper.Status="{Binding Session.Editor.Status}" ToolTipService.ShowOnDisabled="True">
+            <Image Source="{StaticResource ImageFitOnScreen}" RenderOptions.BitmapScalingMode="NearestNeighbor" Width="16" Height="16" />
+          </Button>
+        </ToolBar>
+      </ToolBarTray>
+
+      <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+        <i:Interaction.Behaviors>
+          <behaviors:BindActualSizeBehavior ActualWidth="{Binding Viewport.ViewportWidth, Mode=OneWayToSource}" ActualHeight="{Binding Viewport.ViewportHeight, Mode=OneWayToSource}"/>
+          <behaviors:BindScrollOffsetBehavior VerticalOffset="{Binding Viewport.VerticalOffset, Mode=TwoWay}" HorizontalOffset="{Binding Viewport.HorizontalOffset, Mode=TwoWay}"/>
+          <behaviors:ViewportZoomBehavior Viewport="{Binding Viewport}" />
+        </i:Interaction.Behaviors>
+        <Grid Margin="10">
+          <Rectangle Width="{Binding Viewport.ActualContentWidth}" Height="{Binding Viewport.ActualContentHeight}"
+                     VerticalAlignment="Top" HorizontalAlignment="Left">
+            <Rectangle.Fill>
+              <DrawingBrush Stretch="None" TileMode="Tile" Viewport="0,0,16,16" ViewportUnits="Absolute">
+                <DrawingBrush.Drawing>
+                  <DrawingGroup>
+                    <GeometryDrawing Geometry="M0,0 L16,0 16,16, 0,16Z" Brush="LightGray"/>
+                    <GeometryDrawing Geometry="M0,8 L16,8 16,16, 8,16 8,0 0,0Z" Brush="Gray"/>
+                  </DrawingGroup>
+                </DrawingBrush.Drawing>
+              </DrawingBrush>
+            </Rectangle.Fill>
+          </Rectangle>
+          <!-- The 0.5 left margin was a hack for the jittering issue -->
+          <Image x:Name="Img" Margin="0,0,0,0" VerticalAlignment="Top" HorizontalAlignment="Left" RenderOptions.BitmapScalingMode="NearestNeighbor"
+                 Width="{Binding Source.(BitmapSource.PixelWidth), ElementName=Img}" Height="{Binding Source.(BitmapSource.PixelHeight), ElementName=Img}"
+                 Source="{Binding Terrain.ImageData}">
+            <Image.LayoutTransform>
+              <TransformGroup>
+                <ScaleTransform ScaleX="{Binding Viewport.ScaleFactor}" ScaleY="{Binding Viewport.ScaleFactor}"/>
+              </TransformGroup>
+            </Image.LayoutTransform>
+          </Image>
+        </Grid>
+      </ScrollViewer>
+    </DockPanel>
+  </Grid>
+</UserControl>

@@ -55,6 +55,7 @@ TemplateFolders:
         - !file Templates/Assets/Physics/ColliderShapeCone.sdtpl
         - !file Templates/Assets/Physics/ColliderShapeHeightfield.sdtpl
         - !file Templates/Assets/Physics/Heightmap.sdtpl
+        - !file Templates/Assets/Terrain/TerrainData.sdtpl
         - !file Templates/Assets/Scenes/DefaultPrefab.sdtpl
         - !file Templates/Assets/Scenes/DefaultNavigationMesh.sdtpl
         - !file Templates/Assets/Scenes/DefaultScene.sdtpl

@@ -52,6 +52,9 @@
       <DesignTime>True</DesignTime>
       <DependentUpon>GizmoResources.resx</DependentUpon>
     </Compile>
+    <Compile Update="AssetEditors\TerrainEditor\Views\TerrainEditorView.xaml.cs">
+      <DependentUpon>%(Filename)</DependentUpon>
+    </Compile>
     <Compile Update="Properties\Settings.Designer.cs">
       <AutoGen>True</AutoGen>
       <DependentUpon>Settings.settings</DependentUpon>
@@ -113,6 +116,12 @@
     <Compile Remove="Templates\Assets\**" />
     <None Include="Templates\Core\**" />
     <None Include="Templates\Assets\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="AssetEditors\TerrainEditor\Views\TerrainEditorView.xaml" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="AssetEditors\TerrainEditor\Services\" />
   </ItemGroup>
   <Import Project="$(StrideSdkTargets)" />
   <Import Project="Sdk.targets" Sdk="MSBuild.Sdk.Extras" Version="2.0.87" />
