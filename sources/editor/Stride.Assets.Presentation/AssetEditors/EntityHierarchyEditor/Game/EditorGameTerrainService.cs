@@ -19,6 +19,9 @@ using Stride.Rendering.Compositing;
 using Stride.Graphics.GeometricPrimitives;
 using Stride.Extensions;
 using Stride.Assets.Presentation.AssetEditors.Gizmos;
+using Stride.Core.Assets.Quantum;
+using Stride.Core.Quantum;
+using Stride.Assets.Terrain;
 
 namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
 {
@@ -126,6 +129,8 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
 
             var editedTerrains = new HashSet<TerrainComponent>();
             var intersectionPoint = Vector3.Zero;
+            var frameEditedIndices = new HashSet<int>();
+            var allEditedIndices = new HashSet<int>();
 
             while (game.IsRunning)
             {
@@ -203,7 +208,10 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                     // Better hope those heightmaps are square :D
                     var radius = (int)(Math.Min(1.0f, BrushRadius / editableTerain.Size.X) * terrain.Size.X);
 
+                    var raise = true;
                     var strength = 500.0f;
+                    if (game.Input.IsKeyDown(Input.Keys.LeftShift))
+                        raise = false;
 
                     for (var y = -radius; y < radius; y++)
                     {
@@ -222,26 +230,89 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                                 continue;
 
                             var index = yi * terrain.Size.X + xi;
-                            terrain.Heightmap[index] += (ushort)(strength * factor * dt);
+
+                            var height = terrain.Heightmap[index];
+                            var distortion = (strength * factor * dt);
+
+                            if (!raise)
+                            {
+                                if (distortion > height)
+                                {
+                                    height = 0;
+                                }
+                                else
+                                {
+                                    height -= (ushort)distortion;
+                                }
+                            }
+                            else
+                            {
+                                height += (ushort)distortion;
+                            }
+
+                            terrain.Heightmap[index] = height;
+                            
+                            frameEditedIndices.Add(index);
+                            allEditedIndices.Add(index);
                         }
                     }
 
-                    editableTerain.Invalidate(true, false);
+                    // Notify processor so that the mesh is updated
+                    var processor = game.SceneSystem.SceneInstance.GetProcessor<TerrainProcessor>();
+                    processor.Invalidate(editableTerain, frameEditedIndices);
+                    frameEditedIndices.Clear();
+
+                    //editableTerain.Invalidate(true, false);
                     editedTerrains.Add(editableTerain);
                 }
                 else if (IsControllingMouse)
                 {
                     IsControllingMouse = false;
 
-                    // TODO: The selection triggers on fast click which is annoying ...
+                    // TODO: The selection system triggers if we don't move the cursor, maybe something can be done to prevent this
                     // TODO: Update asset data here 
+
+                    // Apparently things are not in sync, so get the entity view model and fetch the components from there
+                    // We wont be able to get the correct asset reference otherwise
 
                     // Update normals, this is slow so only done after editing
                     foreach (var terrainComponent in editedTerrains)
                     {
-                        terrainComponent.Invalidate(true, true);
+                        // TODO: Currently not needed as quantum invalidates the entire asset reference, which will force the mesh to be recreated
+                        //terrainComponent.Invalidate(true, true);
                     }
+
+                    // Update asset data, this too is quite slow
+                    var session = entityHierarchyEditorViewModel.Session;
+                    var controller = entityHierarchyEditorViewModel.Controller;
+
+                    using (var transaction = session.UndoRedoService.CreateTransaction())
+                    {
+                        session.UndoRedoService.SetName(transaction, "Modify terrain heights");
+                        foreach (var terrainComponent in editedTerrains)
+                        {
+                            var terrain = terrainComponent.Terrain;
+                            var entity = terrainComponent.Entity;
+
+                            var entityId = controller.GetAbsoluteId(entity);
+                            var entityVM = (EntityViewModel)entityHierarchyEditorViewModel.FindPartViewModel(entityId);
+
+                            var terrainComponentVM = (TerrainComponent)entityVM.Components.First(c => c is TerrainComponent);
+                            var terrainAssetVM = ContentReferenceHelper.GetReferenceTarget(session, terrainComponentVM.Terrain);
+
+                            var assetNode = session.AssetNodeContainer.GetOrCreateNode(terrainAssetVM.Asset);
+                            var heightmapNode = (MemberNode)assetNode.TryGetChild(nameof(TerrainData.Heightmap));
+                            var targetNode = (Core.Quantum.ObjectNode)heightmapNode.Target;
+
+                            //targetNode.UpdateValues(allEditedIndices.Select(i => (new NodeIndex(i), (object)terrain.Heightmap[i])));
+                            // For now this seems to be the fastest option :/
+                            // Unless we can make quantum faaaaster, which I do believe should be possible ... somehow
+                            assetNode[nameof(TerrainDataAsset.Heightmap)].Update(terrain.Heightmap);
+                        }
+                    }
+
                     editedTerrains.Clear();
+                    allEditedIndices.Clear();
                 }
 
 
@@ -262,17 +333,17 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
 
 
                 /*            var entityId = Editor.Controller.GetAbsoluteId(entity);
-if (!SelectableIds.Contains(entityId) || SelectedIds.Contains(entityId))
-return;
+        if (!SelectableIds.Contains(entityId) || SelectedIds.Contains(entityId))
+        return;
 
-IsControllingMouse = true;
-Editor.Dispatcher.InvokeAsync(() =>
-{
-var viewModel = (EntityHierarchyElementViewModel)Editor.FindPartViewModel(entityId);
-if (viewModel?.IsSelectable == true)
-Editor.SelectedContent.Add(viewModel);
-Editor.Controller.InvokeAsync(() => IsControllingMouse = false);
-});*/
+        IsControllingMouse = true;
+        Editor.Dispatcher.InvokeAsync(() =>
+        {
+        var viewModel = (EntityHierarchyElementViewModel)Editor.FindPartViewModel(entityId);
+        if (viewModel?.IsSelectable == true)
+        Editor.SelectedContent.Add(viewModel);
+        Editor.Controller.InvokeAsync(() => IsControllingMouse = false);
+        });*/
                 //var heightmapAssetVM = ContentReferenceHelper.GetReferenceTarget(session, heightmap);
 
                 // Find quantum node

@@ -1,4 +1,5 @@
 using Stride.Core.Annotations;
+using Stride.Core.Collections;
 using Stride.Core.Mathematics;
 using Stride.Core.Threading;
 using Stride.Engine;
@@ -78,7 +79,7 @@ namespace Stride.Terrain
 
             data.ModelComponent.IsShadowCaster = component.CastShadows;
 
-            // Regenerate mesh if any dependant properties have changed
+            // Check if mesh has to (re)created or if vertex data has to be updated
             if (data.IsDirty(component))
             {
                 data.Update(component);
@@ -90,7 +91,7 @@ namespace Stride.Terrain
                 data.ModelComponent.Model.Meshes[0] = data.Mesh;
                 component.Entity.Add(data.ModelComponent);
             }
-            else if (component.VerticesInvalidated || component.NormalsInvalidated)
+            else if (component.VerticesInvalidated || component.NormalsInvalidated || data.InvalidatesIndices.Count > 0)
             {
                 var game = Services.GetService<IGame>();
                 var graphicsContext = game.GraphicsContext;
@@ -108,10 +109,19 @@ namespace Stride.Terrain
             var tessellationX = terrain.Size.X;
             var tessellationY = terrain.Size.Y;
 
-            if (updateHeights)
-                UpdateVertexHeights(size, terrain, tessellationX, tessellationY, renderData.Vertices);
-            if (updateNormals)
-                UpdateVertexNormals(size, terrain, tessellationX, tessellationY, renderData.Vertices);
+            if (updateHeights || updateNormals)
+            {
+                if (updateHeights)
+                    UpdateVertexHeights(size, terrain, tessellationX, tessellationY, renderData.Vertices);
+                if (updateNormals)
+                    UpdateVertexNormals(size, terrain, tessellationX, tessellationY, renderData.Vertices);
+            }
+            else if (renderData.InvalidatesIndices.Count > 0)
+            {
+                UpdateInvalidatesIndices(size, terrain, tessellationX, tessellationY, renderData.Vertices, renderData.InvalidatesIndices);
+            }
+
+            renderData.InvalidatesIndices.Clear();
 
             renderData.VertexBuffer.SetData(graphicsContext.CommandList, renderData.Vertices);
         }
@@ -223,6 +233,35 @@ namespace Stride.Terrain
                 {
                     vertices[vertexCount].Normal = terrain.GetNormal(x, y, size.Y);
                     vertexCount++;
+                }
+            }
+        }
+
+        private static void UpdateInvalidatesIndices(Vector3 size, TerrainData terrain, int tessellationX, int tessellationY, VertexPositionNormalTangentTexture[] vertices, HashSet<int> invalidatesIndices)
+        {
+            var vertexCount = 0;
+            for (var y = 0; y < (tessellationY + 1); y++)
+            {
+                for (var x = 0; x < (tessellationX + 1); x++)
+                {
+                    var index = y * terrain.Size.X + x;
+                    if (invalidatesIndices.Contains(index))
+                    {
+                        vertices[vertexCount].Position.Y = terrain.GetHeightAt(x, y) * size.Y;
+                        vertices[vertexCount].Normal = terrain.GetNormal(x, y, size.Y);
+                    }
+                    vertexCount++;
+                }
+            }
+        }
+
+        internal void Invalidate(TerrainComponent editableTerain, HashSet<int> editedIndices)
+        {
+            if (ComponentDatas.TryGetValue(editableTerain, out var renderData))
+            {
+                foreach (var index in editedIndices)
+                {
+                    renderData.InvalidatesIndices.Add(index);
                 }
             }
         }

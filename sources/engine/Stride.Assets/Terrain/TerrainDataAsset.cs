@@ -27,6 +27,7 @@ namespace Stride.Assets.Terrain
         /// </summary>
         [DataMember(20)]
         [Display(Browsable = false)]
+        [NonIdentifiableCollectionItems]
         public ushort[] Heightmap { get; set; }
     }
 }

@@ -16,7 +16,7 @@ namespace Stride.Assets.Presentation.ViewModel
     {
         internal new TerrainEditorViewModel Editor => (TerrainEditorViewModel)base.Editor;
 
-        public BitmapSource ImageData { get; set; }
+        //public BitmapSource ImageData { get; set; }
 
         public TerrainDataViewModel(AssetViewModelConstructionParameters parameters)
             : base(parameters)
@@ -25,8 +25,8 @@ namespace Stride.Assets.Presentation.ViewModel
             var width = Asset.Size.X;
             var height = Asset.Size.Y;
 
-            ImageData = BitmapSource.Create(width, height, 96, 96, pixelFormat, null, Asset.Heightmap, 2 * width);
-            ImageData.Freeze();
+            //ImageData = BitmapSource.Create(width, height, 96, 96, pixelFormat, null, Asset.Heightmap, 2 * width);
+            //ImageData.Freeze();
         }
     }
 }

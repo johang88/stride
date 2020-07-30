@@ -13,11 +13,22 @@ namespace Stride.Terrain
     [DefaultEntityComponentRenderer(typeof(TerrainProcessor))]
     public class TerrainComponent : EntityComponent
     {
+        private TerrainData _terrain;
         /// <summary>
         /// Terrain asset
         /// </summary>
         [DataMember(10)]
-        public TerrainData Terrain { get; set; }
+        public TerrainData Terrain
+        {
+            get { return _terrain; }
+            set
+            {
+                _terrain = value;
+
+                // Force mesh to be recreated
+                Invalidate(true, true);
+            }
+        }
 
         /// <summary>
         /// Size of the terrain in world units

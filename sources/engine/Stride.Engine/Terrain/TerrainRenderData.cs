@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using Stride.Core.Collections;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Graphics;
@@ -18,6 +19,7 @@ namespace Stride.Terrain
 
         public VertexPositionNormalTangentTexture[] Vertices;
         public Buffer<VertexPositionNormalTangentTexture> VertexBuffer { get; set; }
+        public HashSet<int> InvalidatesIndices { get; private set; } = new HashSet<int>();
 
         public TerrainRenderData()
         {
@@ -34,6 +36,6 @@ namespace Stride.Terrain
         }
 
         public bool IsDirty(TerrainComponent component)
-            => Size != component.Size || Terrain != component.Terrain || Mesh == null;
+            => Size != component.Size || Terrain.Size.X != component.Terrain.Size.X || Terrain.Size.Y != component.Terrain.Size.Y || Mesh == null;
     }
 }
