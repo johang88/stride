@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Stride.Core;
 using Stride.Core.Mathematics;
 using Stride.Core.Serialization;
@@ -28,6 +29,13 @@ namespace Stride.Terrain
         [DataMember(20)]
         [Display(Browsable = false)]
         public ushort[] Heightmap { get; set; }
+
+        /// <summary>
+        /// Terrain layers and their weight data
+        /// </summary>
+        [DataMember(30)]
+        [Display(Browsable = false)]
+        public Dictionary<TerrainLayer, byte[]> TerrainLayers { get; set; }
 
         public bool IsValidCoordinate(int x, int y)
             => x >= 0 && x < Size.X && y >= 0 && y < Size.Y;

@@ -1,7 +1,9 @@
+using System.Collections.Generic;
 using Stride.Core;
 using Stride.Core.Annotations;
 using Stride.Core.Assets;
 using Stride.Core.Mathematics;
+using Stride.Core.Serialization;
 using Stride.Terrain;
 
 namespace Stride.Assets.Terrain
@@ -29,5 +31,20 @@ namespace Stride.Assets.Terrain
         [Display(Browsable = false)]
         [NonIdentifiableCollectionItems]
         public ushort[] Heightmap { get; set; }
+
+        [DataMember(30)]
+        public List<TerrainLayerData> Layers { get; set; } = new List<TerrainLayerData>();
+
+        [DataContract(nameof(TerrainLayerData))]
+        public class TerrainLayerData
+        {
+            [DataMember(10)]
+            public TerrainLayer Layer { get; set; }
+
+            [DataMember(20)]
+            [Display(Browsable = false)]
+            [NonIdentifiableCollectionItems]
+            public byte[] Data { get; set; }
+        }
     }
 }
