@@ -42,7 +42,7 @@ namespace Stride.Assets.Terrain
         [DataMember(40)]
         [Display(Browsable = false)]
         [NonIdentifiableCollectionItems]
-        public ushort[] Heightmap { get; set; }
+        public float[] Heightmap { get; set; }
 
         [DataMember(50)]
         public List<TerrainLayerData> Layers { get; set; } = new List<TerrainLayerData>();

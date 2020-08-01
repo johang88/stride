@@ -9,7 +9,7 @@ namespace Stride.Assets.Terrain
             var asset = new TerrainDataAsset
             {
                 Resolution = new Core.Mathematics.Int2(512, 512),
-                Heightmap = new ushort[512 * 512]
+                Heightmap = new float[512 * 512]
             };
 
             for (var i = 0; i< asset.Heightmap.Length;i++)

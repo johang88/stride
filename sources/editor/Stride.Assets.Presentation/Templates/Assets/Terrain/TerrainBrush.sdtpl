@@ -1,0 +1,12 @@
+!TemplateAssetFactory
+Id: 0334044c-2d3d-4137-81b6-9d70328e4e25
+AssetTypeName: TerrainBrushAsset
+Name: Terrain Brush
+Scope: Asset
+Description: Terrain layer asset
+Group: Terrain
+Order: 300
+Icon: ..\.sdtpl\Terrain.png
+DefaultOutputName: Terrain Brush
+FactoryTypeName: TerrainBrushAssetFactory
+ImportSource: true

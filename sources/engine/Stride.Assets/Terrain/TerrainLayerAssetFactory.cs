@@ -6,12 +6,10 @@ namespace Stride.Assets.Terrain
     {
         public override TerrainLayerAsset New()
         {
-            var asset = new TerrainLayerAsset
+            return new TerrainLayerAsset
             {
                 Name = "New layer"
             };
-
-            return asset;
         }
     }
 }

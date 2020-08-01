@@ -28,7 +28,7 @@ namespace Stride.Terrain
         /// </summary>
         [DataMember(20)]
         [Display(Browsable = false)]
-        public ushort[] Heightmap { get; set; }
+        public float[] Heightmap { get; set; }
 
         /// <summary>
         /// Terrain layers and their splat map data (if available)
@@ -57,9 +57,7 @@ namespace Stride.Terrain
             }
 
             var index = GetHeightIndex(x, y);
-            var heightData = Heightmap[index];
-
-            return ConvertToFloatHeight(ushort.MinValue, ushort.MaxValue, heightData);
+            return Heightmap[index];
         }
 
         public Vector3 GetNormal(int x, int y, float heightScale)
@@ -93,8 +91,6 @@ namespace Stride.Terrain
 
             return tangent;
         }
-
-        public static float ConvertToFloatHeight(float minValue, float maxValue, float value) => MathUtil.InverseLerp(minValue, maxValue, MathUtil.Clamp(value, minValue, maxValue));
     }
 
     [DataContract]

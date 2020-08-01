@@ -17,7 +17,7 @@ namespace Stride.Assets.Terrain
     public class TerrainLayerAsset : Asset
     {
         private const string CurrentVersion = "3.0.0.0";
-        public const string FileExtension = ".sdtly";
+        public const string FileExtension = ".sdterrainlayer";
 
         [DataMember(10)]
         public string Name { get; set; }

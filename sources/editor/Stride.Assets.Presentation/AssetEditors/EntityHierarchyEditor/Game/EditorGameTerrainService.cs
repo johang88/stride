@@ -56,31 +56,21 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
             var editorScene = game.EditorScene;
 
             // Setup gizmo rendering
-            var terrainMainGizmoRenderStage = new RenderStage("TerrainGizmoOpaque", "Main");
-            var terrainTransparentGizmoRenderStage = new RenderStage("TerrainGizmoTransparent", "Main") { SortMode = new BackToFrontSortMode() };
+            var terrainMainGizmoRenderStage = new RenderStage("Terrain Painter Gizmo", "Main") { SortMode = new BackToFrontSortMode() };
             game.EditorSceneSystem.GraphicsCompositor.RenderStages.Add(terrainMainGizmoRenderStage);
-            game.EditorSceneSystem.GraphicsCompositor.RenderStages.Add(terrainTransparentGizmoRenderStage);
 
             var meshRenderFeature = game.EditorSceneSystem.GraphicsCompositor.RenderFeatures.OfType<MeshRenderFeature>().First();
-            // Reset all stages for TransformationGrizmoGroup
             meshRenderFeature.RenderStageSelectors.Add(new SimpleGroupToRenderStageSelector
-            {
-                RenderGroup = TerrainGizmoGroupMask,
-                //RenderStage = terrainMainGizmoRenderStage
-            });
-            meshRenderFeature.RenderStageSelectors.Add(new MeshTransparentRenderStageSelector
             {
                 EffectName = EditorGraphicsCompositorHelper.EditorForwardShadingEffect,
                 RenderGroup = TerrainGizmoGroupMask,
-                OpaqueRenderStage = terrainMainGizmoRenderStage,
-                TransparentRenderStage = terrainTransparentGizmoRenderStage,
+                RenderStage = terrainMainGizmoRenderStage
             });
-            meshRenderFeature.PipelineProcessors.Add(new MeshPipelineProcessor { TransparentRenderStage = terrainTransparentGizmoRenderStage });
+
+            meshRenderFeature.PipelineProcessors.Add(new AlphaBlendPipelineProcessor { RenderStage = terrainMainGizmoRenderStage });
 
             var editorCompositor = (EditorTopLevelCompositor)game.EditorSceneSystem.GraphicsCompositor.Game;
-            editorCompositor.PostGizmoCompositors.Add(new ClearRenderer { ClearFlags = ClearRendererFlags.DepthOnly });
-            editorCompositor.PostGizmoCompositors.Add(new SingleStageRenderer { RenderStage = terrainMainGizmoRenderStage, Name = "Terrain Opaque Gizmos" });
-            editorCompositor.PostGizmoCompositors.Add(new SingleStageRenderer { RenderStage = terrainTransparentGizmoRenderStage, Name = "Terrain Transparent Gizmos" });
+            editorCompositor.PostGizmoCompositors.Add(new SingleStageRenderer { RenderStage = terrainMainGizmoRenderStage });
 
             MicrothreadLocalDatabases.MountCommonDatabase();
 
@@ -130,7 +120,6 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
             var editedTerrains = new HashSet<TerrainComponent>();
             var intersectionPoint = Vector3.Zero;
             var frameEditedIndices = new HashSet<int>();
-            var allEditedIndices = new HashSet<int>();
 
             while (game.IsRunning)
             {
@@ -204,7 +193,6 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                     var terrain = editableTerain.Terrain;
 
                     // Calculate radius relative to height map
-
                     // Better hope those heightmaps are square :D
                     var radius = (int)(Math.Min(1.0f, BrushRadius / editableTerain.Size.X) * terrain.Resolution.X);
 
@@ -223,7 +211,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                             if (xi < 0 || yi < 0 || xi >= terrain.Resolution.X || yi >= terrain.Resolution.Y)
                                 continue;
 
-                            var distance = Math.Sqrt(y * y + x * x);
+                            var distance = (float)Math.Sqrt(y * y + x * x);
                             var factor = radius - distance;
 
                             if (factor <= 0.0f)
@@ -234,26 +222,12 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                             var height = terrain.Heightmap[index];
                             var distortion = (strength * factor * dt);
 
-                            if (!raise)
-                            {
-                                if (distortion > height)
-                                {
-                                    height = 0;
-                                }
-                                else
-                                {
-                                    height -= (ushort)distortion;
-                                }
-                            }
-                            else
-                            {
-                                height += (ushort)distortion;
-                            }
+                            if (raise)
+                                distortion *= -1.0f;
 
-                            terrain.Heightmap[index] = height;
+                            terrain.Heightmap[index] = MathUtil.Clamp(height + distortion, 0.0f, 1.0f);
                             
                             frameEditedIndices.Add(index);
-                            allEditedIndices.Add(index);
                         }
                     }
 
@@ -312,7 +286,6 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                     }
 
                     editedTerrains.Clear();
-                    allEditedIndices.Clear();
                 }
 
 
@@ -344,26 +317,26 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
         Editor.SelectedContent.Add(viewModel);
         Editor.Controller.InvokeAsync(() => IsControllingMouse = false);
         });*/
-                //var heightmapAssetVM = ContentReferenceHelper.GetReferenceTarget(session, heightmap);
+            //var heightmapAssetVM = ContentReferenceHelper.GetReferenceTarget(session, heightmap);
 
-                // Find quantum node
-                //var assetNode = session.AssetNodeContainer.GetOrCreateNode(heightmapAssetVM);
-                //var index = heightmap.GetHeightIndex((int)intersectionPoint.X, (int)intersectionPoint.Z);
+            // Find quantum node
+            //var assetNode = session.AssetNodeContainer.GetOrCreateNode(heightmapAssetVM);
+            //var index = heightmap.GetHeightIndex((int)intersectionPoint.X, (int)intersectionPoint.Z);
 
-                //var shorts = heightmap.Shorts;
-                //shorts[index] += 1;
+            //var shorts = heightmap.Shorts;
+            //shorts[index] += 1;
 
-                //assetNode[nameof(Heightmap.Shorts)].Update(shorts);
-                // assetNode[nameof(LightProbeComponent.Coefficients)].Update(result[matchingLightProbe.Entity.Id]);
-                //}
-            }
-
-            // game.SceneSystem.SceneInstance.EntityAdded += (sender, entity) => entityPicker.CacheEntity(entity, false);
-            // return scriptComponent.SceneSystem.SceneInstance.GetProcessor<PhysicsProcessor>()?.Simulation;
-
-            // TODO: Find thing under cursor
-            // Trace using physics as there should 
+            //assetNode[nameof(Heightmap.Shorts)].Update(shorts);
+            // assetNode[nameof(LightProbeComponent.Coefficients)].Update(result[matchingLightProbe.Entity.Id]);
+            //}
         }
+
+        // game.SceneSystem.SceneInstance.EntityAdded += (sender, entity) => entityPicker.CacheEntity(entity, false);
+        // return scriptComponent.SceneSystem.SceneInstance.GetProcessor<PhysicsProcessor>()?.Simulation;
+
+        // TODO: Find thing under cursor
+        // Trace using physics as there should 
+    }
 
         private static void CreateWorldSpaceCameraRay(Vector2 screenPos, CameraComponent camera, out Vector3 rayStart, out Vector3 rayEnd)
         {

@@ -9,7 +9,6 @@ using Stride.Core.BuildEngine;
 using Stride.Core.Serialization.Contents;
 using Stride.Terrain;
 
-
 namespace Stride.Assets.Terrain
 {
     [AssetCompiler(typeof(TerrainLayerAsset), typeof(AssetCompilationContext))]

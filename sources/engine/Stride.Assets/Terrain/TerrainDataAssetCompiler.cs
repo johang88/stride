@@ -38,7 +38,7 @@ namespace Stride.Assets.Terrain
                 {
                     Resolution = Parameters.Resolution,
                     // TODO: Should we copy the array? probably
-                    Heightmap = Parameters.Heightmap ?? new ushort[Parameters.Resolution.X * Parameters.Resolution.Y] 
+                    Heightmap = Parameters.Heightmap ?? new float[Parameters.Resolution.X * Parameters.Resolution.Y] 
                 };
 
                 var assetManager = new ContentManager(MicrothreadLocalDatabases.ProviderService);
