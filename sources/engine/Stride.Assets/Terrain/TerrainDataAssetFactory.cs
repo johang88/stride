@@ -8,8 +8,8 @@ namespace Stride.Assets.Terrain
         {
             var asset = new TerrainDataAsset
             {
-                Size = new Core.Mathematics.Int2(8, 8),
-                Heightmap = new ushort[8 * 8]
+                Size = new Core.Mathematics.Int2(512, 512),
+                Heightmap = new ushort[512 * 512]
             };
 
             for (var i = 0; i< asset.Heightmap.Length;i++)
