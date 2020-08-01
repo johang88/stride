@@ -35,6 +35,9 @@ namespace Stride.Assets.Terrain
                 var terrainLayer = new TerrainLayer
                 {
                     Name = Parameters.Name,
+                    Material = Parameters.Material,
+                    UVSCale = Parameters.UVScale,
+                    BlendType = Parameters.BlendType
                 };
 
                 var assetManager = new ContentManager(MicrothreadLocalDatabases.ProviderService);

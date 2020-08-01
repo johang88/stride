@@ -4,6 +4,7 @@ using Stride.Core.Mathematics;
 using Stride.Core.Serialization;
 using Stride.Core.Serialization.Contents;
 using Stride.Engine.Design;
+using Stride.Rendering;
 
 namespace Stride.Terrain
 {
@@ -20,5 +21,8 @@ namespace Stride.Terrain
     public class TerrainLayer
     {
         public string Name { get; set; }
+        public Material Material { get; set; }
+        public Vector2 UVSCale { get; set; }
+        public ITerrainLayerBlendType BlendType { get; set; }
     }
 }

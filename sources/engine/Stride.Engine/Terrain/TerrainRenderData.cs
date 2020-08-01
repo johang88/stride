@@ -36,6 +36,6 @@ namespace Stride.Terrain
         }
 
         public bool IsDirty(TerrainComponent component)
-            => Size != component.Size || Terrain.Size.X != component.Terrain.Size.X || Terrain.Size.Y != component.Terrain.Size.Y || Mesh == null;
+            => Size != component.Size || Terrain.Resolution.X != component.Terrain.Resolution.X || Terrain.Resolution.Y != component.Terrain.Resolution.Y || Mesh == null;
     }
 }

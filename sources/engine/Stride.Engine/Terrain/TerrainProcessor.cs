@@ -106,8 +106,8 @@ namespace Stride.Terrain
 
         private void UpdateVertexData(GraphicsContext graphicsContext, Vector3 size, TerrainData terrain, TerrainRenderData renderData, bool updateHeights, bool updateNormals)
         {
-            var tessellationX = terrain.Size.X;
-            var tessellationY = terrain.Size.Y;
+            var tessellationX = terrain.Resolution.X;
+            var tessellationY = terrain.Resolution.Y;
 
             if (updateHeights || updateNormals)
             {
@@ -136,8 +136,8 @@ namespace Stride.Terrain
         /// <returns></returns>
         private void CreateMeshFromHeightMap(GraphicsDevice graphicsDevice, Vector3 size, TerrainData terrain, TerrainRenderData renderData)
         {
-            var tessellationX = terrain.Size.X;
-            var tessellationY = terrain.Size.Y;
+            var tessellationX = terrain.Resolution.X;
+            var tessellationY = terrain.Resolution.Y;
             var columnCount = (tessellationX + 1);
             var rowCount = (tessellationY + 1);
             var vertices = new VertexPositionNormalTangentTexture[columnCount * rowCount];
@@ -244,7 +244,7 @@ namespace Stride.Terrain
             {
                 for (var x = 0; x < (tessellationX + 1); x++)
                 {
-                    var index = y * terrain.Size.X + x;
+                    var index = y * terrain.Resolution.X + x;
                     if (invalidatesIndices.Contains(index))
                     {
                         vertices[vertexCount].Position.Y = terrain.GetHeightAt(x, y) * size.Y;

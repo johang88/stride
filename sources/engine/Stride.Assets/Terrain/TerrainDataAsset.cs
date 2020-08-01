@@ -18,21 +18,33 @@ namespace Stride.Assets.Terrain
         public const string FileExtension = ".sdter";
 
         /// <summary>
-        /// Size of the height map
+        /// Resolution of the height map
         /// </summary>
         [DataMember(10)]
         [Display(Browsable = false)]
-        public Int2 Size { get; set; }
+        public Int2 Resolution { get; set; }
+
+        /// <summary>
+        /// Resolution of any attached splat maps
+        /// </summary>
+        [DataMember(20)]
+        public Int2 SplatMapResolution { get; set; }
+
+        /// <summary>
+        /// Size / Scale of the terrain in world units
+        /// </summary>
+        [DataMember(30)]
+        public Vector3 Size { get; set; }
 
         /// <summary>
         /// Height map data
         /// </summary>
-        [DataMember(20)]
+        [DataMember(40)]
         [Display(Browsable = false)]
         [NonIdentifiableCollectionItems]
         public ushort[] Heightmap { get; set; }
 
-        [DataMember(30)]
+        [DataMember(50)]
         public List<TerrainLayerData> Layers { get; set; } = new List<TerrainLayerData>();
 
         [DataContract(nameof(TerrainLayerData))]

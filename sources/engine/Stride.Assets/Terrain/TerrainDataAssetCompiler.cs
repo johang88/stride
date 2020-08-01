@@ -31,14 +31,14 @@ namespace Stride.Assets.Terrain
 
             protected override Task<ResultStatus> DoCommandOverride(ICommandContext commandContext)
             {
-                if (Parameters.Size.X <= 0 || Parameters.Size.Y <= 0)
-                    throw new ArgumentException("Size must be greater than zero", nameof(Parameters.Size));
+                if (Parameters.Resolution.X <= 0 || Parameters.Resolution.Y <= 0)
+                    throw new ArgumentException("Size must be greater than zero", nameof(Parameters.Resolution));
 
                 var terrainData = new TerrainData
                 {
-                    Size = Parameters.Size,
+                    Resolution = Parameters.Resolution,
                     // TODO: Should we copy the array? probably
-                    Heightmap = Parameters.Heightmap ?? new ushort[Parameters.Size.X * Parameters.Size.Y] 
+                    Heightmap = Parameters.Heightmap ?? new ushort[Parameters.Resolution.X * Parameters.Resolution.Y] 
                 };
 
                 var assetManager = new ContentManager(MicrothreadLocalDatabases.ProviderService);

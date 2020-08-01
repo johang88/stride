@@ -82,7 +82,7 @@ namespace Stride.Terrain
                 return false;
             }
 
-            int xi = (int)(x * Terrain.Size.X), zi = (int)(z * Terrain.Size.Y);
+            int xi = (int)(x * Terrain.Resolution.X), zi = (int)(z * Terrain.Resolution.Y);
 
             point = new Int2(xi, zi);
             return true;
@@ -114,8 +114,8 @@ namespace Stride.Terrain
                 return -1.0f;
             }
 
-            x *= Terrain.Size.X;
-            z *= Terrain.Size.Y;
+            x *= Terrain.Resolution.X;
+            z *= Terrain.Resolution.Y;
 
             var xi = (int)x;
             var zi = (int)z;
@@ -123,12 +123,12 @@ namespace Stride.Terrain
             var xpct = x - xi;
             var zpct = z - zi;
 
-            if (xi == Terrain.Size.X - 1)
+            if (xi == Terrain.Resolution.X - 1)
             {
                 --xi;
                 xpct = 1.0f;
             }
-            if (zi == Terrain.Size.Y - 1)
+            if (zi == Terrain.Resolution.Y - 1)
             {
                 --zi;
                 zpct = 1.0f;

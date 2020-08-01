@@ -21,7 +21,7 @@ namespace Stride.Terrain
         /// Size of the height map
         /// </summary>
         [DataMember(10)]
-        public Int2 Size { get; set; }
+        public Int2 Resolution { get; set; }
 
         /// <summary>
         /// Height map data
@@ -31,17 +31,17 @@ namespace Stride.Terrain
         public ushort[] Heightmap { get; set; }
 
         /// <summary>
-        /// Terrain layers and their weight data
+        /// Terrain layers and their splat map data (if available)
         /// </summary>
         [DataMember(30)]
         [Display(Browsable = false)]
-        public Dictionary<TerrainLayer, byte[]> TerrainLayers { get; set; }
+        public List<TerrainLayerData> Layers { get; set; }
 
         public bool IsValidCoordinate(int x, int y)
-            => x >= 0 && x < Size.X && y >= 0 && y < Size.Y;
+            => x >= 0 && x < Resolution.X && y >= 0 && y < Resolution.Y;
 
         public int GetHeightIndex(int x, int y)
-            => y * Size.X + x;
+            => y * Resolution.X + x;
 
         /// <summary>
         /// Get height at a specific point
@@ -95,5 +95,18 @@ namespace Stride.Terrain
         }
 
         public static float ConvertToFloatHeight(float minValue, float maxValue, float value) => MathUtil.InverseLerp(minValue, maxValue, MathUtil.Clamp(value, minValue, maxValue));
+    }
+
+    [DataContract]
+    public class TerrainLayerData
+    {
+        public TerrainLayer Layer { get; set; }
+        /// <summary>
+        /// Optional splat map data for the terrain layer
+        /// this is per terrain data so can't be stored in the layer asset itself
+        /// 
+        /// Can this be a texture instead?
+        /// </summary>
+        public byte[] Data { get; set; }
     }
 }

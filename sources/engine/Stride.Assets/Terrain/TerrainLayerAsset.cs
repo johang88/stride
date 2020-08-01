@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.ComponentModel;
 using Stride.Core;
 using Stride.Core.Annotations;
 using Stride.Core.Assets;
@@ -23,5 +24,11 @@ namespace Stride.Assets.Terrain
 
         [DataMember(20)]
         public Material Material { get; set; }
+
+        [DataMember(30)]
+        public Vector2 UVScale { get; set; } = new Vector2(1, 1);
+
+        [DataMember(40)]
+        public ITerrainLayerBlendType BlendType { get; set; }
     }
 }

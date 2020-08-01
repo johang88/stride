@@ -206,7 +206,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                     // Calculate radius relative to height map
 
                     // Better hope those heightmaps are square :D
-                    var radius = (int)(Math.Min(1.0f, BrushRadius / editableTerain.Size.X) * terrain.Size.X);
+                    var radius = (int)(Math.Min(1.0f, BrushRadius / editableTerain.Size.X) * terrain.Resolution.X);
 
                     var raise = true;
                     var strength = 500.0f;
@@ -220,7 +220,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                             var xi = point.X + x;
                             var yi = point.Y + y;
 
-                            if (xi < 0 || yi < 0 || xi >= terrain.Size.X || yi >= terrain.Size.Y)
+                            if (xi < 0 || yi < 0 || xi >= terrain.Resolution.X || yi >= terrain.Resolution.Y)
                                 continue;
 
                             var distance = Math.Sqrt(y * y + x * x);
@@ -229,7 +229,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                             if (factor <= 0.0f)
                                 continue;
 
-                            var index = yi * terrain.Size.X + xi;
+                            var index = yi * terrain.Resolution.X + xi;
 
                             var height = terrain.Heightmap[index];
                             var distortion = (strength * factor * dt);
