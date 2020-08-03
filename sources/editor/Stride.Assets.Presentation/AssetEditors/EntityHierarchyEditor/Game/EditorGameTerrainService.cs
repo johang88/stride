@@ -22,6 +22,8 @@ using Stride.Assets.Presentation.AssetEditors.Gizmos;
 using Stride.Core.Assets.Quantum;
 using Stride.Core.Quantum;
 using Stride.Assets.Terrain;
+using Microsoft.CodeAnalysis.Differencing;
+using Stride.Terrain.Tools;
 
 namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
 {
@@ -41,8 +43,6 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
         private HashSet<Entity> terrainEntities = new HashSet<Entity>();
 
         private Entity gizmoEntity = null;
-
-        public float BrushRadius = 8.0f;
 
         public EditorGameTerrainService(EntityHierarchyEditorViewModel entityHierarchyEditorViewModel)
         {
@@ -82,7 +82,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                 RenderGroup = TerrainGizmoGroup,
                 Model = new Model
                 {
-                    material, new Mesh { Draw = GeometricPrimitive.Sphere.New(game.GraphicsDevice).ToMeshDraw() }
+                    material, new Mesh { Draw = GeometricPrimitive.Sphere.New(game.GraphicsDevice, 1.0f).ToMeshDraw() }
                 }
             });
 
@@ -121,6 +121,9 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
             var intersectionPoint = Vector3.Zero;
             var frameEditedIndices = new HashSet<int>();
 
+            var session = entityHierarchyEditorViewModel.Session;
+            var controller = entityHierarchyEditorViewModel.Controller;
+
             while (game.IsRunning)
             {
                 await game.Script.NextFrame();
@@ -130,15 +133,6 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                 // We should probably check this once I understand how things work
                 //if (!IsActive)
                 //    continue;
-
-                if (game.Input.IsKeyDown(Input.Keys.OemPlus))
-                {
-                    BrushRadius += dt * 5;
-                }
-                else if (game.Input.IsKeyDown(Input.Keys.OemMinus))
-                {
-                    BrushRadius = Math.Max(1.0f, BrushRadius - dt * 5);
-                }
 
                 // Find intersecting terrain
                 var mousePosition = game.Input.MousePosition;
@@ -167,7 +161,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
 
                     var ray = new Ray(rayStartOS, direction);
 
-                    if (terrainComponent.Intersects(ray, out intersectionPoint))
+                    if (terrainComponent.Terrain.Intersects(ray, out intersectionPoint))
                     {
                         editableTerain = terrainComponent;
                     }
@@ -177,7 +171,11 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                 if (editableTerain != null)
                 {
                     gizmoEntity.Transform.Position = Vector3.Transform(intersectionPoint, editableTerain.Entity.Transform.WorldMatrix).XYZ();
-                    gizmoEntity.Transform.Scale = new Vector3(BrushRadius, BrushRadius, BrushRadius);
+
+                    var relativeSizeX = (editableTerain.Tools.Size / (float)editableTerain.Terrain.Resolution.X) * editableTerain.Terrain.Size.X;
+                    var relativeSizeZ = (editableTerain.Tools.Size / (float)editableTerain.Terrain.Resolution.Y) * editableTerain.Terrain.Size.Z;
+
+                    gizmoEntity.Transform.Scale = new Vector3(relativeSizeX, Math.Max(relativeSizeX, relativeSizeZ), relativeSizeZ);
                 }
 
                 gizmoEntity.Get<ModelComponent>().Enabled = editableTerain != null;
@@ -187,56 +185,34 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                 {
                     IsControllingMouse = true;
 
-                    if (!editableTerain.PositionToHeightMapIndex(intersectionPoint.X, intersectionPoint.Z, out var point))
+                    if (!editableTerain.Terrain.PositionToHeightMapIndex(intersectionPoint.X, intersectionPoint.Z, out var point))
                         continue; // This should not happen if the ray trace was successfull :/ 
 
                     var terrain = editableTerain.Terrain;
 
-                    // Calculate radius relative to height map
-                    // Better hope those heightmaps are square :D
-                    var radius = (int)(Math.Min(1.0f, BrushRadius / editableTerain.Size.X) * terrain.Resolution.X);
+                    var processor = game.SceneSystem.SceneInstance.GetProcessor<TerrainProcessor>();
 
-                    var raise = true;
-                    var strength = 500.0f;
+                    var strength = 1.0f;
                     if (game.Input.IsKeyDown(Input.Keys.LeftShift))
-                        raise = false;
+                        strength = -1.0f;
 
-                    for (var y = -radius; y < radius; y++)
+                    if (strength < 0.0f && editableTerain.Tools.Tool is SetHeight setHeightTool)
                     {
-                        for (var x = -radius; x < radius; x++)
-                        {
-                            var xi = point.X + x;
-                            var yi = point.Y + y;
-
-                            if (xi < 0 || yi < 0 || xi >= terrain.Resolution.X || yi >= terrain.Resolution.Y)
-                                continue;
-
-                            var distance = (float)Math.Sqrt(y * y + x * x);
-                            var factor = radius - distance;
-
-                            if (factor <= 0.0f)
-                                continue;
-
-                            var index = yi * terrain.Resolution.X + xi;
-
-                            var height = terrain.Heightmap[index];
-                            var distortion = (strength * factor * dt);
-
-                            if (raise)
-                                distortion *= -1.0f;
-
-                            terrain.Heightmap[index] = MathUtil.Clamp(height + distortion, 0.0f, 1.0f);
-                            
-                            frameEditedIndices.Add(index);
-                        }
+                        // Quantum is beautiful ... :)
+                        //var componentVM = GetComponentForViewModel<TerrainComponent>(editableTerain.Entity);
+                        //var assetNode = entityHierarchyEditorViewModel.NodeContainer.GetOrCreateNode(componentVM);
+                        //var toolsNode = assetNode[nameof(TerrainComponent.Tools)].Target;
+                        //var toolNode = toolsNode[nameof(TerrainTools.Tool)].Target;
+                        //var heightNode = toolNode[nameof(SetHeight.Height)];
+                        //heightNode.Update(intersectionPoint.Y);
+                        // TODO: This crasches ...
+                    }
+                    else
+                    {
+                        editableTerain.Tools.Apply(processor, editableTerain, point, strength * dt, frameEditedIndices);
                     }
 
-                    // Notify processor so that the mesh is updated
-                    var processor = game.SceneSystem.SceneInstance.GetProcessor<TerrainProcessor>();
-                    processor.Invalidate(editableTerain, frameEditedIndices);
                     frameEditedIndices.Clear();
-
-                    //editableTerain.Invalidate(true, false);
                     editedTerrains.Add(editableTerain);
                 }
                 else if (IsControllingMouse)
@@ -244,22 +220,8 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                     IsControllingMouse = false;
 
                     // TODO: The selection system triggers if we don't move the cursor, maybe something can be done to prevent this
-                    // TODO: Update asset data here 
-
-                    // Apparently things are not in sync, so get the entity view model and fetch the components from there
-                    // We wont be able to get the correct asset reference otherwise
-
-                    // Update normals, this is slow so only done after editing
-                    foreach (var terrainComponent in editedTerrains)
-                    {
-                        // TODO: Currently not needed as quantum invalidates the entire asset reference, which will force the mesh to be recreated
-                        //terrainComponent.Invalidate(true, true);
-                    }
 
                     // Update asset data, this too is quite slow
-                    var session = entityHierarchyEditorViewModel.Session;
-                    var controller = entityHierarchyEditorViewModel.Controller;
-
                     using (var transaction = session.UndoRedoService.CreateTransaction())
                     {
                         session.UndoRedoService.SetName(transaction, "Modify terrain heights");
@@ -268,75 +230,38 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                             var terrain = terrainComponent.Terrain;
                             var entity = terrainComponent.Entity;
 
-                            var entityId = controller.GetAbsoluteId(entity);
-                            var entityVM = (EntityViewModel)entityHierarchyEditorViewModel.FindPartViewModel(entityId);
-
-                            var terrainComponentVM = (TerrainComponent)entityVM.Components.First(c => c is TerrainComponent);
+                            // Apparently things are not in sync, so get the entity view model and fetch the components from there
+                            // We wont be able to get the correct asset reference otherwise
+                            var terrainComponentVM = GetComponentForViewModel<TerrainComponent>(entity);
                             var terrainAssetVM = ContentReferenceHelper.GetReferenceTarget(session, terrainComponentVM.Terrain);
 
                             var assetNode = session.AssetNodeContainer.GetOrCreateNode(terrainAssetVM.Asset);
                             var heightmapNode = (MemberNode)assetNode.TryGetChild(nameof(TerrainData.Heightmap));
-                            var targetNode = (Core.Quantum.ObjectNode)heightmapNode.Target;
 
-                            //targetNode.UpdateValues(allEditedIndices.Select(i => (new NodeIndex(i), (object)terrain.Heightmap[i])));
                             // For now this seems to be the fastest option :/
-                            // Unless we can make quantum faaaaster, which I do believe should be possible ... somehow
+                            // Unless we can make quantum faaaaster, which I do believe should be possible ... somehow ... maybe
                             assetNode[nameof(TerrainDataAsset.Heightmap)].Update(terrain.Heightmap);
                         }
                     }
 
                     editedTerrains.Clear();
                 }
-
-
-                // Apparently things are not in sync, so get the entity view model and fetch the components from there
-                // We wont be able to get the correct asset reference otherwise
-                //var entityId = controller.GetAbsoluteId(entity);
-                //var entityVM = (EntityViewModel)entityHierarchyEditorViewModel.FindPartViewModel(entityId);
-
-                //var terrainComponent = (TerrainComponent)entityVM.Components.First(c => c is TerrainComponent);
-
-
-                // TODO: Store previous mouse coordinates and use old indexes if mouse have not moved, should make editing more pleasant as intersection
-                // point will move when raising / lowering terrain ... 
-                // Or maybe it will work better when we have a gizmo
-
-                //using (var transaction = session.UndoRedoService.CreateTransaction())
-                //{
-
-
-                /*            var entityId = Editor.Controller.GetAbsoluteId(entity);
-        if (!SelectableIds.Contains(entityId) || SelectedIds.Contains(entityId))
-        return;
-
-        IsControllingMouse = true;
-        Editor.Dispatcher.InvokeAsync(() =>
-        {
-        var viewModel = (EntityHierarchyElementViewModel)Editor.FindPartViewModel(entityId);
-        if (viewModel?.IsSelectable == true)
-        Editor.SelectedContent.Add(viewModel);
-        Editor.Controller.InvokeAsync(() => IsControllingMouse = false);
-        });*/
-            //var heightmapAssetVM = ContentReferenceHelper.GetReferenceTarget(session, heightmap);
-
-            // Find quantum node
-            //var assetNode = session.AssetNodeContainer.GetOrCreateNode(heightmapAssetVM);
-            //var index = heightmap.GetHeightIndex((int)intersectionPoint.X, (int)intersectionPoint.Z);
-
-            //var shorts = heightmap.Shorts;
-            //shorts[index] += 1;
-
-            //assetNode[nameof(Heightmap.Shorts)].Update(shorts);
-            // assetNode[nameof(LightProbeComponent.Coefficients)].Update(result[matchingLightProbe.Entity.Id]);
-            //}
+            }
         }
 
-        // game.SceneSystem.SceneInstance.EntityAdded += (sender, entity) => entityPicker.CacheEntity(entity, false);
-        // return scriptComponent.SceneSystem.SceneInstance.GetProcessor<PhysicsProcessor>()?.Simulation;
+        private TComponent GetComponentForViewModel<TComponent>(Entity entity) where TComponent : EntityComponent
+        {
+            var controller = entityHierarchyEditorViewModel.Controller;
 
-        // TODO: Find thing under cursor
-        // Trace using physics as there should 
-    }
+            // Apparently things are not in sync, so get the entity view model and fetch the components from there
+            // We wont be able to get the correct asset reference otherwise
+            var entityId = controller.GetAbsoluteId(entity);
+            var entityVM = (EntityViewModel)entityHierarchyEditorViewModel.FindPartViewModel(entityId);
+
+            var componentVM = (TComponent)entityVM.Components.First(c => c is TComponent);
+
+            return componentVM;
+        }
 
         private static void CreateWorldSpaceCameraRay(Vector2 screenPos, CameraComponent camera, out Vector3 rayStart, out Vector3 rayEnd)
         {

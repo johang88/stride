@@ -3,7 +3,7 @@ Id: 65c3a922-ddf6-4976-a678-a899ab5c7e7e
 AssetTypeName: TerrainDataAsset
 Name: Terrain
 Scope: Asset
-Description: Terrain data asset
+Description: Terrain data
 Group: Terrain
 Order: 100
 Icon: ..\.sdtpl\Terrain.png

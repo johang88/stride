@@ -221,6 +221,14 @@
     </DataTemplate>
   </tp:ModelComponentMaterialTemplateProvider>
 
+  <tp:TerrainComponentTemplateProvider x:Key="TerrainComponentFooterTemplateProvider" sd:PropertyViewHelper.TemplateCategory="PropertyFooter" OverrideRule="All">
+    <DataTemplate>
+      <Border sd:PropertyViewHelper.Increment="0" sd:PropertyViewHelper.IsExpanded="True" Visibility="Visible">
+        <Label Content="I AM TERRAIN FOOTER!"></Label>
+      </Border>
+    </DataTemplate>
+  </tp:TerrainComponentTemplateProvider>
+
   <!-- Providers for number with a range editors -->
   <tp:ModelNodeNameTemplateProvider x:Key="ModelNodeNameTemplateProvider" sd:PropertyViewHelper.TemplateCategory="PropertyEditor" OverrideRule="All">
     <DataTemplate>

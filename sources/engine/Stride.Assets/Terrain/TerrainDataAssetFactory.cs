@@ -14,7 +14,7 @@ namespace Stride.Assets.Terrain
 
             for (var i = 0; i< asset.Heightmap.Length;i++)
             {
-                asset.Heightmap[i] = 128;
+                asset.Heightmap[i] = 0.1f;
             }
 
             return asset;

@@ -32,11 +32,13 @@ namespace Stride.Assets.Terrain
             protected override Task<ResultStatus> DoCommandOverride(ICommandContext commandContext)
             {
                 if (Parameters.Resolution.X <= 0 || Parameters.Resolution.Y <= 0)
-                    throw new ArgumentException("Size must be greater than zero", nameof(Parameters.Resolution));
+                    throw new ArgumentException("Resolution must be greater than zero", nameof(Parameters.Resolution));
 
                 var terrainData = new TerrainData
                 {
                     Resolution = Parameters.Resolution,
+                    Size = Parameters.Size,
+                    SplatMapResolution = Parameters.SplatMapResolution,
                     // TODO: Should we copy the array? probably
                     Heightmap = Parameters.Heightmap ?? new float[Parameters.Resolution.X * Parameters.Resolution.Y] 
                 };

@@ -3,7 +3,7 @@ Id: 3b7f365b-17f3-411a-b782-dfb35cec242a
 AssetTypeName: TerrainLayerAsset
 Name: Terrain Layer
 Scope: Asset
-Description: Terrain layer asset
+Description: Terrain layer
 Group: Terrain
 Order: 200
 Icon: ..\.sdtpl\Terrain.png

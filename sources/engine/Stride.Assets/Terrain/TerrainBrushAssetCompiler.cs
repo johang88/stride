@@ -70,6 +70,8 @@ namespace Stride.Assets.Terrain
 
             private (float[] data, Int2 size) GetBrushHeightData(UFile source)
             {
+                // TODO: Maybe we could generalize this with the physics heightmap compiler?
+                // Will probably need the same tools for importing terrains later on
                 using (var textureTool = new TextureTool())
                 using (var texImage = textureTool.Load(source, Parameters.IsSRgb))
                 {

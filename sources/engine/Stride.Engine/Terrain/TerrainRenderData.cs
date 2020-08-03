@@ -31,11 +31,10 @@ namespace Stride.Terrain
 
         public void Update(TerrainComponent component)
         {
-            Size = component.Size;
             Terrain = component.Terrain;
         }
 
         public bool IsDirty(TerrainComponent component)
-            => Size != component.Size || Terrain.Resolution.X != component.Terrain.Resolution.X || Terrain.Resolution.Y != component.Terrain.Resolution.Y || Mesh == null;
+            => Terrain == null || Terrain.Size != component.Terrain.Size || Terrain.Resolution.X != component.Terrain.Resolution.X || Terrain.Resolution.Y != component.Terrain.Resolution.Y || Mesh == null;
     }
 }

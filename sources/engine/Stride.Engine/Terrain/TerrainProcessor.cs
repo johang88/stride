@@ -1,6 +1,7 @@
 using Stride.Core.Annotations;
 using Stride.Core.Collections;
 using Stride.Core.Mathematics;
+using Stride.Core.Shaders.Ast;
 using Stride.Core.Threading;
 using Stride.Engine;
 using Stride.Games;
@@ -63,7 +64,7 @@ namespace Stride.Terrain
 
         private void ProcessComponent(GraphicsDevice graphicsDevice, TerrainComponent component, TerrainRenderData data)
         {
-            if (component.Terrain == null || component.Size.X <= 0.0f || component.Size.Y <= 0.0f || component.Size.Z <= 0.0f || component.Terrain.Heightmap == null)
+            if (component.Terrain == null || component.Terrain.Size.X <= 0.0f || component.Terrain.Size.Y <= 0.0f || component.Terrain.Size.Z <= 0.0f || component.Terrain.Heightmap == null)
             {
                 DestroyMesh(data);
                 return;
@@ -87,7 +88,7 @@ namespace Stride.Terrain
 
                 DestroyMesh(data);
 
-                CreateMeshFromHeightMap(graphicsDevice, component.Size, component.Terrain, data);
+                CreateMeshFromHeightMap(graphicsDevice, component.Terrain, data);
                 data.ModelComponent.Model.Meshes[0] = data.Mesh;
                 component.Entity.Add(data.ModelComponent);
             }
@@ -97,14 +98,14 @@ namespace Stride.Terrain
                 var graphicsContext = game.GraphicsContext;
 
                 // Update vertex buffer
-                UpdateVertexData(graphicsContext, component.Size, component.Terrain, data, component.VerticesInvalidated, component.NormalsInvalidated);
+                UpdateVertexData(graphicsContext, component.Terrain, data, component.VerticesInvalidated, component.NormalsInvalidated);
 
                 component.VerticesInvalidated = false;
                 component.NormalsInvalidated = false;
             }
         }
 
-        private void UpdateVertexData(GraphicsContext graphicsContext, Vector3 size, TerrainData terrain, TerrainRenderData renderData, bool updateHeights, bool updateNormals)
+        private void UpdateVertexData(GraphicsContext graphicsContext, TerrainData terrain, TerrainRenderData renderData, bool updateHeights, bool updateNormals)
         {
             var tessellationX = terrain.Resolution.X;
             var tessellationY = terrain.Resolution.Y;
@@ -112,13 +113,13 @@ namespace Stride.Terrain
             if (updateHeights || updateNormals)
             {
                 if (updateHeights)
-                    UpdateVertexHeights(size, terrain, tessellationX, tessellationY, renderData.Vertices);
+                    UpdateVertexHeights(terrain, tessellationX, tessellationY, renderData.Vertices);
                 if (updateNormals)
-                    UpdateVertexNormals(size, terrain, tessellationX, tessellationY, renderData.Vertices);
+                    UpdateVertexNormals(terrain, tessellationX, tessellationY, renderData.Vertices);
             }
             else if (renderData.InvalidatesIndices.Count > 0)
             {
-                UpdateInvalidatesIndices(size, terrain, tessellationX, tessellationY, renderData.Vertices, renderData.InvalidatesIndices);
+                UpdateInvalidatesIndices(terrain, tessellationX, tessellationY, renderData.Vertices, renderData.InvalidatesIndices);
             }
 
             renderData.InvalidatesIndices.Clear();
@@ -134,7 +135,7 @@ namespace Stride.Terrain
         /// <param name="size"></param>
         /// <param name="heightmap"></param>
         /// <returns></returns>
-        private void CreateMeshFromHeightMap(GraphicsDevice graphicsDevice, Vector3 size, TerrainData terrain, TerrainRenderData renderData)
+        private void CreateMeshFromHeightMap(GraphicsDevice graphicsDevice, TerrainData terrain, TerrainRenderData renderData)
         {
             var tessellationX = terrain.Resolution.X;
             var tessellationY = terrain.Resolution.Y;
@@ -143,7 +144,7 @@ namespace Stride.Terrain
             var vertices = new VertexPositionNormalTangentTexture[columnCount * rowCount];
             var indices = new int[tessellationX * tessellationY * 6];
 
-            SetVertexData(size, terrain, tessellationX, tessellationY, vertices);
+            SetVertexData(terrain, tessellationX, tessellationY, vertices);
 
             var points = new Vector3[columnCount * rowCount];
             for (var i = 0; i < vertices.Length; i++)
@@ -185,8 +186,10 @@ namespace Stride.Terrain
             };
         }
 
-        private static void SetVertexData(Vector3 size, TerrainData terrain, int tessellationX, int tessellationY, VertexPositionNormalTangentTexture[] vertices)
+        private static void SetVertexData(TerrainData terrain, int tessellationX, int tessellationY, VertexPositionNormalTangentTexture[] vertices)
         {
+            var size = terrain.Size;
+
             var deltaX = size.X / tessellationX;
             var deltaY = size.Z / tessellationY;
 
@@ -211,33 +214,33 @@ namespace Stride.Terrain
             }
         }
 
-        private static void UpdateVertexHeights(Vector3 size, TerrainData terrain, int tessellationX, int tessellationY, VertexPositionNormalTangentTexture[] vertices)
+        private static void UpdateVertexHeights(TerrainData terrain, int tessellationX, int tessellationY, VertexPositionNormalTangentTexture[] vertices)
         {
             var vertexCount = 0;
             for (var y = 0; y < (tessellationY + 1); y++)
             {
                 for (var x = 0; x < (tessellationX + 1); x++)
                 {
-                    vertices[vertexCount].Position.Y = terrain.GetHeightAt(x, y) * size.Y;
+                    vertices[vertexCount].Position.Y = terrain.GetHeightAt(x, y) * terrain.Size.Y;
                     vertexCount++;
                 }
             }
         }
 
-        private static void UpdateVertexNormals(Vector3 size, TerrainData terrain, int tessellationX, int tessellationY, VertexPositionNormalTangentTexture[] vertices)
+        private static void UpdateVertexNormals(TerrainData terrain, int tessellationX, int tessellationY, VertexPositionNormalTangentTexture[] vertices)
         {
             var vertexCount = 0;
             for (var y = 0; y < (tessellationY + 1); y++)
             {
                 for (var x = 0; x < (tessellationX + 1); x++)
                 {
-                    vertices[vertexCount].Normal = terrain.GetNormal(x, y, size.Y);
+                    vertices[vertexCount].Normal = terrain.GetNormal(x, y, terrain.Size.Y);
                     vertexCount++;
                 }
             }
         }
 
-        private static void UpdateInvalidatesIndices(Vector3 size, TerrainData terrain, int tessellationX, int tessellationY, VertexPositionNormalTangentTexture[] vertices, HashSet<int> invalidatesIndices)
+        private static void UpdateInvalidatesIndices(TerrainData terrain, int tessellationX, int tessellationY, VertexPositionNormalTangentTexture[] vertices, HashSet<int> invalidatesIndices)
         {
             var vertexCount = 0;
             for (var y = 0; y < (tessellationY + 1); y++)
@@ -247,8 +250,8 @@ namespace Stride.Terrain
                     var index = y * terrain.Resolution.X + x;
                     if (invalidatesIndices.Contains(index))
                     {
-                        vertices[vertexCount].Position.Y = terrain.GetHeightAt(x, y) * size.Y;
-                        vertices[vertexCount].Normal = terrain.GetNormal(x, y, size.Y);
+                        vertices[vertexCount].Position.Y = terrain.GetHeightAt(x, y) * terrain.Size.Y;
+                        vertices[vertexCount].Normal = terrain.GetNormal(x, y, terrain.Size.Y);
                     }
                     vertexCount++;
                 }
