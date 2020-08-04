@@ -122,7 +122,6 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
             var frameEditedIndices = new HashSet<int>();
 
             var session = entityHierarchyEditorViewModel.Session;
-            var controller = entityHierarchyEditorViewModel.Controller;
 
             while (game.IsRunning)
             {

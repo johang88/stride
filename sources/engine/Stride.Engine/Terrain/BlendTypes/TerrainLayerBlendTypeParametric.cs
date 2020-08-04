@@ -12,10 +12,14 @@ namespace Stride.Terrain.BlendTypes
         public float MinHeight { get; set; }
         [DataMember(11)]
         public float MaxHeight { get; set; }
+        [DataMember(12)]
+        public float HeightStrength { get; set; }
 
         [DataMember(20)]
         public float MinSlope { get; set; }
         [DataMember(21)]
         public float MaxSlope { get; set; }
+        [DataMember(22)]
+        public float SlopeStrength { get; set; }
     }
 }
