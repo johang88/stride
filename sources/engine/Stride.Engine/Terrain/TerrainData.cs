@@ -229,6 +229,9 @@ namespace Stride.Terrain
                 }
             }
 
+            // Calculate step size relative to terrain size and resolution
+            var stepSize = new Vector2(Size.X / Resolution.X, Size.Z / Resolution.Y).Length();
+
             // Trace along the ray until we leave bounds or intersect the terrain
             while (true)
             {
@@ -239,7 +242,7 @@ namespace Stride.Terrain
                     return true;
                 }
 
-                point += ray.Direction;
+                point += ray.Direction * stepSize;
 
                 if (point.X < bounds.Minimum.X || point.X > bounds.Maximum.X || point.Z < bounds.Minimum.Z || point.Z > bounds.Maximum.Z)
                 {
