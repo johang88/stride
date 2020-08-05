@@ -26,7 +26,7 @@ namespace Stride.Assets.Terrain
         public override IEnumerable<BuildDependencyInfo> GetInputTypes(AssetItem assetItem)
         {
             yield return new BuildDependencyInfo(typeof(TerrainLayerAsset), typeof(AssetCompilationContext), BuildDependencyType.Runtime | BuildDependencyType.CompileAsset);
-            yield return new BuildDependencyInfo(typeof(MaterialAsset), typeof(AssetCompilationContext), BuildDependencyType.Runtime);
+            yield return new BuildDependencyInfo(typeof(MaterialAsset), typeof(AssetCompilationContext), BuildDependencyType.Runtime | BuildDependencyType.CompileAsset);
         }
 
         protected override void Prepare(AssetCompilerContext context, AssetItem assetItem, string targetUrlInStorage, AssetCompilerResult result)

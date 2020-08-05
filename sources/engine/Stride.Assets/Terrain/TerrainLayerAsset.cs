@@ -28,7 +28,7 @@ namespace Stride.Assets.Terrain
         [DataMember(30)]
         public Vector2 UVScale { get; set; } = new Vector2(1, 1);
 
-        [DataMember(40)]
+        [DataMember(40), Display(Expand = ExpandRule.Always)]
         public ITerrainLayerBlendType BlendType { get; set; }
     }
 }
