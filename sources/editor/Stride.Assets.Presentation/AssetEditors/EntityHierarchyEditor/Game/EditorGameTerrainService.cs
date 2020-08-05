@@ -24,6 +24,10 @@ using Stride.Core.Quantum;
 using Stride.Assets.Terrain;
 using Microsoft.CodeAnalysis.Differencing;
 using Stride.Terrain.Tools;
+using ICSharpCode.AvalonEdit.Editing;
+using Stride.Rendering.Materials;
+using Stride.Graphics;
+using Stride.Rendering.Materials.ComputeColors;
 
 namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
 {
@@ -41,6 +45,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
         public override bool IsControllingMouse { get; protected set; }
 
         private HashSet<Entity> terrainEntities = new HashSet<Entity>();
+        private TerrainToolsComponent _terrainTools = null;
 
         private Entity gizmoEntity = null;
 
@@ -53,9 +58,27 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
         {
             game = (EntityHierarchyEditorGame)editorGame;
 
+            var selectionService = game.EditorServices.Get<IEditorGameEntitySelectionService>();
+            selectionService.SelectionUpdated += SelectionService_SelectionUpdated;
+
             var editorScene = game.EditorScene;
 
             // Setup gizmo rendering
+            //var terrainGizmoRenderStage = new RenderStage("Terrain Gizmo", "Main") { SortMode = new BackToFrontSortMode() };
+            //game.EditorSceneSystem.GraphicsCompositor.RenderStages.Add(terrainGizmoRenderStage);
+
+            //var meshRenderFeature = game.EditorSceneSystem.GraphicsCompositor.RenderFeatures.OfType<MeshRenderFeature>().First();
+            //meshRenderFeature.RenderStageSelectors.Add(new SimpleGroupToRenderStageSelector
+            //{
+            //    EffectName = EditorGraphicsCompositorHelper.EditorForwardShadingEffect,
+            //    RenderGroup = TerrainGizmoGroupMask,
+            //    RenderStage = terrainGizmoRenderStage
+            //});
+
+            //meshRenderFeature.PipelineProcessors.Add(new AlphaBlendPipelineProcessor { RenderStage = terrainGizmoRenderStage });
+
+            //var editorCompositor = (EditorTopLevelCompositor)game.EditorSceneSystem.GraphicsCompositor.Game;
+            //editorCompositor.PostGizmoCompositors.Add(new SingleStageRenderer { RenderStage = terrainGizmoRenderStage });
             var terrainMainGizmoRenderStage = new RenderStage("Terrain Painter Gizmo", "Main") { SortMode = new BackToFrontSortMode() };
             game.EditorSceneSystem.GraphicsCompositor.RenderStages.Add(terrainMainGizmoRenderStage);
 
@@ -75,7 +98,19 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
             MicrothreadLocalDatabases.MountCommonDatabase();
 
             // Create gizmo
-            var material = GizmoUniformColorMaterial.Create(game.GraphicsDevice, new Color(0, 255, 0, 64), false);
+            var material = Material.New(game.GraphicsDevice, new MaterialDescriptor
+            {
+                Attributes =
+                {
+                    Emissive = new MaterialEmissiveMapFeature(new ComputeColor { Value = new Color(0, 255, 0, 64) })
+                    {
+                        UseAlpha = true
+                    },
+                    Transparency = new MaterialTransparencyBlendFeature(),
+                    CullMode = CullMode.None
+                }
+            });
+
             gizmoEntity = new Entity("Terrain Gizmo");
             gizmoEntity.Components.Add(new ModelComponent
             {
@@ -91,6 +126,18 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
             game.Script.AddTask(Execute);
 
             return Task.FromResult(true);
+        }
+
+        private void SelectionService_SelectionUpdated(object sender, EntitySelectionEventArgs e)
+        {
+            if (e.NewSelection.Count == 1)
+            {
+                _terrainTools = e.NewSelection.First().Get<TerrainToolsComponent>();
+            }
+            else
+            {
+                _terrainTools = null;
+            }
         }
 
         public override void RegisterScene(Scene scene)
@@ -129,10 +176,6 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
 
                 var dt = (float)game.UpdateTime.Elapsed.TotalSeconds;
 
-                // We should probably check this once I understand how things work
-                //if (!IsActive)
-                //    continue;
-
                 // Find intersecting terrain
                 var mousePosition = game.Input.MousePosition;
                 var cameraService = game.EditorServices.Get<IEditorGameCameraService>();
@@ -140,41 +183,44 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                 CreateWorldSpaceCameraRay(mousePosition, cameraService.Component, out var rayStartWS, out var rayEndWS);
 
                 TerrainComponent editableTerain = null;
-                foreach (var entity in terrainEntities)
+                if (_terrainTools != null)
                 {
-                    var terrainComponent = entity.Get<TerrainComponent>();
-
-                    // Can happen in some reload scenarios
-                    if (terrainComponent.Terrain == null || terrainComponent.Terrain.Heightmap == null)
-                        continue;
-
-                    var worldMatrix = entity.Transform.WorldMatrix;
-                    Matrix.Invert(ref worldMatrix, out var invWorldMatrix);
-
-                    // Transform ray to object space
-                    Vector3.Transform(ref rayStartWS, ref invWorldMatrix, out Vector3 rayStartOS);
-                    Vector3.Transform(ref rayEndWS, ref invWorldMatrix, out Vector3 rayEndOS);
-
-                    var direction = rayEndOS - rayStartOS;
-                    direction.Normalize();
-
-                    var ray = new Ray(rayStartOS, direction);
-
-                    if (terrainComponent.Terrain.Intersects(ray, out intersectionPoint))
+                    foreach (var entity in terrainEntities)
                     {
-                        editableTerain = terrainComponent;
+                        var terrainComponent = entity.Get<TerrainComponent>();
+
+                        // Can happen in some reload scenarios
+                        if (terrainComponent.Terrain == null || terrainComponent.Terrain.Heightmap == null)
+                            continue;
+
+                        var worldMatrix = entity.Transform.WorldMatrix;
+                        Matrix.Invert(ref worldMatrix, out var invWorldMatrix);
+
+                        // Transform ray to object space
+                        Vector3.Transform(ref rayStartWS, ref invWorldMatrix, out Vector3 rayStartOS);
+                        Vector3.Transform(ref rayEndWS, ref invWorldMatrix, out Vector3 rayEndOS);
+
+                        var direction = rayEndOS - rayStartOS;
+                        direction.Normalize();
+
+                        var ray = new Ray(rayStartOS, direction);
+
+                        if (terrainComponent.Terrain.Intersects(ray, out intersectionPoint))
+                        {
+                            editableTerain = terrainComponent;
+                        }
                     }
-                }
 
-                // Update Gizmo
-                if (editableTerain != null)
-                {
-                    gizmoEntity.Transform.Position = Vector3.Transform(intersectionPoint, editableTerain.Entity.Transform.WorldMatrix).XYZ();
+                    // Update Gizmo position and size
+                    if (editableTerain != null)
+                    {
+                        gizmoEntity.Transform.Position = Vector3.Transform(intersectionPoint, editableTerain.Entity.Transform.WorldMatrix).XYZ();
 
-                    var relativeSizeX = (editableTerain.Tools.Size / (float)editableTerain.Terrain.Resolution.X) * editableTerain.Terrain.Size.X;
-                    var relativeSizeZ = (editableTerain.Tools.Size / (float)editableTerain.Terrain.Resolution.Y) * editableTerain.Terrain.Size.Z;
+                        var relativeSizeX = (_terrainTools.Size / (float)editableTerain.Terrain.Resolution.X) * editableTerain.Terrain.Size.X;
+                        var relativeSizeZ = (_terrainTools.Size / (float)editableTerain.Terrain.Resolution.Y) * editableTerain.Terrain.Size.Z;
 
-                    gizmoEntity.Transform.Scale = new Vector3(relativeSizeX, Math.Max(relativeSizeX, relativeSizeZ), relativeSizeZ);
+                        gizmoEntity.Transform.Scale = new Vector3(relativeSizeX, Math.Max(relativeSizeX, relativeSizeZ), relativeSizeZ);
+                    }
                 }
 
                 gizmoEntity.Get<ModelComponent>().Enabled = editableTerain != null;
@@ -187,15 +233,13 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                     if (!editableTerain.Terrain.PositionToHeightMapIndex(intersectionPoint.X, intersectionPoint.Z, out var point))
                         continue; // This should not happen if the ray trace was successfull :/ 
 
-                    var terrain = editableTerain.Terrain;
-
                     var processor = game.SceneSystem.SceneInstance.GetProcessor<TerrainProcessor>();
 
                     var strength = 1.0f;
                     if (game.Input.IsKeyDown(Input.Keys.LeftShift))
                         strength = -1.0f;
 
-                    if (strength < 0.0f && editableTerain.Tools.Tool is SetHeight setHeightTool)
+                    if (strength < 0.0f && _terrainTools.Tool is SetHeight setHeightTool)
                     {
                         // Quantum is beautiful ... :)
                         //var componentVM = GetComponentForViewModel<TerrainComponent>(editableTerain.Entity);
@@ -208,7 +252,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                     }
                     else
                     {
-                        editableTerain.Tools.Apply(processor, editableTerain, point, strength * dt, frameEditedIndices);
+                        _terrainTools.Apply(processor, editableTerain, point, strength * dt, frameEditedIndices);
                     }
 
                     frameEditedIndices.Clear();
@@ -235,7 +279,6 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                             var terrainAssetVM = ContentReferenceHelper.GetReferenceTarget(session, terrainComponentVM.Terrain);
 
                             var assetNode = session.AssetNodeContainer.GetOrCreateNode(terrainAssetVM.Asset);
-                            var heightmapNode = (MemberNode)assetNode.TryGetChild(nameof(TerrainData.Heightmap));
 
                             // For now this seems to be the fastest option :/
                             // Unless we can make quantum faaaaster, which I do believe should be possible ... somehow ... maybe

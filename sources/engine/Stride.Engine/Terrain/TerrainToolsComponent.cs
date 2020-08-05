@@ -4,6 +4,7 @@ using System.Text;
 using Stride.Core;
 using Stride.Core.Annotations;
 using Stride.Core.Mathematics;
+using Stride.Engine;
 
 namespace Stride.Terrain
 {
@@ -12,7 +13,7 @@ namespace Stride.Terrain
     /// Not the most beutiful solution but it works ... at least I don't have to mess with WPF for now :D
     /// </summary>
     [DataContract]
-    public class TerrainTools
+    public class TerrainToolsComponent : EntityComponent
     {
         [DataMember(10)]
         public TerrainBrush Brush { get; set; }

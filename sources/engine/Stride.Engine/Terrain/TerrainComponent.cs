@@ -37,9 +37,6 @@ namespace Stride.Terrain
         [DataMember(40)]
         public Material Material { get; set; }
 
-        [DataMember(50), Display(Expand = ExpandRule.Always)]
-        public TerrainTools Tools { get; set; } = new TerrainTools();
-
         [DataMemberIgnore]
         internal bool VerticesInvalidated { get; set; }
         [DataMemberIgnore]
