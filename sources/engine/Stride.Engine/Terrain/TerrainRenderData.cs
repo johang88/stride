@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Text;
+using SharpFont;
 using Stride.Core.Collections;
 using Stride.Core.Mathematics;
 using Stride.Engine;
@@ -12,8 +13,11 @@ namespace Stride.Terrain
 {
     public class TerrainRenderData
     {
-        public TerrainData Terrain { get; set; }
         public Vector3 Size { get; set; }
+        public Int2 Resolution { get; set; }
+
+        public TerrainData Terrain { get; set; }
+        
         public Mesh Mesh { get; set; }
         public ModelComponent ModelComponent { get; set; } = new ModelComponent();
         public Material Material { get; set; }
@@ -35,10 +39,23 @@ namespace Stride.Terrain
         public void Update(TerrainComponent component)
         {
             Terrain = component.Terrain;
+            Size = Terrain.Size;
+            Resolution = Terrain.Resolution;
         }
 
         public bool IsDirty(TerrainComponent component)
-            => Terrain == null || Terrain.Size != component.Terrain.Size || Terrain.Resolution.X != component.Terrain.Resolution.X || Terrain.Resolution.Y != component.Terrain.Resolution.Y || Mesh == null;
+        {
+            if (Terrain == null ||Mesh == null)
+                return true;
+
+            if (Size != component.Terrain.Size)
+                return true;
+
+            if (Resolution != component.Terrain.Resolution)
+                return true;
+
+            return false;
+        }
 
         public Texture CreateLayerTexture(GraphicsDevice device, TerrainLayerData layerData)
         {
