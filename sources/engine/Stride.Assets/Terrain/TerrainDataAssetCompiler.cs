@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Stride.Core.Assets;
+using Stride.Core.Assets.Analysis;
 using Stride.Core.Assets.Compiler;
 using Stride.Core.BuildEngine;
 using Stride.Core.Serialization.Contents;
@@ -14,6 +15,11 @@ namespace Stride.Assets.Terrain
     [AssetCompiler(typeof(TerrainDataAsset), typeof(AssetCompilationContext))]
     internal class TerrainDataAssetCompiler : AssetCompilerBase
     {
+        public override IEnumerable<BuildDependencyInfo> GetInputTypes(AssetItem assetItem)
+        {
+            yield return new BuildDependencyInfo(typeof(TerrainLayerAsset), typeof(AssetCompilationContext), BuildDependencyType.Runtime);
+        }
+
         protected override void Prepare(AssetCompilerContext context, AssetItem assetItem, string targetUrlInStorage, AssetCompilerResult result)
         {
             var asset = (TerrainDataAsset)assetItem.Asset;
@@ -39,9 +45,16 @@ namespace Stride.Assets.Terrain
                     Resolution = Parameters.Resolution,
                     Size = Parameters.Size,
                     SplatMapResolution = Parameters.SplatMapResolution,
-                    // TODO: Should we copy the array? probably
-                    Heightmap = Parameters.Heightmap ?? new float[Parameters.Resolution.X * Parameters.Resolution.Y] 
+                    Heightmap = Parameters.Heightmap ?? new float[Parameters.Resolution.X * Parameters.Resolution.Y],
+                    Layers = Parameters.Layers.Select(x => new TerrainLayerData
+                    {
+                         Layer = x.Layer,
+                         Data = x.Data
+                    }).ToList()
                 };
+
+                // TODO: Need to build material here, can't be done at runtime
+                // TODO: Need to build textures for blend layers here, they can probably be updated at runtime if needed
 
                 var assetManager = new ContentManager(MicrothreadLocalDatabases.ProviderService);
                 assetManager.Save(Url, terrainData);

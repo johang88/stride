@@ -7,7 +7,7 @@ using Stride.Core.Mathematics;
 namespace Stride.Terrain.Tools
 {
     [DataContract]
-    public class SetHeight : ITerrainTool
+    public class SetHeight : Terrain.BaseTool
     {
         public float Height { get; set; }
 

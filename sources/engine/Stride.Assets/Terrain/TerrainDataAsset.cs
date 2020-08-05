@@ -4,6 +4,7 @@ using Stride.Core.Annotations;
 using Stride.Core.Assets;
 using Stride.Core.Mathematics;
 using Stride.Core.Serialization;
+using Stride.Core.Yaml.Tokens;
 using Stride.Terrain;
 
 namespace Stride.Assets.Terrain
@@ -17,18 +18,57 @@ namespace Stride.Assets.Terrain
         private const string CurrentVersion = "3.0.0.0";
         public const string FileExtension = ".sdter";
 
+        private Int2 _resolution;
+
         /// <summary>
         /// Resolution of the height map
         /// </summary>
         [DataMember(10)]
         [Display(Browsable = false)]
-        public Int2 Resolution { get; set; }
+        public Int2 Resolution
+        {
+            get { return _resolution; }
+            set
+            {
+                // Resize if needed
+                if (value.X > 0 && value.Y > 0 && (Heightmap == null || Heightmap.Length != value.X * value.Y))
+                {
+                    Heightmap = new float[value.X * value.Y];
+                }
 
+                _resolution = value;
+            }
+        }
+
+        private Int2 _splatMapResolution;
         /// <summary>
         /// Resolution of any attached splat maps
         /// </summary>
         [DataMember(20)]
-        public Int2 SplatMapResolution { get; set; }
+        public Int2 SplatMapResolution
+        {
+            get { return _splatMapResolution; }
+            set
+            {
+                // Resize if needed
+                if (Layers != null)
+                {
+                    var size = value.X * value.Y;
+                    if (size > 0)
+                    {
+                        foreach (var layer in Layers)
+                        {
+                            if (layer.Data == null || layer.Data.Length != size)
+                            {
+                                layer.Data = new byte[size];
+                            }
+                        }
+                    }
+                }
+
+                _splatMapResolution = value;
+            }
+        }
 
         /// <summary>
         /// Size / Scale of the terrain in world units

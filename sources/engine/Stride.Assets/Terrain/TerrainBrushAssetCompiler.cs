@@ -135,11 +135,11 @@ namespace Stride.Assets.Terrain
                                 break;
 
                             case PixelFormat.R16_SNorm:
-                                floats = HeightmapUtils.ConvertToFloatHeights(pixelBuffer.GetPixels<short>());
+                                floats = ConvertToFloatHeights(pixelBuffer.GetPixels<short>());
                                 break;
 
                             case PixelFormat.R8_UNorm:
-                                floats = HeightmapUtils.ConvertToFloatHeights(pixelBuffer.GetPixels<byte>());
+                                floats = ConvertToFloatHeights(pixelBuffer.GetPixels<byte>());
                                 break;
                         }
 
@@ -147,6 +147,12 @@ namespace Stride.Assets.Terrain
                     }
                 }
             }
+
+            public static float ConvertToFloatHeight(float minValue, float maxValue, float value) => MathUtil.InverseLerp(minValue, maxValue, MathUtil.Clamp(value, minValue, maxValue));
+
+            public static float[] ConvertToFloatHeights(float[] values, float minValue, float maxValue) => values.Select((v) => ConvertToFloatHeight(minValue, maxValue, v)).ToArray();
+            public static float[] ConvertToFloatHeights(short[] values, short minValue = short.MinValue, short maxValue = short.MaxValue) => values.Select((v) => ConvertToFloatHeight(minValue, maxValue, v)).ToArray();
+            public static float[] ConvertToFloatHeights(byte[] values, byte minValue = byte.MinValue, byte maxValue = byte.MaxValue) => values.Select((v) => ConvertToFloatHeight(minValue, maxValue, v)).ToArray();
         }
     }
 }

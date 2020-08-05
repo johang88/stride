@@ -5,7 +5,7 @@ using Stride.Core.Mathematics;
 
 namespace Stride.Terrain
 {
-    public interface ITerrainTool
+    public interface BaseTool
     {
         void Apply(TerrainData terrain, TerrainBrush brush, float strength, int size, Int2 point, HashSet<int> modifiedIndices);
     }

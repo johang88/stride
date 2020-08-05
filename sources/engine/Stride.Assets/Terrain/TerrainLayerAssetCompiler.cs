@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Stride.Assets.Materials;
 using Stride.Core.Assets;
+using Stride.Core.Assets.Analysis;
 using Stride.Core.Assets.Compiler;
 using Stride.Core.BuildEngine;
 using Stride.Core.Serialization.Contents;
@@ -14,6 +16,11 @@ namespace Stride.Assets.Terrain
     [AssetCompiler(typeof(TerrainLayerAsset), typeof(AssetCompilationContext))]
     internal class TerrainLayerAssetCompiler : AssetCompilerBase
     {
+        public override IEnumerable<BuildDependencyInfo> GetInputTypes(AssetItem assetItem)
+        {
+            yield return new BuildDependencyInfo(typeof(MaterialAsset), typeof(AssetCompilationContext), BuildDependencyType.Runtime);
+        }
+
         protected override void Prepare(AssetCompilerContext context, AssetItem assetItem, string targetUrlInStorage, AssetCompilerResult result)
         {
             var asset = (TerrainLayerAsset)assetItem.Asset;

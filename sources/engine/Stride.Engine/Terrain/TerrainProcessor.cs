@@ -1,3 +1,4 @@
+using Stride.Core;
 using Stride.Core.Annotations;
 using Stride.Core.Collections;
 using Stride.Core.Mathematics;
@@ -37,6 +38,16 @@ namespace Stride.Terrain
 
                 data.Vertices = null;
                 data.Mesh = null;
+
+                data.Material = null;
+                foreach (var texture in data.LayerTextures.Values)
+                {
+                    if (!texture.IsDisposed)
+                    {
+                        texture.Dispose();
+                    }
+                }
+                data.LayerTextures.Clear();
             }
         }
 
@@ -70,12 +81,28 @@ namespace Stride.Terrain
                 return;
             }
 
+            // Garbage collect texture layers as needed
+            foreach (var layerTextureData in data.LayerTextures)
+            {
+                if (!layerTextureData.Value.IsDisposed && !component.Terrain.Layers.Contains(layerTextureData.Key))
+                {
+                    layerTextureData.Value.Dispose();
+                }
+
+                // TODO: We could remove the layers but not really needed, they will go when the component goes ...
+            }
+
             // Sync model properties
             // TODO: Get rid of the model component? It's only their for picking support which should be solvable without it ...
             data.ModelComponent.Model.Materials.Clear();
             if (component.Material != null)
             {
                 data.ModelComponent.Model.Materials.Add(component.Material);
+            }
+            else if (component.Terrain.Layers != null)
+            {
+                TerrainMaterialGenerator.Generate(graphicsDevice, component.Terrain, data);
+                data.ModelComponent.Model.Materials.Add(data.Material);
             }
 
             data.ModelComponent.IsShadowCaster = component.CastShadows;

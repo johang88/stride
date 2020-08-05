@@ -22,7 +22,7 @@ namespace Stride.Terrain
         public int Size { get; set; } = 16;
 
         [DataMember(20)]
-        public ITerrainTool Tool { get; set; }
+        public BaseTool Tool { get; set; }
 
         public void Apply(TerrainProcessor terrainProcessor, TerrainComponent terrainComponent, Int2 point, float strengthModifier, HashSet<int> modifiedIndices)
         {
