@@ -220,7 +220,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
 
                     // TODO: The selection system triggers if we don't move the cursor, maybe something can be done to prevent this
 
-                    // Update asset data, this too is quite slow
+                    // Update asset data, this too is quite slow, but we have at least made it somewhat faster
                     using (var transaction = session.UndoRedoService.CreateTransaction())
                     {
                         session.UndoRedoService.SetName(transaction, "Modify terrain heights");

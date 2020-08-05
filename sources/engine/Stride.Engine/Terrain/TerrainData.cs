@@ -5,6 +5,7 @@ using Stride.Core.Mathematics;
 using Stride.Core.Serialization;
 using Stride.Core.Serialization.Contents;
 using Stride.Engine.Design;
+using Stride.Rendering;
 
 namespace Stride.Terrain
 {
@@ -48,6 +49,10 @@ namespace Stride.Terrain
         [DataMember(30)]
         [Display(Browsable = false)]
         public List<TerrainLayerData> Layers { get; set; }
+
+        [DataMember(40)]
+        [Display(Browsable = false)]
+        public Material Material { get; set; }
 
         public bool IsValidCoordinate(int x, int y)
             => x >= 0 && x < Resolution.X && y >= 0 && y < Resolution.Y;

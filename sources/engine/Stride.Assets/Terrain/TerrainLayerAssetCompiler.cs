@@ -18,7 +18,7 @@ namespace Stride.Assets.Terrain
     {
         public override IEnumerable<BuildDependencyInfo> GetInputTypes(AssetItem assetItem)
         {
-            yield return new BuildDependencyInfo(typeof(MaterialAsset), typeof(AssetCompilationContext), BuildDependencyType.Runtime);
+            yield return new BuildDependencyInfo(typeof(MaterialAsset), typeof(AssetCompilationContext), BuildDependencyType.Runtime | BuildDependencyType.CompileAsset);
         }
 
         protected override void Prepare(AssetCompilerContext context, AssetItem assetItem, string targetUrlInStorage, AssetCompilerResult result)
@@ -42,7 +42,7 @@ namespace Stride.Assets.Terrain
                 {
                     Name = Parameters.Name,
                     Material = Parameters.Material,
-                    UVSCale = Parameters.UVScale,
+                    UVScale = Parameters.UVScale,
                     BlendType = Parameters.BlendType
                 };
 

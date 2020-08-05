@@ -20,13 +20,10 @@ namespace Stride.Terrain
         
         public Mesh Mesh { get; set; }
         public ModelComponent ModelComponent { get; set; } = new ModelComponent();
-        public Material Material { get; set; }
 
         public VertexPositionNormalTangentTexture[] Vertices;
         public Buffer<VertexPositionNormalTangentTexture> VertexBuffer { get; set; }
         public HashSet<int> InvalidatesIndices { get; private set; } = new HashSet<int>();
-
-        public Dictionary<TerrainLayerData, Texture> LayerTextures = new Dictionary<TerrainLayerData, Texture>();
 
         public TerrainRenderData()
         {
@@ -55,17 +52,6 @@ namespace Stride.Terrain
                 return true;
 
             return false;
-        }
-
-        public Texture CreateLayerTexture(GraphicsDevice device, TerrainLayerData layerData)
-        {
-            if (LayerTextures.TryGetValue(layerData, out var texture))
-                return texture;
-
-            var newTexture = Texture.New2D(device, Terrain.SplatMapResolution.X, Terrain.SplatMapResolution.Y, PixelFormat.R8_UNorm, layerData.Data);
-            LayerTextures.Add(layerData, newTexture);
-
-            return newTexture;
         }
     }
 }

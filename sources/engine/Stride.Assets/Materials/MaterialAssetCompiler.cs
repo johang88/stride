@@ -41,7 +41,7 @@ namespace Stride.Assets.Materials
             result.BuildSteps.Add(new MaterialCompileCommand(targetUrlInStorage, assetItem, asset, context));
         }
 
-        private class MaterialCompileCommand : AssetCommand<MaterialAsset>
+        public class MaterialCompileCommand : AssetCommand<MaterialAsset>
         {
             private readonly AssetItem assetItem;
 

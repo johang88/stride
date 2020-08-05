@@ -7,34 +7,16 @@ using Stride.Core.Mathematics;
 namespace Stride.Terrain.Tools
 {
     [DataContract]
-    public class SetHeight : Terrain.BaseTool
+    public class SetHeight : BaseTool
     {
         public float Height { get; set; }
 
-        public void Apply(TerrainData terrain, TerrainBrush brush, float strength, int size, Int2 point, HashSet<int> modifiedIndices)
+        protected override void ApplyTool(TerrainData terrain, int x, int y, float strength, HashSet<int> modifiedIndices)
         {
-            for (var y = -size; y < size; y++)
-            {
-                for (var x = -size; x < size; x++)
-                {
-                    var xi = point.X + x;
-                    var yi = point.Y + y;
+            var index = y * terrain.Resolution.X + x;
+            terrain.Heightmap[index] = Height / terrain.Size.Y;
 
-                    if (xi < 0 || yi < 0 || xi >= terrain.Resolution.X || yi >= terrain.Resolution.Y)
-                        continue;
-
-                    var distance = (float)Math.Sqrt(y * y + x * x);
-                    var factor = size - distance;
-
-                    if (factor <= 0.0f)
-                        continue;
-
-                    var index = yi * terrain.Resolution.X + xi;
-                    terrain.Heightmap[index] = Height / terrain.Size.Y;
-
-                    modifiedIndices.Add(index);
-                }
-            }
+            modifiedIndices.Add(index);
         }
     }
 }

@@ -5,12 +5,14 @@ using Stride.Core.Mathematics;
 
 namespace Stride.Terrain.Tools
 {
-    public abstract class BaseTool : Terrain.BaseTool
+    public abstract class BaseTool : Terrain.ITerrainTool
     {
         public virtual void Apply(TerrainData terrain, TerrainBrush brush, float strength, int size, Int2 point, HashSet<int> modifiedIndices)
         {
             var brushIndexMultiplierX = (size * 2.0f) / brush.Size.X;
             var brushIndexMultiplierY = (size * 2.0f) / brush.Size.Y;
+
+            // TODO: Should we maybe interpolate the brush?
 
             for (var y = -size; y < size; y++)
             {

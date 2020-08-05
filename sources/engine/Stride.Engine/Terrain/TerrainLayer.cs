@@ -20,7 +20,7 @@ namespace Stride.Terrain
     {
         public string Name { get; set; }
         public Material Material { get; set; }
-        public Vector2 UVSCale { get; set; }
+        public Vector2 UVScale { get; set; }
         public ITerrainLayerBlendType BlendType { get; set; }
     }
 }

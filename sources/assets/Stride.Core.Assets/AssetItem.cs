@@ -46,7 +46,7 @@ namespace Stride.Core.Assets
         /// <param name="package">The package.</param>
         /// <exception cref="ArgumentNullException">location</exception>
         /// <exception cref="ArgumentNullException">asset</exception>
-        internal AssetItem([NotNull] UFile location, [NotNull] Asset asset, Package package)
+        public AssetItem([NotNull] UFile location, [NotNull] Asset asset, Package package)
         {
             this.location = location ?? throw new ArgumentNullException(nameof(location));
             this.asset = asset ?? throw new ArgumentNullException(nameof(asset));

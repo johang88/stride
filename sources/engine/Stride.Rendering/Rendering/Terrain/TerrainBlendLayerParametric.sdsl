@@ -3,20 +3,16 @@ shader TerrainBlendLayerParametric : ComputeColor, NormalStream, PositionStream4
 {
 	compose ComputeColor MinSlope;
 	compose ComputeColor MaxSlope;
-	compose ComputeColor SlopeStrength;
 	compose ComputeColor MinHeight;
 	compose ComputeColor MaxHeight;
-	compose ComputeColor HeightStrength;
 	
     override float4 Compute()
     {
 		float minSlope = MinSlope.Compute().x;
 		float maxSlope = MaxSlope.Compute().x;
-		float slopeStrength = SlopeStrength.Compute().x;
 
 		float minHeight = MinHeight.Compute().x;
 		float maxHeight = MaxHeight.Compute().x;
-		float heightStrength = HeightStrength.Compute().x;
 	
 		float slope = 1.0 - abs(streams.meshNormal.y);
 		
@@ -24,16 +20,14 @@ shader TerrainBlendLayerParametric : ComputeColor, NormalStream, PositionStream4
 		if (slope >= minSlope && slope <= maxSlope)
 		{
 			slopeBlendAmount = 1.0;
-			slopeBlendAmount = saturate(((slope - minSlope) * (1.0 / (maxSlope - minSlope))) * slopeStrength);
 		}
 
-		float height = streams.Position.Y;
+		float height = streams.Position.y;
 
 		float heightBlendAmount = 0.0;
 		if (height >= minHeight && height <= maxHeight)
 		{
 			heightBlendAmount = 1.0;
-			slopeBlendAmount = saturate(((height - minHeight) * (1.0 / (maxHeight - minHeight))) * heightStrength);
 		}
 
 		float blendAmount = slopeBlendAmount * heightBlendAmount;
