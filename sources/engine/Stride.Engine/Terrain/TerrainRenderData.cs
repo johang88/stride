@@ -122,9 +122,6 @@ namespace Stride.Terrain
             if (!SplatMapsInvalidated)
                 return;
 
-            // TODO: We could do this way more efficient if we map each texture to the corresponding layer and invalidate sections as needed
-            // Don't really have to upload all the data each frame ... especially not at runtime :/ 
-
             foreach (var layer in component.Terrain.Layers)
             {
                 if (layer.Layer == null || layer.Data == null)

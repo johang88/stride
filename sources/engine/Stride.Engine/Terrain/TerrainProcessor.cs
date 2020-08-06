@@ -188,16 +188,16 @@ namespace Stride.Terrain
                 }
             }
 
-            var vertexBuffer = Stride.Graphics.Buffer.Vertex.New(graphicsDevice, vertices, GraphicsResourceUsage.Dynamic);
-            var indexBuffer = Stride.Graphics.Buffer.Index.New(graphicsDevice, indices);
+            var vertexBuffer = Graphics.Buffer.Vertex.New(graphicsDevice, vertices, GraphicsResourceUsage.Dynamic);
+            var indexBuffer = Graphics.Buffer.Index.New(graphicsDevice, indices);
 
             renderData.Vertices = vertices;
             renderData.VertexBuffer = vertexBuffer;
-            renderData.Mesh = new Stride.Rendering.Mesh
+            renderData.Mesh = new Mesh
             {
-                Draw = new Stride.Rendering.MeshDraw
+                Draw = new MeshDraw
                 {
-                    PrimitiveType = Stride.Graphics.PrimitiveType.TriangleList,
+                    PrimitiveType = PrimitiveType.TriangleList,
                     DrawCount = indices.Length,
                     IndexBuffer = new IndexBufferBinding(indexBuffer, true, indices.Length),
                     VertexBuffers = new[] { new VertexBufferBinding(vertexBuffer, VertexPositionNormalTangentTexture.Layout, vertexBuffer.ElementCount) },
