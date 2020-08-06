@@ -12,6 +12,7 @@ namespace Stride.Assets.Terrain
     [AssetDescription(FileExtension)]
     [AssetContentType(typeof(TerrainBrush))]
     [AssetFormatVersion(StrideConfig.PackageName, CurrentVersion, "3.0.0.0")]
+    [Display("Terrain Brush")]
     public class TerrainBrushAsset : AssetWithSource
     {
         private const string CurrentVersion = "3.0.0.0";

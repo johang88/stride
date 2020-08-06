@@ -12,6 +12,7 @@ namespace Stride.Terrain
 {
     [DataContract]
     [DefaultEntityComponentRenderer(typeof(TerrainProcessor))]
+    [Display("Terrain")]
     public class TerrainComponent : EntityComponent
     {
         private TerrainData _terrain;

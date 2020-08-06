@@ -13,6 +13,7 @@ namespace Stride.Terrain
     [ContentSerializer(typeof(DataContentSerializer<TerrainBrush>))]
     [DataSerializerGlobal(typeof(CloneSerializer<TerrainBrush>), Profile = "Clone")]
     [ReferenceSerializer, DataSerializerGlobal(typeof(ReferenceSerializer<TerrainBrush>), Profile = "Content")]
+    [Display("Terrain Brush")]
     public class TerrainBrush
     {
         [DataMember(10)]

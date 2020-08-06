@@ -14,6 +14,7 @@ namespace Stride.Assets.Terrain
     [AssetDescription(FileExtension)]
     [AssetContentType(typeof(TerrainLayer))]
     [AssetFormatVersion(StrideConfig.PackageName, CurrentVersion, "3.0.0.0")]
+    [Display("Terrain Layer")]
     public class TerrainLayerAsset : Asset
     {
         private const string CurrentVersion = "3.0.0.0";

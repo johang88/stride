@@ -16,6 +16,7 @@ namespace Stride.Terrain
     [ContentSerializer(typeof(DataContentSerializer<TerrainLayer>))]
     [DataSerializerGlobal(typeof(CloneSerializer<TerrainLayer>), Profile = "Clone")]
     [ReferenceSerializer, DataSerializerGlobal(typeof(ReferenceSerializer<TerrainLayer>), Profile = "Content")]
+    [Display("Terrain Layer")]
     public class TerrainLayer
     {
         public string Name { get; set; }

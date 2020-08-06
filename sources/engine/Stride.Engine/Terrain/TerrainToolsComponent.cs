@@ -13,6 +13,7 @@ namespace Stride.Terrain
     /// Not the most beutiful solution but it works ... at least I don't have to mess with WPF for now :D
     /// </summary>
     [DataContract]
+    [Display("Terrain Tools")]
     public class TerrainToolsComponent : EntityComponent
     {
         [DataMember(10)]
