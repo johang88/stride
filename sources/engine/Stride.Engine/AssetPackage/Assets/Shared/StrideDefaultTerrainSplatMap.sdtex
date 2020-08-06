@@ -1,0 +1,9 @@
+!Texture
+Id: 2b20e38b-aac4-449e-96a4-719fbc6e54bb
+SerializedVersion: {Stride: 2.0.0}
+Tags: []
+Source: !file ../../Resources/StrideDefaultTerrainSplatMap.png
+IsCompressed: false
+IsStreamable: false
+Type: !ColorTextureType
+    ColorKeyColor: {R: 255, G: 0, B: 255, A: 255}

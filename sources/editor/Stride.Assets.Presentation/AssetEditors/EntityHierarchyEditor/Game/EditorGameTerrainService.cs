@@ -28,6 +28,8 @@ using ICSharpCode.AvalonEdit.Editing;
 using Stride.Rendering.Materials;
 using Stride.Graphics;
 using Stride.Rendering.Materials.ComputeColors;
+using Stride.Terrain.BlendTypes;
+using Stride.Core.Shaders.Ast;
 
 namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
 {
@@ -102,7 +104,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
             {
                 Attributes =
                 {
-                    Emissive = new MaterialEmissiveMapFeature(new ComputeColor { Value = new Color(0, 255, 0, 64) })
+                    Emissive = new MaterialEmissiveMapFeature(new ComputeColor { Value = Color4.PremultiplyAlpha(new Color4(0, 1.0f, 0, 0.35f)) })
                     {
                         UseAlpha = true
                     },
@@ -166,7 +168,11 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
 
             var editedTerrains = new HashSet<TerrainComponent>();
             var intersectionPoint = Vector3.Zero;
-            var frameEditedIndices = new HashSet<int>();
+
+            var invalidationData = new ToolInvalidationData
+            {
+                ModifiedIndices = new HashSet<int>()
+            };
 
             var session = entityHierarchyEditorViewModel.Session;
 
@@ -252,10 +258,10 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                     }
                     else
                     {
-                        _terrainTools.Apply(processor, editableTerain, point, strength * dt, frameEditedIndices);
+                        _terrainTools.Apply(processor, editableTerain, point, strength * dt, invalidationData);
                     }
 
-                    frameEditedIndices.Clear();
+                    invalidationData.ModifiedIndices.Clear(); // Splat map status stays, indices can be cleared
                     editedTerrains.Add(editableTerain);
                 }
                 else if (IsControllingMouse)
@@ -283,8 +289,25 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
                             // For now this seems to be the fastest option :/
                             // Unless we can make quantum faaaaster, which I do believe should be possible ... somehow ... maybe
                             assetNode[nameof(TerrainDataAsset.Heightmap)].Update(terrain.Heightmap);
+
+                            // TODO: Only update layer splat maps if needed
+                            if (invalidationData.SplatMaps)
+                            {
+                                var layersNode = assetNode[nameof(TerrainDataAsset.Layers)].Target;
+                                for (var i = 0; i < terrain.Layers.Count; i++)
+                                {
+                                    if (terrain.Layers[i].Layer.BlendType is TerrainLayerBlendTypeSplatMap)
+                                    {
+                                        var layerNode = layersNode.IndexedTarget(new NodeIndex(i));
+                                        layerNode[nameof(TerrainLayerData.Data)].Update(terrain.Layers[i].Data);
+                                    }
+                                }
+                            }
                         }
                     }
+
+                    invalidationData.SplatMaps = false;
+                    invalidationData.ModifiedIndices.Clear();
 
                     editedTerrains.Clear();
                 }

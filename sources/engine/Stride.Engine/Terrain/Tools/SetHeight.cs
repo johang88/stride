@@ -6,17 +6,17 @@ using Stride.Core.Mathematics;
 
 namespace Stride.Terrain.Tools
 {
-    [DataContract]
+    [DataContract, Display("Set Height")]
     public class SetHeight : BaseTool
     {
         public float Height { get; set; }
 
-        protected override void ApplyTool(TerrainData terrain, int x, int y, float strength, HashSet<int> modifiedIndices)
+        protected override void ApplyTool(TerrainData terrain, int x, int y, float strength, ToolInvalidationData invalidationData)
         {
             var index = y * terrain.Resolution.X + x;
             terrain.Heightmap[index] = Height / terrain.Size.Y;
 
-            modifiedIndices.Add(index);
+            invalidationData.ModifiedIndices.Add(index);
         }
     }
 }

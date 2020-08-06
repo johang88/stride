@@ -25,19 +25,16 @@ namespace Stride.Terrain
         [DataMember(20)]
         public ITerrainTool Tool { get; set; }
 
-        public void Apply(TerrainProcessor terrainProcessor, TerrainComponent terrainComponent, Int2 point, float strengthModifier, HashSet<int> modifiedIndices)
+        public void Apply(TerrainProcessor terrainProcessor, TerrainComponent terrainComponent, Int2 point, float strengthModifier, ToolInvalidationData invalidationData)
         {
             if (Tool == null || Brush == null || Size <= 0)
                 return;
 
-            if (modifiedIndices == null)
-                modifiedIndices = new HashSet<int>();
-
             var strength = (Strength / 100.0f) * strengthModifier * 0.1f;
 
-            Tool.Apply(terrainComponent.Terrain, Brush, strength, Size, point, modifiedIndices);
+            Tool.Apply(terrainComponent.Terrain, Brush, strength, Size, point, invalidationData);
 
-            terrainProcessor.Invalidate(terrainComponent, modifiedIndices);
+            terrainProcessor.Invalidate(terrainComponent, invalidationData.ModifiedIndices, invalidationData.SplatMaps);
         }
     }
 }

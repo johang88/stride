@@ -33,6 +33,23 @@ namespace Stride.Assets.Serializers
             }
         }
 
+        protected override void CreateOrTransformObject(ref ObjectContext objectContext)
+        {
+            base.CreateOrTransformObject(ref objectContext);
+
+            if (objectContext.Instance is TerrainDataAsset terrain)
+            {
+                var splatMapSize = terrain.SplatMapResolution.X * terrain.SplatMapResolution.Y;
+                foreach (var layer in terrain.Layers)
+                {
+                    if (layer.Data == null || layer.Data.Length != splatMapSize)
+                    {
+                        layer.Data = new byte[splatMapSize];
+                    }
+                }
+            }
+        }
+
         protected override void WriteMemberValue(ref ObjectContext objectContext, IMemberDescriptor member, object memberValue, Type memberType)
         {
             if (member.Name == nameof(TerrainData.Heightmap))

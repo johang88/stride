@@ -7,8 +7,11 @@ namespace Stride.Terrain.Tools
 {
     public abstract class BaseTool : Terrain.ITerrainTool
     {
-        public virtual void Apply(TerrainData terrain, TerrainBrush brush, float strength, int size, Int2 point, HashSet<int> modifiedIndices)
+        public virtual void Apply(TerrainData terrain, TerrainBrush brush, float strength, int size, Int2 point, ToolInvalidationData invalidationData)
         {
+            if (!IsValid(terrain))
+                return;
+
             var brushIndexMultiplierX = (size * 2.0f) / brush.Size.X;
             var brushIndexMultiplierY = (size * 2.0f) / brush.Size.Y;
 
@@ -30,12 +33,13 @@ namespace Stride.Terrain.Tools
                     var factor = brush.Data[brushIndexY * brush.Size.X + brushIndexX];
                     if (factor > 0)
                     {
-                        ApplyTool(terrain, xi, yi, strength * factor, modifiedIndices);
+                        ApplyTool(terrain, xi, yi, strength * factor, invalidationData);
                     }
                 }
             }
         }
 
-        protected abstract void ApplyTool(TerrainData terrain, int x, int y, float strength, HashSet<int> modifiedIndices);
+        protected virtual bool IsValid(TerrainData terrain) => true;
+        protected abstract void ApplyTool(TerrainData terrain, int x, int y, float strength, ToolInvalidationData invalidationData);
     }
 }

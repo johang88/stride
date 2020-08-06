@@ -7,6 +7,12 @@ namespace Stride.Terrain
 {
     public interface ITerrainTool
     {
-        void Apply(TerrainData terrain, TerrainBrush brush, float strength, int size, Int2 point, HashSet<int> modifiedIndices);
+        void Apply(TerrainData terrain, TerrainBrush brush, float strength, int size, Int2 point, ToolInvalidationData invalidationData);
+    }
+
+    public class ToolInvalidationData
+    {
+        public bool SplatMaps { get; set; }
+        public HashSet<int> ModifiedIndices { get; set; }
     }
 }

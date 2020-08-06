@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Stride.Assets.Materials;
+using Stride.Assets.Textures;
 using Stride.Core;
 using Stride.Core.Assets;
 using Stride.Core.Assets.Analysis;
@@ -11,6 +12,7 @@ using Stride.Core.Assets.Compiler;
 using Stride.Core.BuildEngine;
 using Stride.Core.Serialization;
 using Stride.Core.Serialization.Contents;
+using Stride.Graphics;
 using Stride.Rendering;
 using Stride.Rendering.Materials;
 using Stride.Rendering.Materials.ComputeColors;
@@ -27,6 +29,12 @@ namespace Stride.Assets.Terrain
         {
             yield return new BuildDependencyInfo(typeof(TerrainLayerAsset), typeof(AssetCompilationContext), BuildDependencyType.Runtime | BuildDependencyType.CompileAsset);
             yield return new BuildDependencyInfo(typeof(MaterialAsset), typeof(AssetCompilationContext), BuildDependencyType.Runtime | BuildDependencyType.CompileAsset);
+            yield return new BuildDependencyInfo(typeof(TextureAsset), typeof(AssetCompilationContext), BuildDependencyType.Runtime | BuildDependencyType.CompileAsset);
+        }
+
+        public override IEnumerable<ObjectUrl> GetInputFiles(AssetItem assetItem)
+        {
+            yield return new ObjectUrl(UrlType.Content, "StrideDefaultTerrainSplatMap");
         }
 
         protected override void Prepare(AssetCompilerContext context, AssetItem assetItem, string targetUrlInStorage, AssetCompilerResult result)
@@ -37,10 +45,16 @@ namespace Stride.Assets.Terrain
 
             // Generate and compile material asset
             var materialUrl = assetItem.Location + "__MATERIAL__";
-            var materialAsset = new MaterialAsset();
+            var materialAsset = new MaterialAsset
+            {
+                Id = AssetId.Empty
+            };
 
             foreach (var layerData in asset.Layers)
             {
+                if (layerData.Layer == null)
+                    continue;
+
                 var reference = AttachedReferenceManager.GetAttachedReference(layerData.Layer);
                 var layerAssetItem = assetItem.Package.FindAsset(reference.Id);
                 var layer = (TerrainLayerAsset)layerAssetItem.Asset;
@@ -75,10 +89,19 @@ namespace Stride.Assets.Terrain
                             }
                         };
                         break;
-                    case TerrainLayerBlendTypeSplatMap splatMap:
+                    case TerrainLayerBlendTypeSplatMap _:
                         blendLayer.BlendMap = new ComputeTextureScalar
                         {
-                            // TODO: Set texture ... and compile ...
+                            // Texture is set at runtime
+                            // We want to use the key, but it's not serialized and the material description is clone during the compilation process
+                            // This means that the key info is lost
+                            // One alternative would be to generate the material at runtime
+                            // But unfortnately the material generator does not support generating blend layers at runtime
+                            //Key = ParameterKeys.NewObject<Texture>(null, $"Splat_{i}"),
+                            // ShaderGenerator requires a value of it will use a fallback shader ...
+                            // It's currently not possible to generate texture asset without source files so we can't generate them at compile time for our splat maps
+                            // So we use a simple fallback texture :)
+                            Texture = AttachedReferenceManager.CreateProxyObject<Texture>(new AssetId("2b20e38b-aac4-449e-96a4-719fbc6e54bb"), "StrideDefaultTerrainSplatMap") 
                         };
                         break;
                 }
@@ -91,8 +114,6 @@ namespace Stride.Assets.Terrain
             var materialAssetBuildStep = new AssetBuildStep(materialAssetItem);
             materialAssetBuildStep.Add(new MaterialCompileCommand(materialUrl, materialAssetItem, materialAsset, context));
             result.BuildSteps.Add(materialAssetBuildStep);
-
-            // TODO: Need to build textures for blend layers here, they can probably be updated at runtime if needed
 
             if (!result.HasErrors)
             {
@@ -112,7 +133,7 @@ namespace Stride.Assets.Terrain
         public class TerrainDataAssetCompileCommand : AssetCommand<TerrainCompileParameters>
         {
             public TerrainDataAssetCompileCommand(string url, TerrainCompileParameters parameters, IAssetFinder assetFinder)
-                : base(url, parameters, assetFinder)
+            : base(url, parameters, assetFinder)
             {
             }
 

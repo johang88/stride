@@ -77,6 +77,7 @@
     <None Include="AssetPackage\Assets\Shared\StrideDebugSpriteFont.sdtex" />
     <None Include="AssetPackage\Assets\Shared\StrideDefaultFont.sdfnt" />
     <None Include="AssetPackage\Assets\Shared\StrideDefaultSplashScreen.sdtex" />
+    <None Include="AssetPackage\Assets\Shared\StrideDefaultTerrainSplatMap.sdtex" />
     <None Include="AssetPackage\Assets\Shared\StrideEnvironmentLightingDFGLUT16.sdtex" />
     <None Include="AssetPackage\Assets\Shared\StrideEnvironmentLightingDFGLUT8.sdtex" />
     <None Include="AssetPackage\Assets\Shared\StrideUIDesigns.sdsheet" />
@@ -112,6 +113,7 @@
     <None Include="AssetPackage\Resources\UIDesigns.dds" />
     <None Include="AssetPackage\Resources\StrideDebugSpriteFont.png" />
     <None Include="AssetPackage\Resources\StrideDefaultSplashScreen.png" />
+    <None Include="AssetPackage\Resources\StrideDefaultTerrainSplatMap.png" />
   </ItemGroup>
   <Import Project="..\..\shared\Stride.Core.ShellHelper\Stride.Core.ShellHelper.projitems" Label="Shared" />
   <Import Project="$(StrideSdkTargets)" />

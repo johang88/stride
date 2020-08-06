@@ -38,6 +38,13 @@ namespace Stride.Terrain
 
                 data.Vertices = null;
                 data.Mesh = null;
+
+                foreach (var splatMap in data.SplatMaps.Values)
+                {
+                    splatMap.Texture.Dispose();
+                }
+
+                data.SplatMaps.Clear();
             }
         }
 
@@ -71,17 +78,28 @@ namespace Stride.Terrain
                 return;
             }
 
-            // Sync model properties
+            var game = Services.GetService<IGame>();
+            var graphicsContext = game.GraphicsContext;
+
             // TODO: Get rid of the model component? It's only their for picking support which should be solvable without it ...
             // and the editing would be nicer without that darn wireframe :D
-            data.ModelComponent.Model.Materials.Clear();
-            if (component.Material != null)
+
+            // Sync material
+            var material = component.Material ?? component.Terrain.Material;
+            if (data.ModelComponent.Materials.Count == 0 || data.ModelComponent.Materials[0] != material)
             {
-                data.ModelComponent.Model.Materials.Add(component.Material);
+                data.ModelComponent.Materials.Clear();
+                data.ModelComponent.Materials.Add(0, material);
             }
-            else
+
+            // Allocate and update splat maps
+            data.AllocateSplatMaps(graphicsDevice, component);
+            data.UpdateSplatMaps(graphicsContext, component);
+
+            // Sync splat maps to material
+            foreach (var splatMap in data.SplatMaps.Values)
             {
-                data.ModelComponent.Model.Materials.Add(component.Terrain.Material);
+                material.Passes[0].Parameters.Set(splatMap.ParameterKey, splatMap.Texture);
             }
 
             data.ModelComponent.IsShadowCaster = component.CastShadows;
@@ -100,9 +118,6 @@ namespace Stride.Terrain
             }
             else if (component.VerticesInvalidated || component.NormalsInvalidated || data.InvalidatesIndices.Count > 0)
             {
-                var game = Services.GetService<IGame>();
-                var graphicsContext = game.GraphicsContext;
-
                 // Update vertex buffer
                 UpdateVertexData(graphicsContext, component.Terrain, data, component.VerticesInvalidated, component.NormalsInvalidated);
 
@@ -264,7 +279,7 @@ namespace Stride.Terrain
             }
         }
 
-        internal void Invalidate(TerrainComponent editableTerain, HashSet<int> editedIndices)
+        internal void Invalidate(TerrainComponent editableTerain, HashSet<int> editedIndices, bool splatMaps)
         {
             if (ComponentDatas.TryGetValue(editableTerain, out var renderData))
             {
@@ -272,6 +287,8 @@ namespace Stride.Terrain
                 {
                     renderData.InvalidatesIndices.Add(index);
                 }
+
+                renderData.SplatMapsInvalidated |= splatMaps;
             }
         }
     }
