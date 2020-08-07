@@ -36,8 +36,11 @@ namespace Stride.Terrain.Tools
             return null;
         }
 
-        protected override void ApplyTool(TerrainData terrain, int x, int y, float strength, ToolInvalidationData invalidationData)
+        protected override void ApplyTool(TerrainData terrain, int x, int y, float intensity, ToolInvalidationData invalidationData)
         {
+            // Rescale intensity for painting
+            intensity = (intensity * terrain.Size.Y) / 255.0f;
+
             var resolutionRatioX = (float)terrain.SplatMapResolution.X / terrain.Resolution.X;
             var resolutionRatioY = (float)terrain.SplatMapResolution.Y / terrain.Resolution.Y;
 
@@ -46,7 +49,7 @@ namespace Stride.Terrain.Tools
 
             var index = y * terrain.SplatMapResolution.X + x;
 
-            var value = (_layerData.Data[index] / 255.0f) + strength * 100;
+            var value = (_layerData.Data[index] / 255.0f) + intensity * 50;
             value = MathUtil.Clamp(value, 0.0f, 1.0f);
 
             _layerData.Data[index] = (byte)(value * 255.0f);

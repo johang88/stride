@@ -11,7 +11,7 @@ namespace Stride.Terrain.Tools
     {
         public float Height { get; set; }
 
-        protected override void ApplyTool(TerrainData terrain, int x, int y, float strength, ToolInvalidationData invalidationData)
+        protected override void ApplyTool(TerrainData terrain, int x, int y, float intensity, ToolInvalidationData invalidationData)
         {
             var index = y * terrain.Resolution.X + x;
             terrain.Heightmap[index] = Height / terrain.Size.Y;

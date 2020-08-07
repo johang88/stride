@@ -18,22 +18,22 @@ namespace Stride.Terrain
     {
         [DataMember(10)]
         public TerrainBrush Brush { get; set; }
-        [DataMember(11), DataMemberRange(1.0, 500.0, 0.1, 0.1, 1)]
-        public float Strength { get; set; } = 1.0f;
+        [DataMember(11), DataMemberRange(1.0, 200.0, 0.1, 0.1, 1)]
+        public float Intensity { get; set; } = 1.0f;
         [DataMember(12), DataMemberRange(1, 500, 1, 1, 0)]
         public int Size { get; set; } = 16;
 
         [DataMember(20)]
         public ITerrainTool Tool { get; set; }
 
-        public void Apply(TerrainProcessor terrainProcessor, TerrainComponent terrainComponent, Int2 point, float strengthModifier, ToolInvalidationData invalidationData)
+        public void Apply(TerrainProcessor terrainProcessor, TerrainComponent terrainComponent, Int2 point, float intensityModifier, ToolInvalidationData invalidationData)
         {
             if (Tool == null || Brush == null || Size <= 0)
                 return;
 
-            var strength = (Strength / 100.0f) * strengthModifier * 0.1f;
+            var intensity = (1.0f / terrainComponent.Terrain.Size.Y) * Intensity * intensityModifier;
 
-            Tool.Apply(terrainComponent.Terrain, Brush, strength, Size, point, invalidationData);
+            Tool.Apply(terrainComponent.Terrain, Brush, intensity, Size, point, invalidationData);
 
             terrainProcessor.Invalidate(terrainComponent, invalidationData.ModifiedIndices, invalidationData.SplatMaps);
         }
