@@ -36,16 +36,46 @@ namespace Stride.Terrain.Tools
             return null;
         }
 
-        protected override void ApplyTool(TerrainData terrain, int x, int y, float intensity, ToolInvalidationData invalidationData)
+        public override void Apply(TerrainData terrain, TerrainBrush brush, float intensity, int size, Int2 point, ToolInvalidationData invalidationData)
         {
-            // Rescale intensity for painting
-            intensity = (intensity * terrain.Size.Y) / 255.0f;
+            if (!IsValid(terrain))
+                return;
 
             var resolutionRatioX = (float)terrain.SplatMapResolution.X / terrain.Resolution.X;
             var resolutionRatioY = (float)terrain.SplatMapResolution.Y / terrain.Resolution.Y;
 
-            x = (int)(x * resolutionRatioX);
-            y = (int)(y * resolutionRatioY);
+            size = (int)(size * resolutionRatioX);
+            point = new Int2((int)(point.X * resolutionRatioX), (int)(point.Y * resolutionRatioY));
+
+            var brushIndexMultiplierX = (size * 2.0f) / brush.Size.X;
+            var brushIndexMultiplierY = (size * 2.0f) / brush.Size.Y;
+
+            for (var y = -size; y < size; y++)
+            {
+                for (var x = -size; x < size; x++)
+                {
+                    var xi = point.X + x;
+                    var yi = point.Y + y;
+
+                    if (xi < 0 || yi < 0 || xi >= terrain.SplatMapResolution.X || yi >= terrain.SplatMapResolution.Y)
+                        continue;
+
+                    var brushIndexX = (int)Math.Round((x + size) / brushIndexMultiplierX, MidpointRounding.AwayFromZero);
+                    var brushIndexY = (int)Math.Round((y + size) / brushIndexMultiplierY, MidpointRounding.AwayFromZero);
+
+                    var factor = brush.Data[brushIndexY * brush.Size.X + brushIndexX];
+                    if (factor > 0)
+                    {
+                        ApplyTool(terrain, xi, yi, intensity * factor, invalidationData);
+                    }
+                }
+            }
+        }
+
+        protected override void ApplyTool(TerrainData terrain, int x, int y, float intensity, ToolInvalidationData invalidationData)
+        {
+            // Rescale intensity for painting
+            intensity = (intensity * terrain.Size.Y) / 255.0f;
 
             var index = y * terrain.SplatMapResolution.X + x;
 
