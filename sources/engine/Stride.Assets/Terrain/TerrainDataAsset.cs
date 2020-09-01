@@ -25,7 +25,6 @@ namespace Stride.Assets.Terrain
         /// Resolution of the height map
         /// </summary>
         [DataMember(10)]
-        [Display(Browsable = false)]
         public Int2 Resolution
         {
             get { return _resolution; }

@@ -82,7 +82,7 @@ namespace Stride.Assets.Serializers
 
         protected override object ReadMemberValue(ref ObjectContext objectContext, IMemberDescriptor member, object memberValue, Type memberType)
         {
-            if (member.Name == nameof(TerrainData.Heightmap))
+            if (member.Name == nameof(TerrainDataAsset.Heightmap))
             {
                 var scalar = objectContext.Reader.Expect<Scalar>();
                 var base64String = scalar.Value;
