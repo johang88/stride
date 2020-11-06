@@ -1437,7 +1437,7 @@ MinimumVisualStudioVersion = {0}".ToFormat(DefaultVisualStudioVersion);
                     }
                 }
 
-                if (pendingPackageUpgrades.Count > 0)
+                if (pendingPackageUpgrades.Count > 0 && loadParameters.UpgradePackages)
                 {
                     var upgradeAllowed = packageUpgradeAllowed != false ? PackageUpgradeRequestedAnswer.Upgrade : PackageUpgradeRequestedAnswer.DoNotUpgrade;
 
@@ -1476,11 +1476,14 @@ MinimumVisualStudioVersion = {0}".ToFormat(DefaultVisualStudioVersion);
                 package.LoadAssemblies(log, newLoadParameters);
 
                 // Load list of assets
-                newLoadParameters.AssetFiles = Package.ListAssetFiles(log, package, true, false, loadParameters.CancelToken);
-                // Sort them by size (to improve concurrency during load)
-                newLoadParameters.AssetFiles.Sort(PackageLoadingAssetFile.FileSizeComparer.Default);
+                if (loadParameters.LoadAssets)
+                {
+                    newLoadParameters.AssetFiles = Package.ListAssetFiles(log, package, true, false, loadParameters.CancelToken);
+                    // Sort them by size (to improve concurrency during load)
+                    newLoadParameters.AssetFiles.Sort(PackageLoadingAssetFile.FileSizeComparer.Default);
+                }
 
-                if (pendingPackageUpgrades.Count > 0)
+                if (pendingPackageUpgrades.Count > 0 && loadParameters.UpgradePackages)
                 {
                     // Perform upgrades
                     foreach (var pendingPackageUpgrade in pendingPackageUpgrades)
@@ -1507,7 +1510,7 @@ MinimumVisualStudioVersion = {0}".ToFormat(DefaultVisualStudioVersion);
                 // Validate assets from package
                 package.ValidateAssets(newLoadParameters.GenerateNewAssetIds, newLoadParameters.RemoveUnloadableObjects, log);
 
-                if (pendingPackageUpgrades.Count > 0)
+                if (pendingPackageUpgrades.Count > 0 && loadParameters.UpgradePackages)
                 {
                     // Perform post asset load upgrade
                     foreach (var pendingPackageUpgrade in pendingPackageUpgrades)

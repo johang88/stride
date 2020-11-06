@@ -178,95 +178,98 @@ namespace Stride.Core.Assets
                 log.Error($"Unexpected exception while loading project [{project.FullPath.ToWindowsPath()}]", ex);
             }
 
-            foreach (var packageReference in packageReferences)
+            if (loadParameters.UpgradePackages)
             {
-                var dependencyName = packageReference.Key;
-                var dependencyVersion = packageReference.Value;
-
-                var packageUpgrader = AssetRegistry.GetPackageUpgrader(dependencyName);
-                if (packageUpgrader != null)
+                foreach (var packageReference in packageReferences)
                 {
-                    // Check if this upgrader has already been added due to another package reference
-                    if (pendingPackageUpgrades.Any(pendingPackageUpgrade => pendingPackageUpgrade.PackageUpgrader == packageUpgrader))
-                        continue;
+                    var dependencyName = packageReference.Key;
+                    var dependencyVersion = packageReference.Value;
 
-                    // Check if upgrade is necessary
-                    if (dependencyVersion.MinVersion >= packageUpgrader.Attribute.UpdatedVersionRange.MinVersion)
+                    var packageUpgrader = AssetRegistry.GetPackageUpgrader(dependencyName);
+                    if (packageUpgrader != null)
                     {
-                        continue;
-                    }
+                        // Check if this upgrader has already been added due to another package reference
+                        if (pendingPackageUpgrades.Any(pendingPackageUpgrade => pendingPackageUpgrade.PackageUpgrader == packageUpgrader))
+                            continue;
 
-                    // Check if upgrade is allowed
-                    if (dependencyVersion.MinVersion < packageUpgrader.Attribute.PackageMinimumVersion)
-                    {
-                        // Throw an exception, because the package update is not allowed and can't be done
-                        throw new InvalidOperationException($"Upgrading project [{project.Name}] to use [{dependencyName}] from version [{dependencyVersion}] to [{packageUpgrader.Attribute.UpdatedVersionRange.MinVersion}] is not supported (supported only from version [{packageUpgrader.Attribute.PackageMinimumVersion}]");
-                    }
-
-                    log.Info($"Upgrading project [{project.Name}] to use [{dependencyName}] from version [{dependencyVersion}] to [{packageUpgrader.Attribute.UpdatedVersionRange.MinVersion}] will be required");
-
-                    pendingPackageUpgrades.Add(new PendingPackageUpgrade(packageUpgrader, new PackageDependency(dependencyName, dependencyVersion), null));
-                }
-            }
-
-            if (pendingPackageUpgrades.Count > 0)
-            {
-                var upgradeAllowed = packageUpgradeAllowed != false ? PackageUpgradeRequestedAnswer.Upgrade : PackageUpgradeRequestedAnswer.DoNotUpgrade;
-
-                // Need upgrades, let's ask user confirmation
-                if (loadParameters.PackageUpgradeRequested != null && !packageUpgradeAllowed.HasValue)
-                {
-                    upgradeAllowed = loadParameters.PackageUpgradeRequested(package, pendingPackageUpgrades);
-                    if (upgradeAllowed == PackageUpgradeRequestedAnswer.UpgradeAll)
-                        packageUpgradeAllowed = true;
-                    if (upgradeAllowed == PackageUpgradeRequestedAnswer.DoNotUpgradeAny)
-                        packageUpgradeAllowed = false;
-                }
-
-                if (!PackageLoadParameters.ShouldUpgrade(upgradeAllowed))
-                {
-                    log.Error($"Necessary package migration for [{package.Meta.Name}] has not been allowed");
-                    return;
-                }
-
-                // Perform pre assembly load upgrade
-                foreach (var pendingPackageUpgrade in pendingPackageUpgrades)
-                {
-                    var expectedVersion = pendingPackageUpgrade.PackageUpgrader.Attribute.UpdatedVersionRange.MinVersion.ToString();
-
-                    // Update NuGet references
-                    try
-                    {
-                        var projectFile = project.FullPath;
-                        var msbuildProject = VSProjectHelper.LoadProject(projectFile.ToWindowsPath());
-                        var isProjectDirty = false;
-
-                        foreach (var packageReference in msbuildProject.GetItems("PackageReference").ToList())
+                        // Check if upgrade is necessary
+                        if (dependencyVersion.MinVersion >= packageUpgrader.Attribute.UpdatedVersionRange.MinVersion)
                         {
-                            if (packageReference.EvaluatedInclude == pendingPackageUpgrade.Dependency.Name && packageReference.GetMetadataValue("Version") != expectedVersion)
-                            {
-                                packageReference.SetMetadataValue("Version", expectedVersion);
-                                isProjectDirty = true;
-                            }
+                            continue;
                         }
 
-                        if (isProjectDirty)
-                            msbuildProject.Save();
+                        // Check if upgrade is allowed
+                        if (dependencyVersion.MinVersion < packageUpgrader.Attribute.PackageMinimumVersion)
+                        {
+                            // Throw an exception, because the package update is not allowed and can't be done
+                            throw new InvalidOperationException($"Upgrading project [{project.Name}] to use [{dependencyName}] from version [{dependencyVersion}] to [{packageUpgrader.Attribute.UpdatedVersionRange.MinVersion}] is not supported (supported only from version [{packageUpgrader.Attribute.PackageMinimumVersion}]");
+                        }
 
-                        msbuildProject.ProjectCollection.UnloadAllProjects();
-                        msbuildProject.ProjectCollection.Dispose();
+                        log.Info($"Upgrading project [{project.Name}] to use [{dependencyName}] from version [{dependencyVersion}] to [{packageUpgrader.Attribute.UpdatedVersionRange.MinVersion}] will be required");
+
+                        pendingPackageUpgrades.Add(new PendingPackageUpgrade(packageUpgrader, new PackageDependency(dependencyName, dependencyVersion), null));
                     }
-                    catch (Exception e)
+                }
+
+                if (pendingPackageUpgrades.Count > 0)
+                {
+                    var upgradeAllowed = packageUpgradeAllowed != false ? PackageUpgradeRequestedAnswer.Upgrade : PackageUpgradeRequestedAnswer.DoNotUpgrade;
+
+                    // Need upgrades, let's ask user confirmation
+                    if (loadParameters.PackageUpgradeRequested != null && !packageUpgradeAllowed.HasValue)
                     {
-                        log.Warning($"Unable to load project [{project.FullPath.GetFileName()}]", e);
+                        upgradeAllowed = loadParameters.PackageUpgradeRequested(package, pendingPackageUpgrades);
+                        if (upgradeAllowed == PackageUpgradeRequestedAnswer.UpgradeAll)
+                            packageUpgradeAllowed = true;
+                        if (upgradeAllowed == PackageUpgradeRequestedAnswer.DoNotUpgradeAny)
+                            packageUpgradeAllowed = false;
                     }
 
-                    var packageUpgrader = pendingPackageUpgrade.PackageUpgrader;
-                    var dependencyPackage = pendingPackageUpgrade.DependencyPackage;
-                    if (!packageUpgrader.UpgradeBeforeAssembliesLoaded(loadParameters, package.Session, log, package, pendingPackageUpgrade.Dependency, dependencyPackage))
+                    if (!PackageLoadParameters.ShouldUpgrade(upgradeAllowed))
                     {
-                        log.Error($"Error while upgrading package [{package.Meta.Name}] for [{dependencyPackage.Meta.Name}] from version [{pendingPackageUpgrade.Dependency.Version}] to [{dependencyPackage.Meta.Version}]");
+                        log.Error($"Necessary package migration for [{package.Meta.Name}] has not been allowed");
                         return;
+                    }
+
+                    // Perform pre assembly load upgrade
+                    foreach (var pendingPackageUpgrade in pendingPackageUpgrades)
+                    {
+                        var expectedVersion = pendingPackageUpgrade.PackageUpgrader.Attribute.UpdatedVersionRange.MinVersion.ToString();
+
+                        // Update NuGet references
+                        try
+                        {
+                            var projectFile = project.FullPath;
+                            var msbuildProject = VSProjectHelper.LoadProject(projectFile.ToWindowsPath());
+                            var isProjectDirty = false;
+
+                            foreach (var packageReference in msbuildProject.GetItems("PackageReference").ToList())
+                            {
+                                if (packageReference.EvaluatedInclude == pendingPackageUpgrade.Dependency.Name && packageReference.GetMetadataValue("Version") != expectedVersion)
+                                {
+                                    packageReference.SetMetadataValue("Version", expectedVersion);
+                                    isProjectDirty = true;
+                                }
+                            }
+
+                            if (isProjectDirty)
+                                msbuildProject.Save();
+
+                            msbuildProject.ProjectCollection.UnloadAllProjects();
+                            msbuildProject.ProjectCollection.Dispose();
+                        }
+                        catch (Exception e)
+                        {
+                            log.Warning($"Unable to load project [{project.FullPath.GetFileName()}]", e);
+                        }
+
+                        var packageUpgrader = pendingPackageUpgrade.PackageUpgrader;
+                        var dependencyPackage = pendingPackageUpgrade.DependencyPackage;
+                        if (!packageUpgrader.UpgradeBeforeAssembliesLoaded(loadParameters, package.Session, log, package, pendingPackageUpgrade.Dependency, dependencyPackage))
+                        {
+                            log.Error($"Error while upgrading package [{package.Meta.Name}] for [{dependencyPackage.Meta.Name}] from version [{pendingPackageUpgrade.Dependency.Version}] to [{dependencyPackage.Meta.Version}]");
+                            return;
+                        }
                     }
                 }
             }

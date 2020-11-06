@@ -205,8 +205,8 @@ namespace Stride.Core.Assets
             projectCollection.LoadProject(fullProjectLocation);
             var project = projectCollection.LoadedProjects.First();
 
-            // Support for cross-targeting (TargetFrameworks and RuntimeIdentifiers)
-            // Reload project with first TargetFramework and/or RuntimeIdentifier
+            //// Support for cross-targeting (TargetFrameworks and RuntimeIdentifiers)
+            //// Reload project with first TargetFramework and/or RuntimeIdentifier
             void TryReloadWithFirstValue(string valuePropertyName, string valuesPropertyName)
             {
                 if (globalProperties.ContainsKey(valuePropertyName))

@@ -46,6 +46,8 @@ namespace Stride.Core.Assets
             AutoCompileProjects = true;
             AutoLoadTemporaryAssets = true;
             ConvertUPathToAbsolute = true;
+            UpgradePackages = true;
+            LoadAssets = true;
             BuildConfiguration = "Debug";
         }
 
@@ -54,6 +56,14 @@ namespace Stride.Core.Assets
         /// </summary>
         /// <value><c>true</c> if [load missing dependencies]; otherwise, <c>false</c>.</value>
         public bool LoadMissingDependencies { get; set; }
+
+        public bool LoadAssets { get; set; }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether to attempt to upgrade pacakges
+        /// </summary>
+        /// <value><c>true</c> try to upgrated packages if needed, <c>false</c>.</value>
+        public bool UpgradePackages { get; set; }
 
         /// <summary>
         /// Gets or sets a value indicating whether [load assembly references].

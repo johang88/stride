@@ -27,34 +27,38 @@ namespace Stride.VisualStudio.Commands
 
         public RawShaderNavigationResult AnalyzeAndGoToDefinition(string projectPath, string sourceCode, RawSourceSpan span)
         {
-            var rawResult = new RawShaderNavigationResult();
-
-            var navigation = new ShaderNavigation();
-
-            var shaderDirectories = CollectShadersDirectories(projectPath);
-
-            if (span.File != null)
+            using (var logFile = System.IO.File.OpenWrite($"C:\\Users\\johan\\Documents\\Stride Projects\\VS_Logs\\Log_{DateTime.UtcNow.Ticks}.txt"))
+            using (var writer = new StreamWriter(logFile))
             {
-                var dirName = Path.GetDirectoryName(span.File);
-                if (dirName != null)
+                var rawResult = new RawShaderNavigationResult();
+
+                var navigation = new ShaderNavigation();
+
+                var shaderDirectories = CollectShadersDirectories(projectPath, writer);
+
+                if (span.File != null)
                 {
-                    shaderDirectories.Add(dirName);
+                    var dirName = Path.GetDirectoryName(span.File);
+                    if (dirName != null)
+                    {
+                        shaderDirectories.Add(dirName);
+                    }
                 }
+
+                var resultAnalysis = navigation.AnalyzeAndGoToDefinition(sourceCode, new Stride.Core.Shaders.Ast.SourceLocation(span.File, 0, span.Line, span.Column), shaderDirectories);
+
+                if (resultAnalysis.DefinitionLocation.Location.FileSource != null)
+                {
+                    rawResult.DefinitionSpan = ConvertToRawLocation(resultAnalysis.DefinitionLocation);
+                }
+
+                foreach (var message in resultAnalysis.Messages.Messages)
+                {
+                    rawResult.Messages.Add(ConvertToRawMessage(message));
+                }
+
+                return rawResult;
             }
-
-            var resultAnalysis = navigation.AnalyzeAndGoToDefinition(sourceCode, new Stride.Core.Shaders.Ast.SourceLocation(span.File, 0, span.Line, span.Column), shaderDirectories);
-
-            if (resultAnalysis.DefinitionLocation.Location.FileSource != null)
-            {
-                rawResult.DefinitionSpan = ConvertToRawLocation(resultAnalysis.DefinitionLocation);
-            }
-
-            foreach (var message in resultAnalysis.Messages.Messages)
-            {
-                rawResult.Messages.Add(ConvertToRawMessage(message));
-            }
-
-            return rawResult;
         }
 
         private static RawSourceSpan ConvertToRawLocation(SourceSpan span)
@@ -85,7 +89,7 @@ namespace Stride.VisualStudio.Commands
             return level.ToString().ToLowerInvariant();
         }
 
-        private List<string> CollectShadersDirectories(string packagePath)
+        private List<string> CollectShadersDirectories(string packagePath, StreamWriter writer)
         {
             if (packagePath == null)
             {
@@ -97,6 +101,19 @@ namespace Stride.VisualStudio.Commands
             defaultLoad.AutoLoadTemporaryAssets = false;
             defaultLoad.GenerateNewAssetIds = false;
             defaultLoad.LoadAssemblyReferences = false;
+            defaultLoad.LoadMissingDependencies = false;
+            defaultLoad.UpgradePackages = false;
+            defaultLoad.LoadAssets = false;
+
+            // Prevent the VS project loader from trying to figure out the cross-targeting
+            // by adding default values for each target. We do this as the cross-targeting logic
+            // is quite slow and not needed here.
+            defaultLoad.ExtraCompileProperties = new Dictionary<string, string>
+            {
+                { "TargetFramework", "netstandard2.0" },
+                { "RuntimeIdentifier", "win10-x64" },
+                { "StrideGraphicsApi", "Direct3D11" }
+            };
 
             var sessionResult = PackageSession.Load(packagePath, defaultLoad);
 
