@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.Versioning;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
@@ -128,6 +129,20 @@ namespace Stride.Core.Assets
                                 .FrameworkName ?? ".NETFramework,Version=v4.7.2";
                             var nugetFramework = NuGetFramework.ParseFrameworkName(framework, DefaultFrameworkNameProvider.Instance);
 
+#if NETCOREAPP
+                            // Add TargetPlatform to net5.0 TFM (i.e. net5.0 to net5.0-windows7.0)
+                            var platform = Assembly.GetEntryAssembly()?.GetCustomAttribute<TargetPlatformAttribute>()?.PlatformName ?? string.Empty;
+                            if (framework.StartsWith(FrameworkConstants.FrameworkIdentifiers.NetCoreApp) && platform != string.Empty)
+                            {
+                                var platformParseResult = Regex.Match(platform, @"([a-zA-Z]+)(\d+.*)");
+                                if (platformParseResult.Success && Version.TryParse(platformParseResult.Groups[2].Value, out var platformVersion))
+                                {
+                                    var platformName = platformParseResult.Groups[1].Value;
+                                    nugetFramework = new NuGetFramework(nugetFramework.Framework, nugetFramework.Version, platformName, platformVersion);
+                                }
+                            }
+#endif
+
                             // Only allow this specific version
                             var versionRange = new VersionRange(new NuGetVersion(packageVersion), true, new NuGetVersion(packageVersion), true);
                             var (request, result) = RestoreHelper.Restore(logger, nugetFramework, "win", packageName, versionRange);
@@ -140,6 +155,11 @@ namespace Stride.Core.Assets
                         }
                         catch (Exception e)
                         {
+#if STRIDE_NUGET_RESOLVER_UX
+                            logger.LogError($@"Error restoring NuGet packages: {e}");
+                            dialogClosed.Task.Wait();
+#else
+                            // Display log in console
                             var logText = $@"Error restoring NuGet packages!
 
 ==== Exception details ====
@@ -150,10 +170,6 @@ namespace Stride.Core.Assets
 
 {string.Join(Environment.NewLine, logger.Logs.Select(x => $"[{x.Level}] {x.Message}"))}
 ";
-#if STRIDE_NUGET_RESOLVER_UX
-                            dialogClosed.Task.Wait();
-#else
-                            // Display log in console
                             Console.WriteLine(logText);
 #endif
                             Environment.Exit(1);

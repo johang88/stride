@@ -5,36 +5,35 @@
 using System;
 using SDL2;
 using Stride.Core.Mathematics;
-using Stride.Games;
 using Stride.Graphics.SDL;
 
 namespace Stride.Input
 {
     internal class MouseSDL : MouseDeviceBase, IDisposable
     {
-        private readonly GameBase game;
         private readonly Window uiControl;
 
         private bool isMousePositionLocked;
         private Point relativeCapturedPosition;
 
-        public MouseSDL(InputSourceSDL source, GameBase game, Window uiControl)
+        public MouseSDL(InputSourceSDL source, Window uiControl)
         {
             Source = source;
-            this.game = game;
             this.uiControl = uiControl;
-            
+
             uiControl.MouseMoveActions += OnMouseMoveEvent;
             uiControl.PointerButtonPressActions += OnMouseInputEvent;
             uiControl.PointerButtonReleaseActions += OnMouseInputEvent;
             uiControl.MouseWheelActions += OnMouseWheelEvent;
             uiControl.ResizeEndActions += OnSizeChanged;
             OnSizeChanged(new SDL.SDL_WindowEvent());
+
+            Id = InputDeviceUtils.DeviceNameToGuid(uiControl.SdlHandle.ToString() + Name);
         }
         
         public override string Name => "SDL Mouse";
 
-        public override Guid Id => new Guid("0ccaf48e-e371-4b34-b6bb-a3720f6742a8");
+        public override Guid Id { get; }
 
         public override bool IsPositionLocked => isMousePositionLocked;
 
