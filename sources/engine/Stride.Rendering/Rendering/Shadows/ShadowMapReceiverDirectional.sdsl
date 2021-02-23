@@ -9,7 +9,7 @@ namespace Stride.Rendering.Shadows
     /// TCascadeCount: Number of cascades.
     /// TCascadeDebug: Flag to enable debug mode (1 color per cascade).
     /// </remarks>
-    internal shader ShadowMapReceiverDirectional<int TCascadeCount,
+    shader ShadowMapReceiverDirectional<int TCascadeCount,
                                                  int TLightCount,
                                                  bool TBlendCascades,
                                                  bool TDepthRangeAuto,

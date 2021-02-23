@@ -473,7 +473,7 @@ namespace Stride.Rendering.Shadows
             }
         }
 
-        private class ShaderGroupData : LightShadowMapShaderGroupDataBase
+        protected class ShaderGroupData : LightShadowMapShaderGroupDataBase
         {
             private const string ShaderName = "ShadowMapReceiverDirectional";
             private readonly int cascadeCount;

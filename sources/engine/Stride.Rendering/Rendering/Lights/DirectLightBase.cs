@@ -19,7 +19,7 @@ namespace Stride.Rendering.Lights
         /// <value>The shadow.</value>
         /// <userdoc>The settings of the light shadow</userdoc>
         [DataMember(200)]
-        public LightShadowMap Shadow { get; protected set; }
+        public LightShadowMap Shadow { get; set; }
 
         public abstract bool HasBoundingBox { get; }
 

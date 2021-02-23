@@ -16,7 +16,7 @@ using Buffer = Stride.Graphics.Buffer;
 
 namespace Stride.Rendering.Shadows
 {
-    internal static partial class ShadowMapReceiverDirectionalKeys
+    public static partial class ShadowMapReceiverDirectionalKeys
     {
         public static readonly ValueParameterKey<float> CascadeDepthSplits = ParameterKeys.NewValue<float>();
     }
