@@ -60,7 +60,7 @@ namespace Stride.Rendering
             {
                 var objectNodeReference = RootRenderFeature.ObjectNodeReferences[index];
                 var objectNode = RootRenderFeature.GetObjectNode(objectNodeReference);
-                var renderMesh = objectNode.RenderObject as RenderMesh;
+                var renderMesh = objectNode.RenderObject as TransformedRenderObject;
 
                 // TODO: Extract world
                 renderModelObjectInfo[objectNodeReference].World = renderMesh != null ? renderMesh.World : Matrix.Identity;

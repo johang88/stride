@@ -7,9 +7,19 @@ using Stride.Rendering.Materials;
 namespace Stride.Rendering
 {
     /// <summary>
+    /// Used by <see cref="TransformRenderFeature"/> to apply transform data without
+    /// depending on the entire RenderMesh, this allows <see cref="TransformRenderFeature"/> to be
+    /// used outside of <see cref="MeshRenderFeature"/> 
+    /// </summary>
+    public abstract class TransformedRenderObject : RenderObject
+    {
+        public Matrix World = Matrix.Identity;
+    }
+
+    /// <summary>
     /// Used by <see cref="MeshRenderFeature"/> to render a <see cref="Rendering.Mesh"/>.
     /// </summary>
-    public class RenderMesh : RenderObject
+    public class RenderMesh : TransformedRenderObject
     {
         public MeshDraw ActiveMeshDraw;
 
@@ -32,8 +42,6 @@ namespace Stride.Rendering
         public bool IsScalingNegative;
 
         public bool IsPreviousScalingNegative;
-
-        public Matrix World = Matrix.Identity;
 
         public Matrix[] BlendMatrices;
 
