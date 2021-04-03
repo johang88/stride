@@ -101,6 +101,9 @@ namespace Stride.Rendering.ComputeEffect.GGXPrefiltering
                 }
                 else
                 {
+                    // TODO: This allocs, any way to improve? Also messes up the UAV state tracking 
+                    // as binding the parent texture does not cause the uav of the texture view to unbind :/ 
+                    // which can be bad ...
                     var outputView = output.ToTextureView(ViewType.MipBand, 0, l);
 
                     computeShader.ThreadGroupCounts = new Int3(levelSize.X, levelSize.Y, faceCount);
