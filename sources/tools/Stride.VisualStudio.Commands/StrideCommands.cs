@@ -27,38 +27,34 @@ namespace Stride.VisualStudio.Commands
 
         public RawShaderNavigationResult AnalyzeAndGoToDefinition(string projectPath, string sourceCode, RawSourceSpan span)
         {
-            using (var logFile = System.IO.File.OpenWrite($"C:\\Users\\johan\\Documents\\Stride Projects\\VS_Logs\\Log_{DateTime.UtcNow.Ticks}.txt"))
-            using (var writer = new StreamWriter(logFile))
+            var rawResult = new RawShaderNavigationResult();
+
+            var navigation = new ShaderNavigation();
+
+            var shaderDirectories = CollectShadersDirectories(projectPath);
+
+            if (span.File != null)
             {
-                var rawResult = new RawShaderNavigationResult();
-
-                var navigation = new ShaderNavigation();
-
-                var shaderDirectories = CollectShadersDirectories(projectPath, writer);
-
-                if (span.File != null)
+                var dirName = Path.GetDirectoryName(span.File);
+                if (dirName != null)
                 {
-                    var dirName = Path.GetDirectoryName(span.File);
-                    if (dirName != null)
-                    {
-                        shaderDirectories.Add(dirName);
-                    }
+                    shaderDirectories.Add(dirName);
                 }
-
-                var resultAnalysis = navigation.AnalyzeAndGoToDefinition(sourceCode, new Stride.Core.Shaders.Ast.SourceLocation(span.File, 0, span.Line, span.Column), shaderDirectories);
-
-                if (resultAnalysis.DefinitionLocation.Location.FileSource != null)
-                {
-                    rawResult.DefinitionSpan = ConvertToRawLocation(resultAnalysis.DefinitionLocation);
-                }
-
-                foreach (var message in resultAnalysis.Messages.Messages)
-                {
-                    rawResult.Messages.Add(ConvertToRawMessage(message));
-                }
-
-                return rawResult;
             }
+
+            var resultAnalysis = navigation.AnalyzeAndGoToDefinition(sourceCode, new Stride.Core.Shaders.Ast.SourceLocation(span.File, 0, span.Line, span.Column), shaderDirectories);
+
+            if (resultAnalysis.DefinitionLocation.Location.FileSource != null)
+            {
+                rawResult.DefinitionSpan = ConvertToRawLocation(resultAnalysis.DefinitionLocation);
+            }
+
+            foreach (var message in resultAnalysis.Messages.Messages)
+            {
+                rawResult.Messages.Add(ConvertToRawMessage(message));
+            }
+
+            return rawResult;
         }
 
         private static RawSourceSpan ConvertToRawLocation(SourceSpan span)
@@ -89,7 +85,7 @@ namespace Stride.VisualStudio.Commands
             return level.ToString().ToLowerInvariant();
         }
 
-        private List<string> CollectShadersDirectories(string packagePath, StreamWriter writer)
+        private List<string> CollectShadersDirectories(string packagePath)
         {
             if (packagePath == null)
             {
