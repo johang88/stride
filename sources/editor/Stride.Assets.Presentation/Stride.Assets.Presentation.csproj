@@ -113,6 +113,9 @@
     <None Include="Templates\Core\**" />
     <None Include="Templates\Assets\**" />
   </ItemGroup>
+  <ItemGroup>
+    <None Remove="Templates\DataAssetTypeWindow.xaml" />
+  </ItemGroup>
   <Import Project="$(StrideSdkTargets)" />
   <PropertyGroup>
     <TargetsForTfmSpecificBuildOutput>_StrideIncludeExtraAssemblies;$(TargetsForTfmSpecificBuildOutput)</TargetsForTfmSpecificBuildOutput>

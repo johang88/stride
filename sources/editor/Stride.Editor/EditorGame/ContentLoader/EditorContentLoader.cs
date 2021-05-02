@@ -386,7 +386,12 @@ namespace Stride.Editor.EditorGame.ContentLoader
 
                         foreach (var assetToLoad in nonFastReloadAssets)
                         {
-                            var type = AssetRegistry.GetContentType(assetToLoad.AssetItem.Asset.GetType());
+                            var assetType = assetToLoad.AssetItem.Asset.GetType();
+                            var type = AssetRegistry.GetContentType(assetType);
+
+                            if (assetType.IsGenericType && assetType.GetGenericTypeDefinition() == typeof(DataAsset<>))
+                                type = assetType.GetGenericArguments()[0];
+
                             string url = GetLoadingTimeUrl(assetToLoad.AssetItem);
 
                             object loadedObject = null;

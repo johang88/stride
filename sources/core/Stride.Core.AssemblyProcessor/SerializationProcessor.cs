@@ -9,6 +9,7 @@ using System.Text;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Mono.Cecil.Rocks;
+using Stride.Core.AssemblyProcessor.Serializers;
 using Stride.Core.Serialization;
 using Stride.Core.Storage;
 using CustomAttributeNamedArgument = Mono.Cecil.CustomAttributeNamedArgument;
@@ -446,7 +447,7 @@ namespace Stride.Core.AssemblyProcessor
                 initializeMethodIL.Emit(OpCodes.Ldstr, profile.Key);
                 initializeMethodIL.Emit(OpCodes.Newobj, assemblySerializersPerProfileTypeCtorRef);
 
-                foreach (var type in profile.Value.SerializableTypes.Where(x => x.Value.Local))
+                foreach (var type in profile.Value.SerializableTypes.Concat(profile.Value.GenericSerializableTypes).Where(x => x.Value.Local))
                 {
                     // Generating: assemblySerializersProfile.Add(new AssemblySerializerEntry(<#=type.Key.ConvertTypeId()#>, typeof(<#= type.Key.ConvertCSharp() #>), <# if (type.Value.SerializerType != null) { #>typeof(<#= type.Value.SerializerType.ConvertCSharp() #>)<# } else { #>null<# } #>));
                     initializeMethodIL.Emit(OpCodes.Dup);
@@ -460,7 +461,7 @@ namespace Stride.Core.AssemblyProcessor
 
                             for (int i = 0; i < ObjectId.HashSize / 4; ++i)
                                 initializeMethodIL.Emit(OpCodes.Ldc_I4, typeIdHash[i]);
-                        }
+                    }
 
                     initializeMethodIL.Emit(OpCodes.Newobj, objectIdCtorRef);
 

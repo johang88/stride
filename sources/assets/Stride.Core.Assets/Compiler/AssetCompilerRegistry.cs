@@ -61,6 +61,15 @@ namespace Stride.Core.Assets.Compiler
             IAssetCompiler compiler;
             if (!typeToCompiler.TryGetValue(typeData, out compiler))
             {
+                if (type.IsGenericType)
+                {
+                    typeData = new CompilerTypeData(context, type.GetGenericTypeDefinition());
+                    if (typeToCompiler.TryGetValue(typeData, out compiler))
+                    {
+                        return compiler;
+                    }
+                }
+
                 //support nested context types!
                 if (context.BaseType != typeof(object))
                 {

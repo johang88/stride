@@ -307,7 +307,7 @@ namespace Stride.Assets.Presentation.AssemblyReloading
             protected override bool ProcessObject(object obj, Type expectedType)
             {
                 // TODO: More advanced checks if IUnloadable is supposed to be a type from the unloaded assembly (this would avoid processing unecessary IUnloadable)
-                if (obj != null && (UnloadedAssemblies.Contains(obj.GetType().Assembly) || obj is IUnloadable))
+                if (obj != null && (IsTypeUnloaded(obj.GetType()) || obj is IUnloadable))
                 {
                     NodeIndex index;
                     var settings = new SerializerContextSettings(Log);
@@ -336,6 +336,12 @@ namespace Stride.Assets.Presentation.AssemblyReloading
                     return true;
                 }
                 return false;
+            }
+
+            public bool IsTypeUnloaded(Type type)
+            {
+                return UnloadedAssemblies.Contains(type.Assembly)
+                    || type.IsGenericType && type.GetGenericArguments().Any(IsTypeUnloaded);
             }
 
             private static YamlAssetMetadata<T> RemoveFirstIndexInYamlPath<T>([CanBeNull] YamlAssetMetadata<T> metadata, NodeIndex index)

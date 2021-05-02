@@ -1,0 +1,10 @@
+!TemplateAssetFactory
+Id: DF9320B9-F38A-457A-882B-C1031C9AC869
+AssetTypeName: "DataAsset`1"
+Name: Data asset
+Scope: Asset
+Description: An asset containing user defined data structure
+Group: Miscellaneous
+Icon: ..\.sdtpl\DefaultAsset.png
+Order: 1000
+DefaultOutputName: DataAsset

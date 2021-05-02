@@ -16,6 +16,7 @@ namespace Stride.Core.Extensions
         private static readonly List<Assembly> AllAssemblies = new List<Assembly>();
         private static readonly Dictionary<Type, List<Type>> InheritableInstantiableTypes = new Dictionary<Type, List<Type>>();
         private static readonly Dictionary<Type, List<Type>> InheritableTypes = new Dictionary<Type, List<Type>>();
+        private static readonly Dictionary<Type, List<Type>> GenericInstantiableTypes = new Dictionary<Type, List<Type>>();
 
         static TypeDescriptorExtensions()
         {
@@ -78,9 +79,44 @@ namespace Stride.Core.Extensions
             }
         }
 
+        public static IEnumerable<Type> GetGenericInstantiableTypes([NotNull] this Type type)
+        {
+            if (!type.IsGenericTypeDefinition)
+                throw new ArgumentException("The type has to be a generic type definition.");
+
+            lock (AllAssemblies)
+            {
+                List<Type> result;
+                if (!GenericInstantiableTypes.TryGetValue(type, out result))
+                {
+                    // If allTypes is empty, then reload it
+                    if (AllInstantiableTypes.Count == 0)
+                    {
+                        // Just keep a list of assemblies in order to check which assemblies was scanned by this method
+                        if (AllAssemblies.Count == 0)
+                        {
+                            AllAssemblies.AddRange(AssemblyRegistry.Find(AssemblyCommonCategories.Assets));
+                        }
+                        AllInstantiableTypes.AddRange(AllAssemblies.SelectMany(x => x.GetTypes().Where(IsInstantiableType)));
+                    }
+
+                    result = AllInstantiableTypes.Where(itype => IsGenericChild(type, itype)).ToList();
+                    GenericInstantiableTypes.Add(type, result);
+                }
+                return result;
+            }
+        }
+
+        private static bool IsGenericChild([NotNull] Type genericType, [NotNull] Type type)
+        {
+            return type.IsGenericType && type.GetGenericTypeDefinition() == genericType
+                || type.GetInterfaces().Any(iface => IsGenericChild(genericType, iface))
+                || type.BaseType != null && IsGenericChild(genericType, type.BaseType);
+        }
+
         private static bool IsInstantiableType([NotNull] Type type)
         {
-            var instantiable = (type.IsPublic || type.IsNestedPublic) && !type.IsAbstract && type.GetConstructor(Type.EmptyTypes) != null;
+            var instantiable = (type.IsPublic || type.IsNestedPublic) && !type.IsAbstract && type.GetConstructor(Type.EmptyTypes) != null && !type.IsGenericTypeDefinition;
             if (!instantiable)
                 return false;
 
@@ -110,6 +146,7 @@ namespace Stride.Core.Extensions
                 AllTypes.Clear();
                 InheritableTypes.Clear();
                 InheritableInstantiableTypes.Clear();
+                GenericInstantiableTypes.Clear();
             }
         }
 

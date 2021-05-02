@@ -116,6 +116,8 @@ namespace Stride.Core.Assets.Editor.ViewModel
                         return asset.Tags.Any(y => y.IndexOf(Filter, StringComparison.OrdinalIgnoreCase) >= 0);
 
                     case FilterCategory.AssetType:
+                        if (asset.AssetType.IsGenericType)
+                            return string.Equals(asset.AssetType.GetGenericTypeDefinition().FullName, Filter);
                         return string.Equals(asset.AssetType.FullName, Filter);
                 }
                 return false;

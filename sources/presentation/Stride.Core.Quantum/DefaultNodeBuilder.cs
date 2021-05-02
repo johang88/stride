@@ -71,7 +71,8 @@ namespace Stride.Core.Quantum
             if (underlyingType != null)
                 type = underlyingType;
 
-            return type.IsPrimitive || type.IsEnum || primitiveTypes.Any(x => x.IsAssignableFrom(type));
+            return type.IsPrimitive || type.IsEnum || primitiveTypes.Any(x => x.IsAssignableFrom(type)
+                || x.IsGenericTypeDefinition && type.IsGenericType && x == type.GetGenericTypeDefinition());
         }
 
         /// <inheritdoc/>

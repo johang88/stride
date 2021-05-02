@@ -53,7 +53,13 @@ namespace Stride.Core.Serialization.Contents
                         if (contentSerializerAttribute.ContentSerializerType == null)
                             continue;
 
-                        var contentSerializer = (IContentSerializer)Activator.CreateInstance(contentSerializerAttribute.ContentSerializerType);
+                        var serializerType = contentSerializerAttribute.ContentSerializerType;
+                        if (serializerType.IsGenericTypeDefinition)
+                        {
+                            serializerType = serializerType.MakeGenericType(objectType);
+                        }
+
+                        var contentSerializer = (IContentSerializer)Activator.CreateInstance(serializerType);
                         contentSerializersForT.Add(contentSerializer);
                     }
                 }

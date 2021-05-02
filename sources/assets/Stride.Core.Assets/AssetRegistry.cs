@@ -5,7 +5,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Stride.Core.Assets.Analysis;
-using Stride.Core;
 using Stride.Core.Diagnostics;
 using Stride.Core.Reflection;
 using Stride.Core.Serialization.Contents;
@@ -36,7 +35,7 @@ namespace Stride.Core.Assets
         private static readonly HashSet<IYamlSerializableFactory> RegisteredSerializerFactories = new HashSet<IYamlSerializableFactory>();
         private static readonly List<IDataCustomVisitor> RegisteredDataVisitNodes = new List<IDataCustomVisitor>();
         private static readonly Dictionary<string, IAssetFactory<Asset>> RegisteredAssetFactories = new Dictionary<string, IAssetFactory<Asset>>();
-        private static readonly Dictionary<Type, List<Type>> RegisteredContentTypes = new Dictionary<Type, List<Type>>();
+        private static readonly HashSet<Type> RegisteredContentTypes = new HashSet<Type>();
         private static readonly Dictionary<Type, List<Type>> ContentToAssetTypes = new Dictionary<Type, List<Type>>();
         private static readonly Dictionary<Type, Type> AssetToContentTypes = new Dictionary<Type, Type>();
 
@@ -150,6 +149,11 @@ namespace Stride.Core.Assets
         /// <returns>System.String.</returns>
         public static string GetDefaultExtension(Type assetType)
         {
+            if (assetType.IsGenericType)
+            {
+                assetType = assetType.GetGenericTypeDefinition();
+            }
+
             IsAssetOrPackageType(assetType, true);
             lock (RegistryLock)
             {
@@ -166,6 +170,11 @@ namespace Stride.Core.Assets
         /// <returns>The current format version of this asset.</returns>
         public static SortedList<string, PackageVersion> GetCurrentFormatVersions(Type assetType)
         {
+            if (assetType.IsGenericType)
+            {
+                assetType = assetType.GetGenericTypeDefinition();
+            }
+
             IsAssetOrPackageType(assetType, true);
             lock (RegistryLock)
             {
@@ -183,6 +192,11 @@ namespace Stride.Core.Assets
         /// <returns>The <see cref="AssetUpgraderCollection"/> of an asset type if available, or <c>null</c> otherwise.</returns>
         public static AssetUpgraderCollection GetAssetUpgraders(Type assetType, string dependencyName)
         {
+            if (assetType.IsGenericType)
+            {
+                assetType = assetType.GetGenericTypeDefinition();
+            }
+
             IsAssetOrPackageType(assetType, true);
             lock (RegistryLock)
             {
@@ -241,6 +255,11 @@ namespace Stride.Core.Assets
 
         public static bool IsAssetTypeAlwaysMarkAsRoot(Type type)
         {
+            if (type.IsGenericType)
+            {
+                type = type.GetGenericTypeDefinition();
+            }
+
             lock (AlwaysMarkAsRootAssetTypes)
             {
                 return AlwaysMarkAsRootAssetTypes.Contains(type);
@@ -263,7 +282,7 @@ namespace Stride.Core.Assets
         {
             lock (RegistryLock)
             {
-                return RegisteredContentTypes.Keys.ToList();
+                return RegisteredContentTypes.ToList();
             }
         }
 
@@ -356,7 +375,7 @@ namespace Stride.Core.Assets
                 }
 
                 RegisteredImportersInternal.Add(importer);
-                RegisteredImportersInternal.Sort( (left, right) => left.Order.CompareTo(right.Order));
+                RegisteredImportersInternal.Sort((left, right) => left.Order.CompareTo(right.Order));
             }
         }
 
@@ -370,12 +389,22 @@ namespace Stride.Core.Assets
 
         public static bool IsContentType(Type type)
         {
+            if (type == null)
+            {
+                return false;
+            }
+
+            if (type.IsGenericType)
+            {
+                type = type.GetGenericTypeDefinition();
+            }
+
             lock (RegistryLock)
             {
                 var currentType = type;
                 while (currentType != null)
                 {
-                    if (RegisteredContentTypes.ContainsKey(currentType))
+                    if (RegisteredContentTypes.Contains(currentType))
                         return true;
 
                     currentType = currentType.BaseType;
@@ -404,7 +433,7 @@ namespace Stride.Core.Assets
                     {
                         foreach (var type in referenceTypes)
                         {
-                            RegisteredContentTypes.Add(type, null);
+                            RegisteredContentTypes.Add(type);
                         }
                     }
                 }
@@ -422,7 +451,7 @@ namespace Stride.Core.Assets
 
                 RegisteredEngineAssemblies.Remove(assembly);
 
-                foreach (var type in RegisteredContentTypes.Keys.Where(x => x.Assembly == assembly).ToList())
+                foreach (var type in RegisteredContentTypes.Where(x => x.Assembly == assembly).ToList())
                 {
                     RegisteredContentTypes.Remove(type);
                 }
@@ -662,6 +691,49 @@ namespace Stride.Core.Assets
                             }
                         }
                     }
+
+                    // Register user friendly data assets
+                    if (assemblyScanTypes.Types.TryGetValue(typeof(IDataAsset), out types))
+                    {
+                        foreach (var type in types)
+                        {
+                            if (type.GetCustomAttribute<DataContractAttribute>() == null ||
+                                type.GetCustomAttribute<ReferenceSerializerAttribute>() == null ||
+                                type.GetCustomAttribute<ContentSerializerAttribute>() == null)
+                            {
+                                Log.Warning("An IDataAsset requires [DataContract], [ReferenceSerializer] and [ContentSerializer] attributes.");
+                                continue;
+                            }
+
+                            List<Type> assetTypes = new List<Type>();
+                            ContentToAssetTypes[type] = assetTypes;
+                            var assetType = typeof(DataAsset<>).MakeGenericType(type);
+                            assetTypes.Add(assetType);
+                            assetTypes.Add(typeof(DataAsset<>));
+                        }
+                    }
+                    if (assemblyScanTypes.Types.TryGetValue(typeof(IData<>), out types))
+                    {
+                        foreach (var type in types)
+                        {
+                            var dataType = typeof(Data<>).MakeGenericType(type);
+                            List<Type> assetTypes = new List<Type>();
+                            ContentToAssetTypes[dataType] = assetTypes;
+                            var assetType = typeof(DataAsset<>).MakeGenericType(dataType);
+                            assetTypes.Add(assetType);
+                            assetTypes.Add(typeof(DataAsset<>));
+                        }
+                    }
+
+                    // Process reference types.
+                    List<Type> referenceTypes;
+                    if (assemblyScanTypes.Types.TryGetValue(typeof(ReferenceSerializerAttribute), out referenceTypes))
+                    {
+                        foreach (var type in referenceTypes)
+                        {
+                            RegisteredContentTypes.Add(type);
+                        }
+                    }
                 }
             }
         }
@@ -725,6 +797,11 @@ namespace Stride.Core.Assets
                 foreach (var instance in RegisteredDataVisitNodes.Where(instance => instance.GetType().Assembly == assembly).ToList())
                 {
                     RegisteredDataVisitNodes.Remove(instance);
+                }
+
+                foreach (var instance in RegisteredContentTypes.Where(instance => instance.GetType().Assembly == assembly).ToList())
+                {
+                    RegisteredContentTypes.Remove(instance);
                 }
             }
         }

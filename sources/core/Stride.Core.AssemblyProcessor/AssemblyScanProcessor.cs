@@ -26,10 +26,9 @@ namespace Stride.Core.AssemblyProcessor
             var registry = new AssemblyScanRegistry();
             foreach (var type in context.Assembly.MainModule.GetAllTypes())
             {
-                // Ignore interface types as well as types with generics
-                // Note: we could support generic types at some point but we probably need
-                //       to get static generic instantiation type list from serializer code generator
-                if (type.IsInterface || type.HasGenericParameters)
+                // Ignore interface types
+                // Note: generic type support is experimental
+                if (type.IsInterface)
                     continue;
 
                 var currentType = type;
@@ -177,6 +176,12 @@ namespace Stride.Core.AssemblyProcessor
             {
                 log.WriteLine($"{nameof(AssemblyScanProcessor)}: Can't register type [{type}] for scan type [{scanType}] because it is a nested private type");
                 return;
+            }
+			
+			if (scanType.IsGenericInstance)
+            {
+                // Generic types need to be registered under the GenericTypeDefinition
+                scanType = scanType.Resolve();
             }
 
             assemblyScanRegistry.Register(type, scanType);

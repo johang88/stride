@@ -43,6 +43,15 @@ namespace Stride.Core.Assets.Editor.Services
                 if (AssetRegistry.IsContentType(referenceType))
                 {
                     var assetType = asset.AssetItem.Asset.GetType();
+
+                    if (assetType.IsGenericType)
+                    {
+                        // We can only store one content type for an asset type
+                        // so for generic assets we don't store the content type at all.
+                        // TODO: maybe add some validation that this asset matches the reference type?
+                        return AttachedReferenceManager.CreateProxyObject(referenceType, asset.Id, asset.Url);
+                    }
+
                     var contentType = AssetRegistry.GetContentType(assetType);
                     return referenceType.IsAssignableFrom(contentType) ? AttachedReferenceManager.CreateProxyObject(contentType, asset.Id, asset.Url) : null;
                 }

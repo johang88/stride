@@ -207,7 +207,7 @@ namespace Stride.Core.Yaml.Serialization
         /// <param name="typeFullName">Full name of the type.</param>
         public void ParseType(string typeFullName, out string typeName, out string assemblyName)
         {
-            Serializer.Settings.AssemblyRegistry.ParseType(typeFullName, out typeName, out assemblyName);
+            TypeParseUtils.ParseType(typeFullName, out typeName, out assemblyName);
         }
 
         /// <summary>

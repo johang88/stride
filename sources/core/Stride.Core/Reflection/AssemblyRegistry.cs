@@ -76,6 +76,8 @@ namespace Stride.Core.Reflection
         public static Type GetType([NotNull] string fullyQualifiedTypeName, bool throwOnError = true)
         {
             if (fullyQualifiedTypeName == null) throw new ArgumentNullException(nameof(fullyQualifiedTypeName));
+            if (fullyQualifiedTypeName.Contains('[')) // generic type or array - needs parsing
+                return ResolveType(fullyQualifiedTypeName);
             var assemblyIndex = fullyQualifiedTypeName.IndexOf(",");
             if (assemblyIndex < 0)
             {
@@ -94,6 +96,31 @@ namespace Stride.Core.Reflection
 
             // Fallback to default lookup
             return Type.GetType(fullyQualifiedTypeName, throwOnError, false);
+        }
+
+        public static Type ResolveType(string typeName)
+        {
+            if (typeName == null) throw new ArgumentNullException(nameof(typeName));
+            List<string> genericArguments;
+            int arrayNesting;
+            var resolvedTypeName = TypeParseUtils.GetGenericArgumentsAndArrayDimension(typeName, out genericArguments, out arrayNesting);
+            var resolvedType = GetType(resolvedTypeName);
+            if (genericArguments != null)
+            {
+                var genericTypes = new List<Type>();
+                foreach (var genericArgument in genericArguments)
+                {
+                    var genericType = ResolveType(genericArgument);
+                    genericTypes.Add(genericType);
+                }
+                resolvedType = resolvedType.MakeGenericType(genericTypes.ToArray());
+            }
+            while (arrayNesting > 0)
+            {
+                resolvedType = resolvedType.MakeArrayType();
+                --arrayNesting;
+            }
+            return resolvedType;
         }
 
         /// <summary>
