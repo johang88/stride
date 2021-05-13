@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Stride.Core.Assets;
 using Stride.Core.Assets.Compiler;
@@ -13,6 +14,12 @@ namespace Stride.Assets
     [AssetCompiler(typeof(DataAsset<>), typeof(AssetCompilationContext))]
     public sealed class DataAssetCompiler : AssetCompilerBase
     {
+        public override IEnumerable<Type> GetRuntimeTypes(AssetItem assetItem)
+        {
+            var runtimeTypesCollector = new RuntimeTypesCollector();
+            return runtimeTypesCollector.GetRuntimeTypes(assetItem.Asset);
+        }
+
         protected override void Prepare(AssetCompilerContext context, AssetItem assetItem, string targetUrlInStorage, AssetCompilerResult result)
         {
             var asset = assetItem.Asset;
