@@ -173,16 +173,11 @@ namespace Stride.VisualStudio.Commands
             {
                 // Try both net5.0 and net472
                 var success = false;
-                foreach (var framework in new[] { ".NETCoreApp,Version=v5.0" })
+                foreach (var folder in new[] { "net5.0-windows7.0", "net472" })
                 {
                     var logger = new Logger();
                     var solutionRoot = Path.GetDirectoryName(solution);
-                    
-                    var nugetFramework = NuGetFramework.ParseFrameworkName(framework, DefaultFrameworkNameProvider.Instance);
-                    nugetFramework = new NuGetFramework(nugetFramework.Framework, nugetFramework.Version, "windows", new Version("7.0"));
-
-                    var (request, result) = await Task.Run(() => RestoreHelper.Restore(logger, nugetFramework, "win", packageName, new VersionRange(packageInfo.ExpectedVersion.ToNuGetVersion()), solutionRoot));
-
+                    var (request, result) = await Task.Run(() => RestoreHelper.Restore(logger, NuGetFramework.ParseFolder(folder, DefaultFrameworkNameProvider.Instance), "win", packageName, new VersionRange(packageInfo.ExpectedVersion.ToNuGetVersion()), solutionRoot));
                     if (result.Success)
                     {
                         packageInfo.SdkPaths.AddRange(RestoreHelper.ListAssemblies(result.LockFile));

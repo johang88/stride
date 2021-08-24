@@ -1,3 +1,5 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -36,10 +38,13 @@ namespace Stride.Assets
         {
             if (AssetRegistry.IsContentType(obj.GetType()))
             {
+                // Asset compiler will sort out any dependencies so we dont need to visit any content types
                 runtimeTypes.Add(obj.GetType());
             }
-
-            base.VisitObject(obj, descriptor, visitMembers);
+            else
+            {
+                base.VisitObject(obj, descriptor, visitMembers);
+            }
         }
     }
 }
