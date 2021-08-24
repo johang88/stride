@@ -36,13 +36,10 @@ namespace Stride.Assets
         {
             if (AssetRegistry.IsContentType(obj.GetType()))
             {
-                // Asset compiler will sort out any dependencies so we dont need to visit the any content types
                 runtimeTypes.Add(obj.GetType());
             }
-            else
-            {
-                base.VisitObject(obj, descriptor, visitMembers);
-            }
+
+            base.VisitObject(obj, descriptor, visitMembers);
         }
     }
 }

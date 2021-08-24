@@ -57,7 +57,6 @@ namespace Stride.Rendering.Images
             LightStreak = new LightStreak();
             LensFlare = new LensFlare();
             Antialiasing = new FXAAEffect();
-            DepthMinMax = new DepthMinMax();
             rangeCompress = new ImageEffectShader("RangeCompressorShader");
             rangeDecompress = new ImageEffectShader("RangeDecompressorShader");
             colorTransformsGroup = new ColorTransformGroup();
@@ -175,15 +174,6 @@ namespace Stride.Rendering.Images
         public IScreenSpaceAntiAliasingEffect Antialiasing { get; set; } // TODO: Unload previous anti aliasing
 
         /// <summary>
-        /// Gets the depth min/max effect.
-        /// </summary
-        /// <value>The depth min/max</value>>
-        /// <userdoc>Read backs the min/max depth</userdoc>
-        [DataMember(90)]
-        [Category]
-        public DepthMinMax DepthMinMax { get; private set; }
-
-        /// <summary>
         /// Disables all post processing effects.
         /// </summary>
         public void DisableAll()
@@ -227,7 +217,6 @@ namespace Stride.Rendering.Images
             LensFlare = ToLoadAndUnload(LensFlare);
             //this can be null if no SSAA is selected in the editor
             if (Antialiasing != null) Antialiasing = ToLoadAndUnload(Antialiasing);
-            DepthMinMax = ToLoadAndUnload(DepthMinMax);
 
             rangeCompress = ToLoadAndUnload(rangeCompress);
             rangeDecompress = ToLoadAndUnload(rangeDecompress);
@@ -385,12 +374,6 @@ namespace Stride.Rendering.Images
                 }
 
                 currentInput = aaSurface;
-            }
-
-            if (DepthMinMax.Enabled && inputDepthTexture != null)
-            {
-                DepthMinMax.SetInput(0, inputDepthTexture);
-                DepthMinMax.Draw(context);
             }
 
             if (AmbientOcclusion.Enabled && inputDepthTexture != null)

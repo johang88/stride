@@ -1,0 +1,1 @@
+"C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\msbuild.exe" .\Stride.build /target:BuildRuntime /p:StrideSign=false /p:StrideGraphicsApisDependentBuildAll=true /p:StridePlatforms="Windows"
