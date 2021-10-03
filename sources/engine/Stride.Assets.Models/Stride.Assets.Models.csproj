@@ -14,6 +14,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\tools\Stride.Importer.Assimp\Stride.Importer.Assimp.csproj" />
+    <ProjectReference Include="..\..\tools\Stride.Importer.Common\Stride.Importer.Common.csproj" />
     <ProjectReference Include="..\..\tools\Stride.Importer.FBX\Stride.Importer.FBX.vcxproj" PrivateAssets="All" />
     <ProjectReference Include="..\Stride.Assets\Stride.Assets.csproj" />
   </ItemGroup>
@@ -30,7 +31,10 @@
     <ItemGroup>
       <!-- Needed by .NET Core runtime to be able to load C++/CLI assemblies -->
       <BuildOutputInPackage Include="$(OutputPath)ijwhost.dll" Condition="Exists('$(OutputPath)ijwhost.dll')" />
+      <BuildOutputInPackage Include="$(OutputPath)Stride.Importer.Assimp.dll" />
+      <BuildOutputInPackage Include="$(OutputPath)Stride.Importer.FBX.dll" />
       <BuildOutputInPackage Include="$(OutputPath)Stride.Importer.FBX.ssdeps" />
+      <BuildOutputInPackage Include="$(OutputPath)Stride.Importer.Common.dll" />
       <BuildOutputInPackage Include="$(OutputPath)x64\libfbxsdk.dll" TargetPath="x64\libfbxsdk.dll" />
     </ItemGroup>
   </Target>
