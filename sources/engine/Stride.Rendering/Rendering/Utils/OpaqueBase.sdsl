@@ -1,4 +1,4 @@
-// Copyright (c) Stride contributors (https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 /// <summary>
 /// Defines a depth texture.
@@ -9,12 +9,13 @@ shader OpaqueBase : Texturing
     // -------------------------------------
     // Resources
     // -------------------------------------
-    rgroup PerView.OpaqueRenderTarget
+    rgroup PerView.Opaque
     {
         stage Texture2D OpaqueRenderTarget;
     }
 
-    float3 GetOpaqueColor(float2 uv) {
+    float3 GetOpaqueColor(float2 uv)
+    {
         return OpaqueRenderTarget.SampleLevel(PointSampler, uv, 0.0).xyz;
     }
 };
