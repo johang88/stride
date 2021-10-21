@@ -249,6 +249,9 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
             return entityPicker?.Pick() ?? default(EntityPickingResult);
         }
 
+        public Vector3 PickPosition(Vector2 mousePosition)
+            => entityPicker?.PickPosition(mousePosition) ?? Vector3.Zero;
+
         public async Task<bool> DuplicateSelection()
         {
             var duplicatedIds = new HashSet<AbsoluteId>();
