@@ -23,5 +23,49 @@
   <ItemGroup>
     <Service Include="{508349B6-6B84-4DF5-91F0-309BEEBAD82D}" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Update="Rendering\Core\NormalFromMeshInstanced.sdsl.cs">
+      <DesignTime>True</DesignTime>
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+      <AutoGen>True</AutoGen>
+    </Compile>
+    <Compile Update="Rendering\Shadows\ShadowMapReceiverDirectional.sdsl.cs">
+      <DesignTime>True</DesignTime>
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+      <AutoGen>True</AutoGen>
+    </Compile>
+    <Compile Update="Rendering\StrideEffectBase.sdfx.cs">
+      <DesignTime>True</DesignTime>
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+      <AutoGen>True</AutoGen>
+    </Compile>
+    <Compile Update="Rendering\Transformation\TransformationInstancing.sdsl.cs">
+      <DesignTime>True</DesignTime>
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+      <AutoGen>True</AutoGen>
+    </Compile>
+    <Compile Update="Rendering\Utils\PickingShader.sdsl.cs">
+      <DesignTime>True</DesignTime>
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+      <AutoGen>True</AutoGen>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="Rendering\Core\NormalFromMeshInstanced.sdsl">
+      <LastGenOutput>NormalFromMeshInstanced.sdsl.cs</LastGenOutput>
+    </None>
+    <None Update="Rendering\Shadows\ShadowMapReceiverDirectional.sdsl">
+      <LastGenOutput>ShadowMapReceiverDirectional.sdsl.cs</LastGenOutput>
+    </None>
+    <None Update="Rendering\StrideEffectBase.sdfx">
+      <LastGenOutput>StrideEffectBase.sdfx.cs</LastGenOutput>
+    </None>
+    <None Update="Rendering\Transformation\TransformationInstancing.sdsl">
+      <LastGenOutput>TransformationInstancing.sdsl.cs</LastGenOutput>
+    </None>
+    <None Update="Rendering\Utils\PickingShader.sdsl">
+      <LastGenOutput>PickingShader.sdsl.cs</LastGenOutput>
+    </None>
+  </ItemGroup>
   <Import Project="$(StrideSdkTargets)" />
 </Project>

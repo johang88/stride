@@ -6,7 +6,7 @@ namespace Stride.Rendering
     /// <summary>
     /// A shader used to output the id of the model component, mesh and material for a particular RenderMesh
     /// </summary>
-    shader PickingShader : ShaderBase
+    shader PickingShader : ShaderBase, PositionStream4
     {
         cbuffer PerDraw
         {
@@ -18,6 +18,7 @@ namespace Stride.Rendering
             float modelComponentId = PickingData.x + (min(streams.InstanceID, 1023.0) / 1024.0);
             float meshMaterialIndex = PickingData.y;
             streams.ColorTarget = float4(modelComponentId, meshMaterialIndex, 1, 1);
+            streams.ColorTarget1 = float4(streams.PositionWS.xyz, 1);
         }
     };
 }
