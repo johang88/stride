@@ -71,6 +71,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
         /// The <see cref="SceneSystem"/> for <see cref="EditorScene"/>.
         /// </summary>
         public SceneSystem EditorSceneSystem { get; private set; }
+        public Func<Vector2> GetMousePosition { get; internal set; }
 
         /// <summary>
         /// Finds the entity identified by <paramref name="entityId"/>.
@@ -83,20 +84,8 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
         /// <inheritdoc />
         public override Vector3 GetPositionInScene(Vector2 mousePosition)
         {
-            const float limitAngle = 7.5f * MathUtil.Pi / 180f;
-            const float randomDistance = 20f;
-
-            Vector3 scenePosition;
-            var cameraService = EditorServices.Get<IEditorGameCameraService>();
-
-            var ray = EditorGameHelper.CalculateRayFromMousePosition(cameraService.Component, mousePosition, Matrix.Invert(cameraService.ViewMatrix));
-            var plane = new Plane(Vector3.Zero, upAxis);
-
-            // Ensures a ray angle with projection plane of at least 'limitAngle' to avoid the object to go to infinity.
-            var dotProductValue = Vector3.Dot(ray.Direction, plane.Normal);
-            var comparisonSign = Math.Sign(Vector3.Dot(ray.Position, plane.Normal) + plane.D);
-            if (comparisonSign * (MathF.Acos(dotProductValue) - MathUtil.PiOverTwo) < limitAngle || !plane.Intersects(ref ray, out scenePosition))
-                scenePosition = ray.Position + randomDistance * ray.Direction;
+            var editorGameEntitySelectionService = EditorServices.Get<EditorGameEntitySelectionService>();
+            var scenePosition = editorGameEntitySelectionService.PickPosition(mousePosition);
 
             return scenePosition;
         }

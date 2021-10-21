@@ -45,6 +45,11 @@
       <DesignTimeSharedInput>True</DesignTimeSharedInput>
       <AutoGen>True</AutoGen>
     </Compile>
+    <Compile Update="Rendering\Utils\PickingShader.sdsl.cs">
+      <DesignTime>True</DesignTime>
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+      <AutoGen>True</AutoGen>
+    </Compile>
   </ItemGroup>
   <ItemGroup>
     <None Update="Rendering\Core\NormalFromMeshInstanced.sdsl">
@@ -58,6 +63,9 @@
     </None>
     <None Update="Rendering\Transformation\TransformationInstancing.sdsl">
       <LastGenOutput>TransformationInstancing.sdsl.cs</LastGenOutput>
+    </None>
+    <None Update="Rendering\Utils\PickingShader.sdsl">
+      <LastGenOutput>PickingShader.sdsl.cs</LastGenOutput>
     </None>
   </ItemGroup>
   <Import Project="$(StrideSdkTargets)" />

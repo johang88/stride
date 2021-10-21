@@ -57,19 +57,23 @@ namespace Stride.Assets.Presentation.SceneEditor
         private const int PickingTargetSize = 512;
 
         private PickingObjectInfo pickingResult;
+        private Vector4[] pickPositionResult = new Vector4[PickingTargetSize * PickingTargetSize];
         private readonly Dictionary<int, Entity> idToEntity = new Dictionary<int, Entity>();
         private Texture pickingTexture;
+        private Texture pickingPositionTexture; // TODO: We could probably just use depth and calculate world position ...
 
         [DataMemberIgnore]
         public RenderStage PickingRenderStage { get; set; }
-
         protected override void CollectCore(RenderContext context)
         {
             base.CollectCore(context);
 
             // Fill RenderStage formats
-            PickingRenderStage.Output = new RenderOutputDescription(PixelFormat.R32G32_Float, PixelFormat.D32_Float);
-            PickingRenderStage.Output.ScissorTestEnable = true;
+            PickingRenderStage.Output = new RenderOutputDescription(PixelFormat.R32G32_Float, PixelFormat.D32_Float)
+            { 
+                RenderTargetFormat1 = PixelFormat.R32G32B32A32_Float
+            };
+            //PickingRenderStage.Output.ScissorTestEnable = true;
 
             context.RenderView.RenderStages.Add(PickingRenderStage);
         }
@@ -81,6 +85,13 @@ namespace Stride.Assets.Presentation.SceneEditor
                 // TODO: Release resources!
                 pickingTexture = Texture.New2D(drawContext.GraphicsDevice, 1, 1, PickingRenderStage.Output.RenderTargetFormat0, TextureFlags.None, 1, GraphicsResourceUsage.Staging);
             }
+
+            if (pickingPositionTexture == null)
+            {
+                // TODO: Release resources!
+                pickingPositionTexture = Texture.New2D(drawContext.GraphicsDevice, PickingTargetSize, PickingTargetSize, PixelFormat.R32G32B32A32_Float, TextureFlags.None, 1, GraphicsResourceUsage.Staging);
+            }
+
             var inputManager = context.Services.GetSafeServiceAs<InputManager>();
 
             // Skip rendering if mouse position is the same
@@ -88,6 +99,7 @@ namespace Stride.Assets.Presentation.SceneEditor
 
             // TODO: Use RenderFrame
             var pickingRenderTarget = PushScopedResource(context.Allocator.GetTemporaryTexture2D(PickingTargetSize, PickingTargetSize, PickingRenderStage.Output.RenderTargetFormat0));
+            var pickingPositionRenderTarget = PushScopedResource(context.Allocator.GetTemporaryTexture2D(PickingTargetSize, PickingTargetSize, PixelFormat.R32G32B32A32_Float));
             var pickingDepthStencil = PushScopedResource(context.Allocator.GetTemporaryTexture2D(PickingTargetSize, PickingTargetSize, PickingRenderStage.Output.DepthStencilFormat, TextureFlags.DepthStencil));
 
             var renderTargetSize = new Vector2(pickingRenderTarget.Width, pickingRenderTarget.Height);
@@ -99,21 +111,25 @@ namespace Stride.Assets.Presentation.SceneEditor
             using (drawContext.PushRenderTargetsAndRestore())
             {
                 drawContext.CommandList.Clear(pickingRenderTarget, Color.Transparent);
+                drawContext.CommandList.Clear(pickingPositionRenderTarget, Color.Transparent);
                 drawContext.CommandList.Clear(pickingDepthStencil, DepthStencilClearOptions.DepthBuffer);
 
-                drawContext.CommandList.SetRenderTargetAndViewport(pickingDepthStencil, pickingRenderTarget);
-                drawContext.CommandList.SetScissorRectangle(new Rectangle(x, y, 1, 1));
+                drawContext.CommandList.SetRenderTargetAndViewport(pickingDepthStencil, pickingRenderTarget, pickingPositionRenderTarget);
+                //drawContext.CommandList.SetScissorRectangle(new Rectangle(x, y, 1, 1));
                 context.RenderSystem.Draw(drawContext, context.RenderView, PickingRenderStage);
-                drawContext.CommandList.SetScissorRectangle(new Rectangle());
+                //drawContext.CommandList.SetScissorRectangle(new Rectangle());
             }
 
             // Copy results to 1x1 target
             drawContext.CommandList.CopyRegion(pickingRenderTarget, 0, new ResourceRegion(x, y, 0, x + 1, y + 1, 1), pickingTexture, 0);
+            drawContext.CommandList.Copy(pickingPositionRenderTarget, pickingPositionTexture);
 
             // Get data
             var data = new PickingObjectInfo[1];
             pickingTexture.GetData(drawContext.CommandList, data);
             pickingResult = data[0];
+
+            pickingPositionTexture.GetData(drawContext.CommandList, pickPositionResult);
         }
 
         /// <summary>
@@ -237,6 +253,16 @@ namespace Stride.Assets.Presentation.SceneEditor
         public EntityPickingResult Pick()
         {
             return pickingResult.GetResult(idToEntity);
+        }
+
+        public Vector3 PickPosition(Vector2 mousePosition)
+        {
+            var renderTargetSize = new Vector2(PickingTargetSize, PickingTargetSize);
+            var positionInTexture = Vector2.Modulate(renderTargetSize, mousePosition);
+            int x = Math.Max(0, Math.Min((int)renderTargetSize.X - 2, (int)positionInTexture.X));
+            int y = Math.Max(0, Math.Min((int)renderTargetSize.Y - 2, (int)positionInTexture.Y));
+
+            return pickPositionResult[y * PickingTargetSize + x].XYZ();
         }
     }
 }
