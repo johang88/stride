@@ -552,7 +552,6 @@ namespace Stride.Rendering.Compositing
                         if (depthStencilSRV == null)
                             depthStencilSRV = ResolveDepthAsSRV(drawContext);
 
-
                         var renderTargetSRV = ResolveRenderTargetAsSRV(drawContext);
 
                         renderSystem.Draw(drawContext, context.RenderView, TransparentRenderStage);
@@ -843,12 +842,11 @@ namespace Stride.Rendering.Compositing
 
                 foreach (var viewLayout in viewFeature.Layouts)
                 {
-                    var resourceGroup = viewLayout.Entries[renderView.Index].Resources;
-
                     var opaqueLogicalRenderGroup = viewLayout.GetLogicalGroup(opaqueLogicalKey);
                     if (opaqueLogicalRenderGroup.Hash == ObjectId.Empty)
                         continue;
 
+                    var resourceGroup = viewLayout.Entries[renderView.Index].Resources;
                     resourceGroup.DescriptorSet.SetShaderResourceView(opaqueLogicalRenderGroup.DescriptorSlotStart, renderTargetTexture);
                 }
             }

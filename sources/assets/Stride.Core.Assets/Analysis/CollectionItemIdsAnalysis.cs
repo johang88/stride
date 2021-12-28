@@ -50,16 +50,22 @@ namespace Stride.Core.Assets.Analysis
                 }
             }
 
-            public override void VisitCollection(IEnumerable collection, CollectionDescriptor descriptor)
-            {
-                Fixup(collection);
-                base.VisitCollection(collection, descriptor);
-            }
-
             public override void VisitDictionary(object dictionary, DictionaryDescriptor descriptor)
             {
                 Fixup(dictionary);
                 base.VisitDictionary(dictionary, descriptor);
+            }
+
+            public override void VisitSet(IEnumerable set, SetDescriptor descriptor)
+            {
+                Fixup(set);
+                base.VisitSet(set, descriptor);
+            }
+
+            public override void VisitCollection(IEnumerable collection, CollectionDescriptor descriptor)
+            {
+                Fixup(collection);
+                base.VisitCollection(collection, descriptor);
             }
 
             /// <summary>
