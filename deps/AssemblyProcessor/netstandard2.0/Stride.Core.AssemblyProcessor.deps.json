@@ -9,17 +9,17 @@
     ".NETStandard,Version=v2.0/": {
       "Stride.Core.AssemblyProcessor/1.0.0": {
         "dependencies": {
-          "ILRepack": "2.0.15",
+          "ILRepack": "2.0.18",
           "Microsoft.Build.Utilities.Core": "16.11.0",
-          "Mono.Cecil": "0.11.2",
-          "Mono.Options": "5.3.0.1",
+          "Mono.Cecil": "0.11.4",
+          "Mono.Options": "6.12.0.148",
           "NETStandard.Library": "2.0.3"
         },
         "runtime": {
           "Stride.Core.AssemblyProcessor.dll": {}
         }
       },
-      "ILRepack/2.0.15": {},
+      "ILRepack/2.0.18": {},
       "Microsoft.Build.Framework/16.11.0": {
         "dependencies": {
           "System.Security.Permissions": "4.7.0"
@@ -56,31 +56,31 @@
           "System.Runtime.InteropServices": "4.3.0"
         }
       },
-      "Mono.Cecil/0.11.2": {
+      "Mono.Cecil/0.11.4": {
         "runtime": {
           "lib/netstandard2.0/Mono.Cecil.Mdb.dll": {
-            "assemblyVersion": "0.11.2.0",
-            "fileVersion": "0.11.2.0"
+            "assemblyVersion": "0.11.4.0",
+            "fileVersion": "0.11.4.0"
           },
           "lib/netstandard2.0/Mono.Cecil.Pdb.dll": {
-            "assemblyVersion": "0.11.2.0",
-            "fileVersion": "0.11.2.0"
+            "assemblyVersion": "0.11.4.0",
+            "fileVersion": "0.11.4.0"
           },
           "lib/netstandard2.0/Mono.Cecil.Rocks.dll": {
-            "assemblyVersion": "0.11.2.0",
-            "fileVersion": "0.11.2.0"
+            "assemblyVersion": "0.11.4.0",
+            "fileVersion": "0.11.4.0"
           },
           "lib/netstandard2.0/Mono.Cecil.dll": {
-            "assemblyVersion": "0.11.2.0",
-            "fileVersion": "0.11.2.0"
+            "assemblyVersion": "0.11.4.0",
+            "fileVersion": "0.11.4.0"
           }
         }
       },
-      "Mono.Options/5.3.0.1": {
+      "Mono.Options/6.12.0.148": {
         "runtime": {
-          "lib/netstandard1.3/Mono.Options.dll": {
-            "assemblyVersion": "5.0.0.0",
-            "fileVersion": "5.3.0.0"
+          "lib/netstandard2.0/Mono.Options.dll": {
+            "assemblyVersion": "6.0.0.0",
+            "fileVersion": "6.12.0.0"
           }
         }
       },
@@ -248,12 +248,12 @@
       "serviceable": false,
       "sha512": ""
     },
-    "ILRepack/2.0.15": {
+    "ILRepack/2.0.18": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-byDiC5xGX5wYTE1gTt0VxiHzzJQsRheh3zCKtdYYOa1THBoasCCiQekdYx+EPG+R5NjPfX4csxUChtv3Wr0FNw==",
-      "path": "ilrepack/2.0.15",
-      "hashPath": "ilrepack.2.0.15.nupkg.sha512"
+      "sha512": "sha512-sR5Aj3JLDbA8JwESfWYfigSz5k1oNSHPN434W1LX8sboWJYEOSQP/KkvZGmJKPgajzSUKkl2jDar3LPZiMFU4Q==",
+      "path": "ilrepack/2.0.18",
+      "hashPath": "ilrepack.2.0.18.nupkg.sha512"
     },
     "Microsoft.Build.Framework/16.11.0": {
       "type": "package",
@@ -297,19 +297,19 @@
       "path": "microsoft.win32.registry/4.3.0",
       "hashPath": "microsoft.win32.registry.4.3.0.nupkg.sha512"
     },
-    "Mono.Cecil/0.11.2": {
+    "Mono.Cecil/0.11.4": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-hZNAnXKQsOs/SZMFtT/e82/nA/iLgkeDy+sHD8xix4f0m9/3G0RNZplE1QHB+0n8QXq54jLqR/IPgVOkLapkyg==",
-      "path": "mono.cecil/0.11.2",
-      "hashPath": "mono.cecil.0.11.2.nupkg.sha512"
+      "sha512": "sha512-IC1h5g0NeJGHIUgzM1P82ld57knhP0IcQfrYITDPXlNpMYGUrsG5TxuaWTjaeqDNQMBDNZkB8L0rBnwsY6JHuQ==",
+      "path": "mono.cecil/0.11.4",
+      "hashPath": "mono.cecil.0.11.4.nupkg.sha512"
     },
-    "Mono.Options/5.3.0.1": {
+    "Mono.Options/6.12.0.148": {
       "type": "package",
       "serviceable": true,
-      "sha512": "sha512-irTJcHgEoQRf+otUaCqpMv8D4npzdWpsD3PcdPJoj/T0KkQJMKcSzlzaaELZlzu9IVAZl/lyuhEmaT4t43BBPA==",
-      "path": "mono.options/5.3.0.1",
-      "hashPath": "mono.options.5.3.0.1.nupkg.sha512"
+      "sha512": "sha512-kf6bdXnP4IzqIp4bJ1YKPI3/PAcOV6qm4mznChJ3c92zHQUXTWJSp0+h+Cfcii0O6m/EgW7KA+tbCiB2al0DDA==",
+      "path": "mono.options/6.12.0.148",
+      "hashPath": "mono.options.6.12.0.148.nupkg.sha512"
     },
     "NETStandard.Library/2.0.3": {
       "type": "package",
