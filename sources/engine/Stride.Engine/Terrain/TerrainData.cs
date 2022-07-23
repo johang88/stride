@@ -69,10 +69,14 @@ namespace Stride.Terrain
         /// <returns>Height in the range [0, 1]</returns>
         public float GetHeightAt(int x, int y)
         {
-            if (!IsValidCoordinate(x, y))
-            {
-                return 0.0f;
-            }
+            if (x < 0)
+                x = 0;
+            if (x >= Resolution.X)
+                x = Resolution.X - 1;
+            if (y < 0)
+                y = 0;
+            if (y >= Resolution.Y)
+                y = Resolution.Y - 1;
 
             var index = GetHeightIndex(x, y);
             return Heightmap[index];

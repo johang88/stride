@@ -211,6 +211,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game
 
                         var ray = new Ray(rayStartOS, direction);
 
+                        // TODO: Should check if brush intersects for nice overlaps?
                         if (terrainComponent.Terrain.Intersects(ray, out intersectionPoint))
                         {
                             editableTerain = terrainComponent;
