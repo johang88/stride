@@ -134,9 +134,13 @@ namespace Stride.Core.Reflection
         {
             if (assemblyName == null) throw new ArgumentNullException(nameof(assemblyName));
 
+            // Note: Do not compare by full name as it is too restricive in regards to versioning.
+            // For example consider App -> Foo -> Bar (1.0) with the App referencing a newer version of Bar (2.0)
+            // A full name comparison would now compare Bar (1.0) to Bar (2.0) and fail to load.
+
             // First, check the list of already loaded assemblies
             {
-                var matchingAssembly = loadedAssemblies.FirstOrDefault(x => x.Assembly.FullName == assemblyName.FullName);
+                var matchingAssembly = loadedAssemblies.FirstOrDefault(x => AssemblyName.ReferenceMatchesDefinition(assemblyName, x.Assembly.GetName()));
                 if (matchingAssembly != null)
                     return matchingAssembly.Assembly;
             }
@@ -179,7 +183,7 @@ namespace Stride.Core.Reflection
                         try
                         {
                             var otherAssemblyName = AssemblyName.GetAssemblyName(dependency);
-                            if (otherAssemblyName.FullName == assemblyName.FullName)
+                            if (AssemblyName.ReferenceMatchesDefinition(assemblyName, otherAssemblyName))
                                 return LoadAssemblyFromPathInternal(dependency);
                         }
                         catch (Exception)
@@ -309,6 +313,11 @@ namespace Stride.Core.Reflection
                         when ((uint)fileLoadException.HResult == unverifiableExecutableWithFixups)
                         {
                             // No way to load from byte array (see https://stackoverflow.com/questions/5005409/exception-with-resolving-assemblies-attempt-to-load-an-unverifiable-executable)
+                            assembly = Assembly.LoadFrom(assemblyFullPath);
+                        }
+                        catch (BadImageFormatException)
+                        {
+                            // It could be a mixed mode assembly (see https://stackoverflow.com/questions/2945080/how-do-i-dynamically-load-raw-assemblies-that-contains-unmanaged-codebypassing)
                             assembly = Assembly.LoadFrom(assemblyFullPath);
                         }
                         loadedAssembly = new LoadedAssembly(this, assemblyFullPath, assembly, dependenciesMapping);

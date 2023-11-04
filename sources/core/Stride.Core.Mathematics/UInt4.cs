@@ -22,6 +22,7 @@
 // THE SOFTWARE.
 using System;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Stride.Core.Serialization;
 
@@ -37,7 +38,7 @@ namespace Stride.Core.Mathematics
         /// <summary>
         ///   The size of the <see cref = "UInt4" /> type, in bytes.
         /// </summary>
-        public static readonly int SizeInBytes = Utilities.SizeOf<UInt4>();
+        public static readonly int SizeInBytes = Unsafe.SizeOf<UInt4>();
 
         /// <summary>
         ///   A <see cref = "UInt4" /> with all of its components set to zero.
@@ -634,6 +635,21 @@ namespace Stride.Core.Mathematics
         public static implicit operator uint[](UInt4 input)
         {
             return input.ToArray();
+        }
+
+        /// <summary>
+        /// Deconstructs the vector's components into named variables.
+        /// </summary>
+        /// <param name="x">The X component</param>
+        /// <param name="y">The Y component</param>
+        /// <param name="z">The Z component</param>
+        /// <param name="w">The W component</param>
+        public void Deconstruct(out uint x, out uint y, out uint z, out uint w)
+        {
+            x = X;
+            y = Y;
+            z = Z;
+            w = W;
         }
     }
 }

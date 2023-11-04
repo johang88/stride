@@ -261,7 +261,7 @@ namespace Stride.Core.Assets
                     switch (projectDependency.Type)
                     {
                         case DependencyType.Project:
-                            if (Path.GetExtension(projectDependency.MSBuildProject).ToLowerInvariant() == ".csproj")
+                            if (SupportedProgrammingLanguages.IsProjectExtensionSupported(Path.GetExtension(projectDependency.MSBuildProject).ToLowerInvariant()))
                                 file = UPath.Combine(project.FullPath.GetFullDirectory(), (UFile)projectDependency.MSBuildProject);
                             break;
                         case DependencyType.Package:
@@ -358,7 +358,7 @@ namespace Stride.Core.Assets
                                 // Build list of assemblies
                                 foreach (var a in targetLibrary.RuntimeAssemblies)
                                 {
-                                    if (!a.Path.EndsWith("_._"))
+                                    if (!a.Path.EndsWith("_._") && !a.Path.Contains("/native/"))
                                     {
                                         var assemblyFile = Path.Combine(libraryPath, a.Path.Replace('/', Path.DirectorySeparatorChar));
                                         projectDependency.Assemblies.Add(assemblyFile);
@@ -366,7 +366,7 @@ namespace Stride.Core.Assets
                                 }
                                 foreach (var a in targetLibrary.RuntimeTargets)
                                 {
-                                    if (!a.Path.EndsWith("_._"))
+                                    if (!a.Path.EndsWith("_._") && !a.Path.Contains("/native/"))
                                     {
                                         var assemblyFile = Path.Combine(libraryPath, a.Path.Replace('/', Path.DirectorySeparatorChar));
                                         projectDependency.Assemblies.Add(assemblyFile);

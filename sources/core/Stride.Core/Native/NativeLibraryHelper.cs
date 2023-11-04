@@ -12,7 +12,8 @@ namespace Stride.Core
     public static class NativeLibraryHelper
     {
         private const string UNIX_LIB_PREFIX = "lib";
-        private static readonly Dictionary<string, IntPtr> LoadedLibraries = new Dictionary<string, IntPtr>();
+        private static readonly Dictionary<string, IntPtr> LoadedLibraries = new Dictionary<string, IntPtr>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, string> NativeDependencies = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// Try to preload the library.
@@ -31,6 +32,24 @@ namespace Stride.Core
                 if (LoadedLibraries.ContainsKey(libraryName))
                 {
                     return;
+                }
+
+                // Was the dependency registered beforehand?
+                {
+                    if (NativeDependencies.TryGetValue(libraryName, out var path) && NativeLibrary.TryLoad(path, out var result))
+                    {
+                        LoadedLibraries.Add(libraryName, result);
+                        return;
+                    }
+                }
+
+                // Try default loading mechanism (https://docs.microsoft.com/en-us/dotnet/core/dependency-loading/loading-unmanaged)
+                {
+                    if (NativeLibrary.TryLoad(libraryName, owner.Assembly, searchPath: null, out var result))
+                    {
+                        LoadedLibraries.Add(libraryName, result);
+                        return;
+                    }
                 }
 
                 string cpu;
@@ -90,20 +109,20 @@ namespace Stride.Core
                     // e.g. /lib/x86_64-linux-gnu, /lib, /usr/lib, etc. 
                     if (NativeLibrary.TryLoad(libraryNameWithExtension, out var result))
                     {
-                        LoadedLibraries.Add(libraryName.ToLowerInvariant(), result);
+                        LoadedLibraries.Add(libraryName, result);
                         return;
                     }
                     else if (!libraryName.StartsWith(UNIX_LIB_PREFIX)
                         && NativeLibrary.TryLoad(UNIX_LIB_PREFIX + libraryNameWithExtension, out result))
                     {
-                        LoadedLibraries.Add(libraryName.ToLowerInvariant(), result);
+                        LoadedLibraries.Add(libraryName, result);
                         return;
                     }
                 }
 
                 // We are trying to load the dll from a shadow path if it is already registered, otherwise we use it directly from the folder
                 {
-                    var platformNativeLibsFolder = $"{platform}-{cpu}";
+                    var platformNativeLibsFolder = Path.Combine("runtimes", $"{platform}-{cpu}", "native");
                     foreach (var libraryPath in new[]
                     {
                         Path.Combine(Path.GetDirectoryName(owner.GetTypeInfo().Assembly.Location) ?? string.Empty, platformNativeLibsFolder),
@@ -117,7 +136,7 @@ namespace Stride.Core
                         var libraryFilename = Path.Combine(libraryPath, libraryNameWithExtension);
                         if (NativeLibrary.TryLoad(libraryFilename, out var result))
                         {
-                            LoadedLibraries.Add(libraryName.ToLowerInvariant(), result);
+                            LoadedLibraries.Add(libraryName, result);
                             return;
                         }
                     }
@@ -129,7 +148,7 @@ namespace Stride.Core
                     var libraryFilename = Path.Combine(p, libraryNameWithExtension);
                     if (NativeLibrary.TryLoad(libraryFilename, out var result))
                     {
-                        LoadedLibraries.Add(libraryName.ToLowerInvariant(), result);
+                        LoadedLibraries.Add(libraryName, result);
                         return;
                     }
                 }
@@ -173,6 +192,22 @@ namespace Stride.Core
                 LoadedLibraries.Clear();
             }
 #endif
+        }
+
+        /// <summary>
+        /// Registers a native dependency.
+        /// </summary>
+        /// <param name="libraryPath">The full path to the native library.</param>
+        /// <exception cref="ArgumentNullException"></exception>
+        public static void RegisterDependency(string libraryPath)
+        {
+            if (libraryPath == null) throw new ArgumentNullException(nameof(libraryPath));
+
+            lock (LoadedLibraries)
+            {
+                var libraryName = Path.GetFileNameWithoutExtension(libraryPath);
+                NativeDependencies[libraryName] = libraryPath;
+            }
         }
     }
 }

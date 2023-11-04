@@ -44,7 +44,7 @@ namespace Stride.Core.Mathematics
         /// <summary>
         /// The size of the <see cref="Stride.Core.Mathematics.Vector4"/> type, in bytes.
         /// </summary>
-        public static readonly int SizeInBytes = Utilities.SizeOf<Vector4>();
+        public static readonly int SizeInBytes = Unsafe.SizeOf<Vector4>();
 
         /// <summary>
         /// A <see cref="Stride.Core.Mathematics.Vector4"/> with all of its components set to zero.
@@ -1383,6 +1383,21 @@ namespace Stride.Core.Mathematics
                 return false;
 
             return Equals((Vector4)value);
+        }
+        
+        /// <summary>
+        /// Deconstructs the vector's components into named variables.
+        /// </summary>
+        /// <param name="x">The X component</param>
+        /// <param name="y">The Y component</param>
+        /// <param name="z">The Z component</param>
+        /// <param name="w">The W component</param>
+        public void Deconstruct(out float x, out float y, out float z, out float w)
+        {
+            x = X;
+            y = Y;
+            z = Z;
+            w = W;
         }
 
 #if WPFInterop
