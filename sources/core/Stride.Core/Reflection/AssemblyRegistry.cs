@@ -78,7 +78,7 @@ namespace Stride.Core.Reflection
             if (fullyQualifiedTypeName == null) throw new ArgumentNullException(nameof(fullyQualifiedTypeName));
             if (fullyQualifiedTypeName.Contains('[')) // generic type or array - needs parsing
                 return ResolveType(fullyQualifiedTypeName);
-            var assemblyIndex = fullyQualifiedTypeName.IndexOf(",");
+            var assemblyIndex = fullyQualifiedTypeName.IndexOf(',');
             if (assemblyIndex < 0)
             {
                 throw new ArgumentException($"Invalid fulltype name [{fullyQualifiedTypeName}], expecting an assembly name", nameof(fullyQualifiedTypeName));
