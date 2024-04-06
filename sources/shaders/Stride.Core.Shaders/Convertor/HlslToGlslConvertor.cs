@@ -141,8 +141,8 @@ namespace Stride.Core.Shaders.Convertor
                 switch (pipelineStage)
                 {
                     case PipelineStage.Vertex:
-                        builtinInputs.Add("SV_VertexID", shaderPlatform == GlslShaderPlatform.Vulkan ? "gl_VertexIndex" : "gl_VertexID");
-                        builtinInputs.Add("SV_InstanceID", shaderPlatform == GlslShaderPlatform.Vulkan ? "gl_InstanceIndex" :  "gl_InstanceID");
+                        builtinInputs.Add("SV_VertexID", isVulkan ? "gl_VertexIndex" : "gl_VertexID");
+                        builtinInputs.Add("SV_InstanceID", isVulkan ? "gl_InstanceIndex" : "gl_InstanceID");
                         if (shaderModel < ShaderModel.Model40)
                         {
                             builtinOutputs.Add("POSITION", "gl_Position");
@@ -188,16 +188,22 @@ namespace Stride.Core.Shaders.Convertor
                             builtinOutputs.Add("SV_Target", "gl_FragData[]");
                         }
                         break;
+                    case PipelineStage.Compute:
+                        builtinInputs.Add("SV_DispatchThreadID", "gl_GlobalInvocationID");
+                        builtinInputs.Add("SV_GroupID", "gl_WorkGroupID");
+                        builtinInputs.Add("SV_GroupIndex", "gl_LocalInvocationIndex");
+                        builtinInputs.Add("SV_GroupThreadID", "gl_LocalInvocationID");
+                        break;
                 }
 
-                builtinGlslTypes = new Dictionary<string, TypeBase>(StringComparer.CurrentCultureIgnoreCase) 
+                builtinGlslTypes = new Dictionary<string, TypeBase>(StringComparer.CurrentCultureIgnoreCase)
                 {
                    { "gl_ClipDistance", ScalarType.Float}, // array
                    { "gl_FragCoord", VectorType.Float4},
-                   { "gl_FragDepth", ScalarType.Float}, 
-                   { "gl_FragColor", VectorType.Float4}, 
+                   { "gl_FragDepth", ScalarType.Float},
+                   { "gl_FragColor", VectorType.Float4},
                    { "gl_FragData", VectorType.Float4}, // array
-                   { "gl_FrontFacing", ScalarType.Bool}, 
+                   { "gl_FrontFacing", ScalarType.Bool},
                    { "gl_InstanceID", ScalarType.Int },
                    { "gl_InstanceIndex", ScalarType.Int },
                    { "gl_InvocationID", ScalarType.Int},
@@ -217,20 +223,25 @@ namespace Stride.Core.Shaders.Convertor
                    { "gl_VertexID", ScalarType.Int},
                    { "gl_VertexIndex", ScalarType.Int},
                    { "gl_ViewportIndex", ScalarType.Int},
+                   { "gl_GlobalInvocationID", VectorType.UInt3},
+                   { "gl_WorkGroupID", VectorType.UInt3},
+                   { "gl_LocalInvocationIndex", ScalarType.UInt},
+                   { "gl_LocalInvocationID", VectorType.UInt3},
                 };
             }
 
-            functionMapping = new Dictionary<string, string> {
-                                                                   { "ddx", "dFdx" }, 
-                                                                   { "ddy", "dFdy" }, 
-                                                                   { "fmod", "mod" }, 
-                                                                   { "frac", "fract" }, 
-                                                                   { "lerp", "mix" }, 
-                                                                   { "rsqrt", "inversesqrt" }, 
-                                                                   { "atan2", "atan" }, 
-                                                                   { "saturate", "clamp" }, 
-                                                                   //{ "D3DCOLORtoUBYTE4", "ivec4" }, 
-                                                               };
+            functionMapping = new Dictionary<string, string> 
+            {
+                { "ddx", "dFdx" },
+                { "ddy", "dFdy" },
+                { "fmod", "mod" },
+                { "frac", "fract" },
+                { "lerp", "mix" },
+                { "rsqrt", "inversesqrt" },
+                { "atan2", "atan" },
+                { "saturate", "clamp" },
+                { "GroupMemoryBarrier", "groupMemoryBarrier" },
+            };
         }
 
         #endregion
@@ -413,7 +424,7 @@ namespace Stride.Core.Shaders.Convertor
             // Replace all Half types to float, as there are no equivalent in glsl
             // This will force the type inference analysis to use float instead of half
             SearchVisitor.Run(
-                shader, 
+                shader,
                 node =>
                     {
                         if (node.Equals(ScalarType.Half))
@@ -782,8 +793,9 @@ namespace Stride.Core.Shaders.Convertor
                                 0,
                                 new ExpressionStatement(
                                     new AssignmentExpression(
-                                        AssignmentOperator.Default, fieldRef.GetMemberReference(new VariableReferenceExpression(variable.Name)), 
-                                        this.CastSemanticToReferenceType(variableFromSemantic.Name, fieldType, variableFromSemantic))) { Span = variable.Span });
+                                        AssignmentOperator.Default, fieldRef.GetMemberReference(new VariableReferenceExpression(variable.Name)),
+                                        this.CastSemanticToReferenceType(variableFromSemantic.Name, fieldType, variableFromSemantic)))
+                                { Span = variable.Span });
                             semanticFound = true;
                         }
                     }
@@ -1058,6 +1070,12 @@ namespace Stride.Core.Shaders.Convertor
                     }
 
                     break;
+
+                case "GroupMemoryBarrierWithGroupSync":
+                    // GroupMemoryBarrierWithGroupSync-> groupMemoryBarrier(); barrier();
+                    return new StatementList(
+                        new ExpressionStatement(new MethodInvocationExpression("groupMemoryBarrier")),
+                                                new ExpressionStatement(new MethodInvocationExpression("barrier")));
             }
 
             return null;
@@ -1201,6 +1219,12 @@ namespace Stride.Core.Shaders.Convertor
                             return resultBlock;
                         }
                     }
+                    else if (variableType.Name.Text.StartsWith("RWTexture"))
+                    {
+                        // Convert assignment to imageStore, we also cast the indexer to ivec2 as it's required.
+                        var indexer = new MethodInvocationExpression(new TypeReferenceExpression(VectorType.Int2), indexerExpression.Index);
+                        return new ExpressionStatement(new MethodInvocationExpression("imageStore", indexerExpression.Target, indexer, assignmentExpression.Value));
+                    }
                 }
             }
 
@@ -1246,8 +1270,8 @@ namespace Stride.Core.Shaders.Convertor
                     var leftParameter = ConvertToSafeExpressionForBinary(methodInvocationExpression.Arguments[NoSwapForBinaryMatrixOperation ? 0 : 1]);
                     var rightParameter = ConvertToSafeExpressionForBinary(methodInvocationExpression.Arguments[NoSwapForBinaryMatrixOperation ? 1 : 0]);
                     return new ParenthesizedExpression(new BinaryExpression(BinaryOperator.Multiply, leftParameter, rightParameter));
-                } 
-                
+                }
+
                 if (methodName == "lit")
                 {
                     // http://msdn.microsoft.com/en-us/library/bb509619%28v=vs.85%29.aspx
@@ -1261,8 +1285,8 @@ namespace Stride.Core.Shaders.Convertor
                     methodLit.Arguments.Add(new LiteralExpression(1.0f));
 
                     var diffuseArg = new ConditionalExpression(
-                        new BinaryExpression(BinaryOperator.Less, methodInvocationExpression.Arguments[0], new LiteralExpression(0.0f)), 
-                        new LiteralExpression(0.0f), 
+                        new BinaryExpression(BinaryOperator.Less, methodInvocationExpression.Arguments[0], new LiteralExpression(0.0f)),
+                        new LiteralExpression(0.0f),
                         methodInvocationExpression.Arguments[0]);
 
                     methodLit.Arguments.Add(diffuseArg);
@@ -1270,10 +1294,10 @@ namespace Stride.Core.Shaders.Convertor
                     var specularArg =
                         new ConditionalExpression(
                             new BinaryExpression(
-                                BinaryOperator.LogicalOr, 
-                                new BinaryExpression(BinaryOperator.Less, methodInvocationExpression.Arguments[0], new LiteralExpression(0.0f)), 
-                                new BinaryExpression(BinaryOperator.Less, methodInvocationExpression.Arguments[1], new LiteralExpression(0.0f))), 
-                            new LiteralExpression(0.0f), 
+                                BinaryOperator.LogicalOr,
+                                new BinaryExpression(BinaryOperator.Less, methodInvocationExpression.Arguments[0], new LiteralExpression(0.0f)),
+                                new BinaryExpression(BinaryOperator.Less, methodInvocationExpression.Arguments[1], new LiteralExpression(0.0f))),
+                            new LiteralExpression(0.0f),
                             new MethodInvocationExpression("pow", methodInvocationExpression.Arguments[1], methodInvocationExpression.Arguments[2]));
 
                     methodLit.Arguments.Add(specularArg);
@@ -1318,7 +1342,7 @@ namespace Stride.Core.Shaders.Convertor
 
                 if (string.Compare(methodName, "D3DCOLORtoUBYTE4", StringComparison.OrdinalIgnoreCase) == 0)
                 {
-                    return new MethodInvocationExpression(new TypeReferenceExpression(VectorType.Int4), methodInvocationExpression.Arguments[0]) { TypeInference = { TargetType = VectorType.Int4 }};
+                    return new MethodInvocationExpression(new TypeReferenceExpression(VectorType.Int4), methodInvocationExpression.Arguments[0]) { TypeInference = { TargetType = VectorType.Int4 } };
                 }
 
                 string methodNameGl;
@@ -1341,12 +1365,12 @@ namespace Stride.Core.Shaders.Convertor
 
                 switch (memberReferenceExpression.Member)
                 {
-                        // Geometry shader
+                    // Geometry shader
                     case "RestartStrip":
                         methodInvocationExpression.Target = new VariableReferenceExpression("EndPrimitive");
                         break;
 
-                        // Texture object
+                    // Texture object
                     case "GetDimensions":
                         // We should not be here
                         parserResult.Error("GetDimensions should have been already preprocessed for expression [{0}]", methodInvocationExpression.Span, methodInvocationExpression);
@@ -1466,7 +1490,7 @@ namespace Stride.Core.Shaders.Convertor
                                 // Since Texture.Load works with integer coordinates, need to convert texture.Load(coords, [offset]) to:
                                 //    - textureLod[Offset](texture_sampler, coords.xy / textureSize(texture_sampler), coords.z, [offset]) on OpenGL ES 2
                                 //    - texelFetch[Offset](texture_sampler, coords.xy, coords.z, [offset]) on OpenGL and ES 3
-                                
+
                                 string dimP = "??";
                                 string mipLevel = "?";
 
@@ -1493,7 +1517,7 @@ namespace Stride.Core.Shaders.Convertor
                                         mipLevel = "w";
                                         break;
                                     default:
-                                        parserResult.Error("Unable to process texture coordinates for type [{0}] when processing expression [{1}]", methodInvocationExpression.Span, targetVariableType.Name.Text,  methodInvocationExpression);
+                                        parserResult.Error("Unable to process texture coordinates for type [{0}] when processing expression [{1}]", methodInvocationExpression.Span, targetVariableType.Name.Text, methodInvocationExpression);
                                         break;
                                 }
 
@@ -1588,8 +1612,8 @@ namespace Stride.Core.Shaders.Convertor
             // Convert float4(xxx) ? left : right to mix(left, right, float4(xxx) == 0);
             if (conditionType is VectorType)
             {
-                var methodInvocation = new MethodInvocationExpression("mix", conditionalExpression.Left, conditionalExpression.Right,   
-                new MethodInvocationExpression("equal", conditionalExpression.Condition, new MethodInvocationExpression(new TypeReferenceExpression(conditionType), new LiteralExpression(0)) ));
+                var methodInvocation = new MethodInvocationExpression("mix", conditionalExpression.Left, conditionalExpression.Right,
+                new MethodInvocationExpression("equal", conditionalExpression.Condition, new MethodInvocationExpression(new TypeReferenceExpression(conditionType), new LiteralExpression(0))));
                 return methodInvocation;
             }
             else
@@ -1676,7 +1700,7 @@ namespace Stride.Core.Shaders.Convertor
                 ++breakIndex;
                 var breakVisitor = new BreakContinueVisitor();
                 var hasBreak = breakVisitor.Run(forStatement, breakFlag, "break", parserResult);
-                
+
                 var continueFlag = new Variable(ScalarType.Bool, "isContinue" + breakIndex, new LiteralExpression(false));
                 ++breakIndex;
                 var continueVisitor = new BreakContinueVisitor();
@@ -1705,10 +1729,10 @@ namespace Stride.Core.Shaders.Convertor
                             var clonedBody = forStatement.Body.DeepClone();
                             var blockStatement = clonedBody as BlockStatement ?? new BlockStatement(new StatementList(clonedBody));
                             blockStatement.Statements.Add(new ExpressionStatement(forStatement.Next));
-                            
+
                             if (hasContinue) // reset the flag
                                 blockStatement.Statements.Add(new ExpressionStatement(new AssignmentExpression(AssignmentOperator.Default, new VariableReferenceExpression(continueFlag), new LiteralExpression(false))));
-                            
+
                             if (hasBreak)
                             {
                                 var ifStatement = new IfStatement();
@@ -1779,7 +1803,7 @@ namespace Stride.Core.Shaders.Convertor
                     }
                 }
             }
-            
+
             return null;
         }
 
@@ -1988,7 +2012,7 @@ namespace Stride.Core.Shaders.Convertor
                         castToType.Arguments.Add(expression);
 
                     result = castToType;
-                } 
+                }
             }
 
             return result;
@@ -2149,8 +2173,8 @@ namespace Stride.Core.Shaders.Convertor
                     if (isOperationOnVectors)
                     {
                         parserResult.Error(
-                            "Boolean operation && || on expression [{0}] cannot be converted safely to GLSL, as GLSL doesn't support boolean operators function on a per-component basis. Code is generated but invalid", 
-                            binaryExpression.Span, 
+                            "Boolean operation && || on expression [{0}] cannot be converted safely to GLSL, as GLSL doesn't support boolean operators function on a per-component basis. Code is generated but invalid",
+                            binaryExpression.Span,
                             binaryExpression);
                     }
                 }
@@ -2264,8 +2288,8 @@ namespace Stride.Core.Shaders.Convertor
                                         tupleBlock.Statements.Add(
                                             new ExpressionStatement(
                                                 new AssignmentExpression(
-                                                    AssignmentOperator.Default, 
-                                                    expression, 
+                                                    AssignmentOperator.Default,
+                                                    expression,
                                                     new MemberReferenceExpression(new VariableReferenceExpression(TemporaryTupleName), SwizzleMembers.Substring(startMember, argumentDimension)))));
                                         startMember += argumentDimension;
                                     }
@@ -2289,7 +2313,7 @@ namespace Stride.Core.Shaders.Convertor
                         // Handle geometry shader vertex emit
                         if (method != null && method.Target is VariableReferenceExpression)
                         {
-                            var targetVariable = (VariableReferenceExpression) method.Target;
+                            var targetVariable = (VariableReferenceExpression)method.Target;
                             var targetType = targetVariable.TypeInference.TargetType;
                             if (ClassType.IsStreamOutputType(targetType))
                             {
@@ -2303,7 +2327,7 @@ namespace Stride.Core.Shaders.Convertor
                                     //    streamOutVariable.Qualifiers |= ParameterQualifier.Out;
                                     //    AddGlobalDeclaration(streamOutVariable);
                                     //}
-       
+
                                     if (targetType.Name == "TriangleStream")
                                         geometryLayoutOutput = "triangle_strip";
                                     else if (targetType.Name == "LineStream")
@@ -2318,7 +2342,7 @@ namespace Stride.Core.Shaders.Convertor
 
                                     var returnStatement = ConvertReturn(methodInvocationExpr.Arguments[0], false, null);
                                     if (returnStatement is StatementList)
-                                        newStatementList.AddRange((StatementList) returnStatement);
+                                        newStatementList.AddRange((StatementList)returnStatement);
                                     else
                                         newStatementList.Add(returnStatement);
                                     newStatementList.Add(new ExpressionStatement(new MethodInvocationExpression(new VariableReferenceExpression("EmitVertex"))));
@@ -2443,7 +2467,7 @@ namespace Stride.Core.Shaders.Convertor
                     return convertRowToColumnMethod;
                 }
             }
-            
+
             return indexerExpression;
         }
 
@@ -2451,9 +2475,9 @@ namespace Stride.Core.Shaders.Convertor
         {
             //var samplerMappingVisitor = new SamplerMappingVisitor(samplerMapping);
             var samplerMappingVisitor = new SamplerMappingVisitor(shader, samplerMapping)
-                {
-                    TextureFunctionsCompatibilityProfile = TextureFunctionsCompatibilityProfile
-                };
+            {
+                TextureFunctionsCompatibilityProfile = TextureFunctionsCompatibilityProfile
+            };
             samplerMappingVisitor.Run(entryPoint);
 
             // Use the strip visitor in order to remove unused functions/declaration 
@@ -2536,7 +2560,16 @@ namespace Stride.Core.Shaders.Convertor
                 // Remove HLSL Register
                 variable.Qualifiers.Values.RemoveAll(qualifierType => qualifierType is RegisterLocation);
                 variable.Qualifiers.Values.Remove(Ast.Hlsl.StorageQualifier.Static);
-                variable.Qualifiers.Values.Remove(Ast.Hlsl.StorageQualifier.Shared);
+
+                if (pipelineStage != PipelineStage.Compute)
+                {
+                    variable.Qualifiers.Values.Remove(Ast.Hlsl.StorageQualifier.Shared);
+                }
+                // groupshared -> shared
+                else if (variable.Qualifiers.Values.Remove(Ast.Hlsl.StorageQualifier.Groupshared))
+                {
+                    variable.Qualifiers.Values.Add(Ast.Hlsl.StorageQualifier.Shared);
+                }
 
                 // If variable is an object type, remove any initial values
                 var type = variable.Type.ResolveType();
@@ -2605,7 +2638,8 @@ namespace Stride.Core.Shaders.Convertor
 
                 entryPoint.Body.Statements.Insert(0, new ExpressionStatement(new AssignmentExpression(AssignmentOperator.Default,
                             new VariableReferenceExpression(localVariable),
-                            localVariable.InitialValue as VariableReferenceExpression) { Span = globalVariable.Span }));
+                            localVariable.InitialValue as VariableReferenceExpression)
+                { Span = globalVariable.Span }));
 
                 localVariable.InitialValue = null;
                 shader.Declarations.Insert(indexOfVariable, new DeclarationStatement(localVariable) { Span = globalVariable.Span });
@@ -2647,9 +2681,9 @@ namespace Stride.Core.Shaders.Convertor
             if (!UseInterfaceForInOut && pipelineStage != PipelineStage.Geometry)
                 return;
 
-            var interfaceIn = new Ast.Glsl.InterfaceType(VertexIOInterfaceName) {Qualifiers = Ast.ParameterQualifier.In};
+            var interfaceIn = new Ast.Glsl.InterfaceType(VertexIOInterfaceName) { Qualifiers = Ast.ParameterQualifier.In };
 
-            var interfaceOut = new Ast.Glsl.InterfaceType(VertexIOInterfaceName) {Qualifiers = Ast.ParameterQualifier.Out};
+            var interfaceOut = new Ast.Glsl.InterfaceType(VertexIOInterfaceName) { Qualifiers = Ast.ParameterQualifier.Out };
 
             var isInAllowed = pipelineStage != PipelineStage.Vertex && pipelineStage != PipelineStage.Geometry;
             var isOutAllowed = pipelineStage != PipelineStage.Pixel;
@@ -2695,7 +2729,7 @@ namespace Stride.Core.Shaders.Convertor
             // } input[];
 
             // TODO ADD CHECKING
-            var arrayType = (ArrayType) geometryInputParameter.Type;
+            var arrayType = (ArrayType)geometryInputParameter.Type;
             var structType = arrayType.Type.TypeInference.TargetType as StructType;
             var interfaceType = new Ast.Glsl.InterfaceType { Name = VertexIOInterfaceName };
             int location = 0;
@@ -2965,7 +2999,8 @@ namespace Stride.Core.Shaders.Convertor
         private static bool IsUniformLike(Variable variable)
         {
             return !variable.Qualifiers.Contains(Ast.ParameterQualifier.InOut) && !variable.Qualifiers.Contains(Ast.ParameterQualifier.In) && !variable.Qualifiers.Contains(Ast.ParameterQualifier.Out)
-                   && !variable.Qualifiers.Contains(Ast.Hlsl.StorageQualifier.Static) && !variable.Qualifiers.Contains(Ast.StorageQualifier.Const);
+                   && !variable.Qualifiers.Contains(Ast.Hlsl.StorageQualifier.Static) && !variable.Qualifiers.Contains(Ast.StorageQualifier.Const)
+                   && !variable.Qualifiers.Contains(Ast.StorageQualifier.Shared) && !variable.Qualifiers.Contains(Ast.StorageQualifier.GroupShared);
         }
 
         /// <summary>
@@ -3335,7 +3370,7 @@ namespace Stride.Core.Shaders.Convertor
                     // if isOutput and structType && not assigntarget
                     if (((isInput || isOutput) && !(type is StructType)) || (isOutput && !isAssignmentTarget))
                     {
-                        var variable = GetVariableFromSemantic(semantic, type, isInput, varName, span );
+                        var variable = GetVariableFromSemantic(semantic, type, isInput, varName, span);
                         Variable newVariable;
                         inputAssignment.TryGetValue(variable, out newVariable);
 
@@ -3358,7 +3393,7 @@ namespace Stride.Core.Shaders.Convertor
                 {
                     var variable = FindDeclaration(varRefExpr.Name) as Variable;
 
-                    if (variable != null)
+                    if (variable != null && !variable.Type.ResolveType().Name.Text.StartsWith("RWTexture"))
                     {
                         Variable newVariable;
                         inputAssignment.TryGetValue(variable, out newVariable);
@@ -3409,7 +3444,8 @@ namespace Stride.Core.Shaders.Convertor
                                     new AssignmentExpression(
                                         AssignmentOperator.Default,
                                         new VariableReferenceExpression(GetVariableFromSemantic(newSemantic, fieldArrayType, false, fieldRef.FieldNamePath, span).Name),
-                                        new IndexerExpression(fieldRef.GetMemberReference(returnValueExpression), new LiteralExpression(i)))) { Span = span });
+                                        new IndexerExpression(fieldRef.GetMemberReference(returnValueExpression), new LiteralExpression(i))))
+                                { Span = span });
                         }
 
                     }
@@ -3429,7 +3465,8 @@ namespace Stride.Core.Shaders.Convertor
                     statementList.Add(
                         new ExpressionStatement(
                             new AssignmentExpression(
-                                AssignmentOperator.Default, new VariableReferenceExpression(semanticVariable.Name) { TypeInference = { Declaration = semanticVariable } }, semanticValue)) { Span = returnValueExpression.Span });
+                                AssignmentOperator.Default, new VariableReferenceExpression(semanticVariable.Name) { TypeInference = { Declaration = semanticVariable } }, semanticValue))
+                        { Span = returnValueExpression.Span });
                 }
             }
         }
@@ -3502,7 +3539,8 @@ namespace Stride.Core.Shaders.Convertor
                             new AssignmentExpression(
                                 AssignmentOperator.Default,
                                 new VariableReferenceExpression(GetVariableFromSemantic(semantic, CurrentFunction.ReturnType.ResolveType(), false, null, semantic.Span).Name),
-                                returnValueExpression)) { Span = span.Value } );
+                                returnValueExpression))
+                        { Span = span.Value });
                 }
             }
 
@@ -3853,7 +3891,7 @@ namespace Stride.Core.Shaders.Convertor
                             }
 
                             // Use output or input name
-                            layoutTag.Name = variable.Qualifiers.Contains(Ast.ParameterQualifier.Out) ? variableLayoutRule.NameOutput : variableLayoutRule.Name;                           
+                            layoutTag.Name = variable.Qualifiers.Contains(Ast.ParameterQualifier.Out) ? variableLayoutRule.NameOutput : variableLayoutRule.Name;
                         }
                     }
                     else if (constantBuffer != null)
@@ -3877,15 +3915,30 @@ namespace Stride.Core.Shaders.Convertor
                     }
                 }
 
-                if (variable != null)
-                {
-                    
-                }
-
                 if (variable != null && layoutTag.Name == null)
                     layoutTag.Name = variable.Name.Text;
 
-                layoutTag.Qualifier = new Ast.Glsl.LayoutQualifier();
+                layoutTag.Qualifier = new LayoutQualifier();
+
+                // TODO: This does not look great, could probably be more generic? Maybe use the readwrite stuff in globalunfiromvisitor?
+                if (variable != null
+                    && layoutTag.Type == null
+                    && variable.Type.ResolveType() is ClassType classType
+                    && classType.Name.Text.StartsWith("RWTexture")
+                    && classType.GenericArguments.Count == 1
+                    && classType.GenericArguments[0].ResolveType() is VectorType vectorType)
+                {
+                    var type = vectorType.Dimension switch
+                    {
+                        1 => "r",
+                        2 => "rg",
+                        3 => "rgb",
+                        4 => "rgba",
+                        _ => throw new NotSupportedException($"Unsupported vector dimension {vectorType.Dimension}"),
+                    };
+
+                    layoutTag.Qualifier.Layouts.Add(new LayoutKeyValue($"{type}16f", null)); // TODO: not sure how to actually resolve the proper type here
+                }
             }
 
             return layoutTag;
@@ -3897,7 +3950,7 @@ namespace Stride.Core.Shaders.Convertor
         private void RebindVariableReferenceExpressions()
         {
             SearchVisitor.Run(
-                shader, 
+                shader,
                 node =>
                     {
                         if (node is VariableReferenceExpression)
@@ -3925,7 +3978,7 @@ namespace Stride.Core.Shaders.Convertor
         private void RemoveDefaultParametersForMethods()
         {
             SearchVisitor.Run(
-                shader, 
+                shader,
                 node =>
                     {
                         var declaration = node as Parameter;
@@ -3992,7 +4045,7 @@ namespace Stride.Core.Shaders.Convertor
         private void RenameGlslKeywords()
         {
             SearchVisitor.Run(
-                shader, 
+                shader,
                 node =>
                     {
                         var declaration = node as IDeclaration;
@@ -4021,7 +4074,7 @@ namespace Stride.Core.Shaders.Convertor
             var semanticMapping = isInput ? builtinInputs : builtinOutputs;
 
             semanticGl = null;
-            
+
             if (semanticMapping != null && !semanticMapping.TryGetValue(semanticName, out semanticGl))
                 semanticMapping.TryGetValue(semantic.Key, out semanticGl);
 
@@ -4067,7 +4120,7 @@ namespace Stride.Core.Shaders.Convertor
         {
             string semanticGlBase = null;
             string semanticGl = null;
-            var  semantic = GetGlVariableFromSemantic(rawSemantic, isInput, out semanticGl, out semanticGlBase, out semanticIndex);
+            var semantic = GetGlVariableFromSemantic(rawSemantic, isInput, out semanticGl, out semanticGlBase, out semanticIndex);
 
             if (semanticGl == null)
             {
@@ -4117,7 +4170,7 @@ namespace Stride.Core.Shaders.Convertor
                 else
                 {
                     parserResult.Warning("No default type defined for glsl semantic [{0}]. Use [{1}] implicit type instead.", rawSemantic.Span, semanticGlBase, type);
-                    glslType = type;                    
+                    glslType = type;
                 }
             }
 
@@ -4180,7 +4233,7 @@ namespace Stride.Core.Shaders.Convertor
 
             // Replace all generic shader types to their glsl equivalent.
             SearchVisitor.Run(
-                shader, 
+                shader,
                 node =>
                     {
                         if (node is TypeBase && !(node is Typedef) && !(node is ArrayType))
@@ -4209,6 +4262,8 @@ namespace Stride.Core.Shaders.Convertor
 
             if (targetTypeName.StartsWith("Texture", StringComparison.Ordinal))
                 targetTypeName = "texture" + targetTypeName["Texture".Length..];
+            else if (targetTypeName.StartsWith("RWTexture", StringComparison.Ordinal))
+                targetTypeName = "image" + targetTypeName["RWTexture".Length..];
             else if (targetTypeName.StartsWith("Buffer", StringComparison.Ordinal))
                 targetTypeName = "textureBuffer";
             else return null;
@@ -4420,7 +4475,7 @@ namespace Stride.Core.Shaders.Convertor
         }
 
 
-        private static List<StructMemberReference> GetMembers(StructType structType, List<StructMemberReference> members = null, List<Variable> fieldStack = null )
+        private static List<StructMemberReference> GetMembers(StructType structType, List<StructMemberReference> members = null, List<Variable> fieldStack = null)
         {
             // Cache the members if they have been already calculated for a particular type
             // Though, this is not realy efficient (should cache nested struct member reference...)
@@ -4457,7 +4512,7 @@ namespace Stride.Core.Shaders.Convertor
 
                     var fieldPath = new StringBuilder();
                     bool isFirst = true;
-                    foreach(var parentField in Enumerable.Reverse(fieldStack))
+                    foreach (var parentField in Enumerable.Reverse(fieldStack))
                     {
                         if (!isFirst)
                             fieldPath.Append("_");
@@ -4521,7 +4576,7 @@ namespace Stride.Core.Shaders.Convertor
 
                 foreach (var parentField in Enumerable.Reverse(ParentFields))
                 {
-                    currentMemberRef.Target  = new MemberReferenceExpression(currentMemberRef.Target, parentField.Name);
+                    currentMemberRef.Target = new MemberReferenceExpression(currentMemberRef.Target, parentField.Name);
                 }
                 return currentMemberRef;
             }

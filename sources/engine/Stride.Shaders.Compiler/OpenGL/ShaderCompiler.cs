@@ -185,7 +185,7 @@ namespace Stride.Shaders.Compiler.OpenGL
                     pipelineStage = PipelineStage.Pixel;
                     break;
                 case ShaderStage.Geometry:
-                    shaderBytecodeResult.Error("Geometry stage can't be converted to OpenGL. Only Vertex and Pixel shaders are supported");
+                    pipelineStage = PipelineStage.Geometry;
                     break;
                 case ShaderStage.Hull:
                     shaderBytecodeResult.Error("Hull stage can't be converted to OpenGL. Only Vertex and Pixel shaders are supported");
@@ -194,7 +194,7 @@ namespace Stride.Shaders.Compiler.OpenGL
                     shaderBytecodeResult.Error("Domain stage can't be converted to OpenGL. Only Vertex and Pixel shaders are supported");
                     break;
                 case ShaderStage.Compute:
-                    shaderBytecodeResult.Error("Compute stage can't be converted to OpenGL. Only Vertex and Pixel shaders are supported");
+                    pipelineStage = PipelineStage.Compute;
                     break;
                 default:
                     shaderBytecodeResult.Error("Unknown shader profile.");
@@ -340,9 +340,8 @@ namespace Stride.Shaders.Compiler.OpenGL
                                 variable.Qualifiers |= layoutQualifier;
                             }
 
-                            //layoutQualifier.Layouts.Add(new LayoutKeyValue("set", resourceGroups.IndexOf(resourceGroup)));
-                            layoutQualifier.Layouts.Add(new LayoutKeyValue("set", 0));
-                            layoutQualifier.Layouts.Add(new LayoutKeyValue("binding", layoutBindingIndex + 1));
+                            layoutQualifier.Layouts.Insert(0, new LayoutKeyValue("set", 0));
+                            layoutQualifier.Layouts.Insert(1, new LayoutKeyValue("binding", layoutBindingIndex + 1));
 
                             resourceBindings.Add(bindings[layoutBindingIndex].Key.KeyName, layoutBindingIndex + 1);
                         }

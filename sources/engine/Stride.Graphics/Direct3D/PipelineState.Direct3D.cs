@@ -143,7 +143,7 @@ namespace Stride.Graphics
 
         private void CreateInputLayout(InputElementDescription[] inputElements)
         {
-            if (inputElements == null)
+            if (inputElements == null || inputElements.Length == 0)
                 return;
 
             var nativeInputElements = new SharpDX.Direct3D11.InputElement[inputElements.Length];

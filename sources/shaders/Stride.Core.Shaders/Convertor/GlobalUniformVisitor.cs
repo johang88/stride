@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using Stride.Core.Shaders.Ast;
-using Stride.Core.Shaders.Visitor;
 
 namespace Stride.Core.Shaders.Convertor
 {
@@ -102,7 +101,9 @@ namespace Stride.Core.Shaders.Convertor
 
                 // If the variable is a global uniform, non static/const and is not already in the list used then
                 return (variable != null && shader.Declarations.Contains(variable) && !variable.Qualifiers.Contains(Ast.Hlsl.StorageQualifier.Static)
-                        && !variable.Qualifiers.Contains(Ast.StorageQualifier.Const))
+                        && !variable.Qualifiers.Contains(Ast.StorageQualifier.Const)
+                        && !variable.Qualifiers.Contains(Ast.StorageQualifier.Shared)
+                        && !variable.Qualifiers.Contains(Ast.StorageQualifier.GroupShared))
                            ? variable
                            : null;
             }
@@ -192,7 +193,11 @@ namespace Stride.Core.Shaders.Convertor
                     }
                     else
                     {
-                        UniformUsedWriteFirstList.Add(variable);
+                        var variableType = variable.Type.ResolveType();
+                        if (!variableType.Name.Text.StartsWith("RWTexture"))
+                        {
+                            UniformUsedWriteFirstList.Add(variable);
+                        }
                     }
                 }
                 if (assignmentExpression.Operator != AssignmentOperator.Default)

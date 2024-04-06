@@ -62,7 +62,7 @@ namespace Stride.Graphics
             // Create shader stages
             var stages = CreateShaderStages(Description, out var inputAttributeNames);
 
-            var inputAttributes = new VkVertexInputAttributeDescription[Description.InputElements.Length];
+            var inputAttributes = new VkVertexInputAttributeDescription[Description.InputElements?.Length ?? 0];
             int inputAttributeCount = 0;
             var inputBindings = new VkVertexInputBindingDescription[inputAttributes.Length];
             int inputBindingCount = 0;
