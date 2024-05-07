@@ -1072,7 +1072,7 @@ namespace Stride.Core.Shaders.Convertor
                     break;
 
                 case "GroupMemoryBarrierWithGroupSync":
-                    // GroupMemoryBarrierWithGroupSync-> groupMemoryBarrier(); barrier();
+                    // GroupMemoryBarrierWithGroupSync == groupMemoryBarrier(); barrier();
                     return new StatementList(
                         new ExpressionStatement(new MethodInvocationExpression("groupMemoryBarrier")),
                                                 new ExpressionStatement(new MethodInvocationExpression("barrier")));
@@ -3920,24 +3920,17 @@ namespace Stride.Core.Shaders.Convertor
 
                 layoutTag.Qualifier = new LayoutQualifier();
 
-                // TODO: This does not look great, could probably be more generic? Maybe use the readwrite stuff in globalunfiromvisitor?
-                if (variable != null
-                    && layoutTag.Type == null
-                    && variable.Type.ResolveType() is ClassType classType
-                    && classType.Name.Text.StartsWith("RWTexture")
-                    && classType.GenericArguments.Count == 1
-                    && classType.GenericArguments[0].ResolveType() is VectorType vectorType)
+                // Append image format if applicable, required for image2d and others in compute shaders.
+                // Example:
+                // [ImageFormat("rgba16f")]
+                // stage RWTexture2D<float4> Texture;
+                // Translates to:
+                // layout(binding = 0, rgba16f) image2d Texture;
+                var imageFormatAttribute = variable?.Attributes?.FirstOrDefault(x => x is AttributeDeclaration) as AttributeDeclaration;
+                if (imageFormatAttribute?.Name == "ImageFormat" && imageFormatAttribute.Parameters.Count > 0)
                 {
-                    var type = vectorType.Dimension switch
-                    {
-                        1 => "r",
-                        2 => "rg",
-                        3 => "rgb",
-                        4 => "rgba",
-                        _ => throw new NotSupportedException($"Unsupported vector dimension {vectorType.Dimension}"),
-                    };
-
-                    layoutTag.Qualifier.Layouts.Add(new LayoutKeyValue($"{type}16f", null)); // TODO: not sure how to actually resolve the proper type here
+                    variable.Attributes.Remove(imageFormatAttribute);
+                    layoutTag.Qualifier.Layouts.Add(new LayoutKeyValue(imageFormatAttribute.Parameters[0].Text, null));
                 }
             }
 

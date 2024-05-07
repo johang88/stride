@@ -298,6 +298,24 @@ namespace Stride.Graphics
                     type = PixelType.UnsignedByte;
                     compressed = true;
                     break;
+                case PixelFormat.BC4_UNorm:
+                    if (!graphicsDevice.HasDXT)
+                        throw new NotSupportedException();
+                    internalFormat = InternalFormat.CompressedRedRgtc1;
+                    format = PixelFormatGl.Rgba;
+                    pixelSize = 4;
+                    type = PixelType.UnsignedByte;
+                    compressed = true;
+                    break;
+                case PixelFormat.BC5_UNorm:
+                    if (!graphicsDevice.HasDXT)
+                        throw new NotSupportedException();
+                    internalFormat = InternalFormat.CompressedRGRgtc2;
+                    format = PixelFormatGl.Rgba;
+                    pixelSize = 8;
+                    type = PixelType.UnsignedByte;
+                    compressed = true;
+                    break;
 #endif
                 case PixelFormat.R16_SInt:
                     internalFormat = InternalFormat.R16i;
