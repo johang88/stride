@@ -68,7 +68,7 @@ namespace Stride.Assets.Presentation.SceneEditor
             base.CollectCore(context);
 
             // Fill RenderStage formats
-            PickingRenderStage.Output = new RenderOutputDescription(PixelFormat.R32G32_Float, PixelFormat.D24_UNorm_S8_UInt);
+            PickingRenderStage.Output = new RenderOutputDescription(PixelFormat.R32G32_Float, PixelFormat.D32_Float);
             PickingRenderStage.Output.ScissorTestEnable = true;
 
             context.RenderView.RenderStages.Add(PickingRenderStage);
