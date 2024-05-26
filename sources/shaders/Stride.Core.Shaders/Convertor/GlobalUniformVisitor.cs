@@ -194,7 +194,7 @@ namespace Stride.Core.Shaders.Convertor
                     else
                     {
                         var variableType = variable.Type.ResolveType();
-                        if (!variableType.Name.Text.StartsWith("RWTexture"))
+                        if (!variableType.Name.Text.StartsWith("RWTexture") && !variableType.Name.Text.StartsWith("RWBuffer"))
                         {
                             UniformUsedWriteFirstList.Add(variable);
                         }

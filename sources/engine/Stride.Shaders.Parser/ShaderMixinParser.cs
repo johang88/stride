@@ -11,6 +11,7 @@ using Stride.Core.Shaders.Analysis.Hlsl;
 using Stride.Core.Shaders.Ast;
 using Stride.Core.Shaders.Ast.Hlsl;
 using Stride.Core.Shaders.Utility;
+using Stride.Graphics;
 
 namespace Stride.Shaders.Parser
 {
@@ -179,7 +180,7 @@ namespace Stride.Shaders.Parser
         /// <param name="macros">The shader perprocessor macros.</param>
         /// <param name="modifiedShaders">The list of modified shaders.</param>
         /// <returns>The combined shader in AST form.</returns>
-        public ShaderMixinParsingResult Parse(ShaderMixinSource shaderMixinSource, Stride.Shaders.ShaderMacro[] macros = null)
+        public ShaderMixinParsingResult Parse(ShaderMixinSource shaderMixinSource, GraphicsPlatform graphicsPlatform, ShaderMacro[] macros = null)
         {
             // Make in-memory shader classes known to the source manager
             foreach (var x in shaderMixinSource.Mixins.OfType<ShaderClassString>())
@@ -287,6 +288,10 @@ namespace Stride.Shaders.Parser
                 }
 
                 var typeCleaner = new StrideShaderCleaner();
+                if (graphicsPlatform != GraphicsPlatform.OpenGL && graphicsPlatform != GraphicsPlatform.Vulkan)
+                {
+                    typeCleaner.AdditionalAttributesToRemove.Add("ImageFormat");
+                }
                 typeCleaner.Run(finalShader);
 
                 //PerformanceLogger.Stop(PerformanceStage.Global);

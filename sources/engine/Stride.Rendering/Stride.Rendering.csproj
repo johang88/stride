@@ -30,10 +30,18 @@
       <DesignTimeSharedInput>True</DesignTimeSharedInput>
       <AutoGen>True</AutoGen>
     </Compile>
+    <Compile Update="Rendering\ComputeEffect\LambertianPrefiltering\LambertianPrefilteringSHPass1.sdsl.cs">
+      <DesignTime>True</DesignTime>
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+      <AutoGen>True</AutoGen>
+    </Compile>
   </ItemGroup>
   <ItemGroup>
     <None Update="Rendering\ComputeEffect\ComputeShaderBase.sdsl">
       <LastGenOutput>ComputeShaderBase.sdsl.cs</LastGenOutput>
+    </None>
+    <None Update="Rendering\ComputeEffect\LambertianPrefiltering\LambertianPrefilteringSHPass1.sdsl">
+      <LastGenOutput>LambertianPrefilteringSHPass1.sdsl.cs</LastGenOutput>
     </None>
   </ItemGroup>
   <Import Project="$(StrideSdkTargets)" />

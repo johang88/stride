@@ -12,6 +12,7 @@ using Stride.Core.Storage;
 using Stride.Shaders.Parser;
 using Stride.Core.Shaders.Ast;
 using Stride.Core.Shaders.Ast.Hlsl;
+using Stride.Graphics;
 
 namespace Stride.Shaders.Tests
 {
@@ -54,7 +55,7 @@ namespace Stride.Shaders.Tests
             macros2.Macros.Add(new ShaderMacro("MACRO_TEST", "float4"));
             baseMixin.Compositions.Add("macros2", macros2);
 
-            var parsingResult = shaderMixinParser.Parse(baseMixin, baseMixin.Macros.ToArray());
+            var parsingResult = shaderMixinParser.Parse(baseMixin, GraphicsPlatform.Direct3D11, baseMixin.Macros.ToArray());
             
             Assert.False(parsingResult.HasErrors);
             var cBufferVar = parsingResult.Shader.Declarations.OfType<ConstantBuffer>().First(x => x.Name == "Globals").Members.OfType<Variable>().ToList();
@@ -82,7 +83,7 @@ namespace Stride.Shaders.Tests
             macros5.Macros.Add(new ShaderMacro("MACRO_TEST", "float4"));
             baseMixin2.Compositions.Add("macros2", macros5);
 
-            var parsingResult2 = shaderMixinParser.Parse(baseMixin2, baseMixin2.Macros.ToArray());
+            var parsingResult2 = shaderMixinParser.Parse(baseMixin2, GraphicsPlatform.Direct3D11, baseMixin2.Macros.ToArray());
 
             Assert.False(parsingResult.HasErrors);
             var cBufferVar2 = parsingResult2.Shader.Declarations.OfType<ConstantBuffer>().First(x => x.Name == "Globals").Members.OfType<Variable>().ToList();
@@ -120,7 +121,7 @@ namespace Stride.Shaders.Tests
             
             baseMixin.Compositions.Add("macrosArray", compositionArray);
 
-            var parsingResult = shaderMixinParser.Parse(baseMixin, baseMixin.Macros.ToArray());
+            var parsingResult = shaderMixinParser.Parse(baseMixin, GraphicsPlatform.Direct3D11, baseMixin.Macros.ToArray());
 
             Assert.False(parsingResult.HasErrors);
             var cBufferVar = parsingResult.Shader.Declarations.OfType<ConstantBuffer>().First(x => x.Name == "Globals").Members.OfType<Variable>().ToList();

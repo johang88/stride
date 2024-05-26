@@ -52,7 +52,7 @@ namespace Stride.Graphics
             256, // Sampler
             0, // CombinedImageSampler
             512, // SampledImage
-            0, // StorageImage
+            32, // StorageImage
             64, // UniformTexelBuffer
             0, // StorageTexelBuffer
             512, // UniformBuffer

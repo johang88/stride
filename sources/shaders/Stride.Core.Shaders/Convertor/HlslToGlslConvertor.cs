@@ -230,7 +230,7 @@ namespace Stride.Core.Shaders.Convertor
                 };
             }
 
-            functionMapping = new Dictionary<string, string> 
+            functionMapping = new Dictionary<string, string>
             {
                 { "ddx", "dFdx" },
                 { "ddy", "dFdy" },
@@ -1075,7 +1075,7 @@ namespace Stride.Core.Shaders.Convertor
                     // GroupMemoryBarrierWithGroupSync == groupMemoryBarrier(); barrier();
                     return new StatementList(
                         new ExpressionStatement(new MethodInvocationExpression("groupMemoryBarrier")),
-                                                new ExpressionStatement(new MethodInvocationExpression("barrier")));
+                        new ExpressionStatement(new MethodInvocationExpression("barrier")));
             }
 
             return null;
@@ -1219,11 +1219,46 @@ namespace Stride.Core.Shaders.Convertor
                             return resultBlock;
                         }
                     }
-                    else if (variableType.Name.Text.StartsWith("RWTexture"))
+                    else if ((variableType.Name.Text.StartsWith("RWTexture") || variableType.Name.Text.StartsWith("RWBuffer")) && variableType is ClassType classType)
                     {
-                        // Convert assignment to imageStore, we also cast the indexer to ivec2 as it's required.
-                        var indexer = new MethodInvocationExpression(new TypeReferenceExpression(VectorType.Int2), indexerExpression.Index);
-                        return new ExpressionStatement(new MethodInvocationExpression("imageStore", indexerExpression.Target, indexer, assignmentExpression.Value));
+                        // Manually visit all sub expressions.
+                        indexerExpression.Target = (Expression)VisitDynamic(indexerExpression.Target);
+                        indexerExpression.Index = (Expression)VisitDynamic(indexerExpression.Index);
+                        assignmentExpression.Value = (Expression)VisitDynamic(assignmentExpression.Value);
+
+                        // Convert assignment to imageStore, and cast the indexer to an appropriate integer type.
+                        TypeBase indexerType = variableType.Name.Text switch
+                        {
+                            "RWTexture" => ScalarType.Int,
+                            "RWBuffer" => ScalarType.Int,
+                            "RWTexture2D" => VectorType.Int2,
+                            "RWTexture3D" => VectorType.Int3,
+                            _ => throw new NotSupportedException($"imageStore not supported for {variable.Name.Text}")
+                        };
+
+                        var indexer = new MethodInvocationExpression(new TypeReferenceExpression(indexerType), indexerExpression.Index);
+
+                        // Assignemnt should be cast to gvec4 for all formats so we have to figure out target type.
+                        var classTypeName = classType.GenericArguments[0].Name.Text;
+                        VectorType assignemntTargetType;
+                        if (classTypeName.StartsWith("float"))
+                            assignemntTargetType = VectorType.Float4;
+                        else if (classTypeName.StartsWith("int"))
+                            assignemntTargetType = VectorType.Int4;
+                        else if (classTypeName.StartsWith("uint"))
+                            assignemntTargetType = VectorType.UInt4;
+                        else
+                            throw new NotSupportedException($"{classTypeName} not supported for imageStore");
+
+                        var assignment = new MethodInvocationExpression(new TypeReferenceExpression(assignemntTargetType), assignmentExpression.Value);
+
+                        // Fill out any missing arguments for the constructor so that a gvec4 can successfully constructed.
+                        var lastCharacter = assignmentExpression.TypeInference.TargetType.Name.Text.Last();
+                        var dimensions = char.IsNumber(lastCharacter) ? lastCharacter - 48 : 1;
+                        for (var i = dimensions; i < 4; i++)
+                            assignment.Arguments.Add(new LiteralExpression(new Literal(0)));
+
+                        return new ExpressionStatement(new MethodInvocationExpression("imageStore", indexerExpression.Target, indexer, assignment));
                     }
                 }
             }
@@ -2409,6 +2444,7 @@ namespace Stride.Core.Shaders.Convertor
                 var variableType = variable != null ? variable.Type.ResolveType() : null;
                 var arrayType = variableType as ArrayType;
                 matrixType = variableType as MatrixType;
+                var classType = variableType as ClassType;
 
                 if (arrayType != null && arrayType.Dimensions.Count == indices.Count)
                 {
@@ -2431,6 +2467,23 @@ namespace Stride.Core.Shaders.Convertor
 
                     // Return a 1d indexer
                     indexerExpression = new IndexerExpression(targetIterator, finalIndex);
+                }
+                else if (classType != null && classType.Name.Text.StartsWith("RWTexture"))
+                {
+                    // Convert assignment to imageLoad, and cast the indexer to an appropriate integer type.
+                    TypeBase indexerType = variableType.Name.Text switch
+                    {
+                        "RWTexture" => ScalarType.Int,
+                        "RWBuffer" => ScalarType.Int,
+                        "RWTexture2D" => VectorType.Int2,
+                        "RWTexture3D" => VectorType.Int3,
+                        _ => throw new NotSupportedException($"imageLoad not supported for {variable.Name.Text}")
+                    };
+
+                    indexerExpression.Target = (Expression)VisitDynamic(indexerExpression.Target);
+                    indexerExpression.Index = (Expression)VisitDynamic(indexerExpression.Index);
+
+                    return new MethodInvocationExpression("imageLoad", indexerExpression.Target, new MethodInvocationExpression(new TypeReferenceExpression(indexerType), indexerExpression.Index));
                 }
             }
 
@@ -3393,7 +3446,7 @@ namespace Stride.Core.Shaders.Convertor
                 {
                     var variable = FindDeclaration(varRefExpr.Name) as Variable;
 
-                    if (variable != null && !variable.Type.ResolveType().Name.Text.StartsWith("RWTexture"))
+                    if (variable != null && !variable.Type.ResolveType().Name.Text.StartsWith("RWTexture") && !variable.Type.ResolveType().Name.Text.StartsWith("RWBuffer"))
                     {
                         Variable newVariable;
                         inputAssignment.TryGetValue(variable, out newVariable);
@@ -3927,10 +3980,12 @@ namespace Stride.Core.Shaders.Convertor
                 // Translates to:
                 // layout(binding = 0, rgba16f) image2d Texture;
                 var imageFormatAttribute = variable?.Attributes?.FirstOrDefault(x => x is AttributeDeclaration) as AttributeDeclaration;
-                if (imageFormatAttribute?.Name == "ImageFormat" && imageFormatAttribute.Parameters.Count > 0)
+                if (imageFormatAttribute?.Name == "ImageFormat"
+                    && imageFormatAttribute.Parameters.Count > 0
+                    && imageFormatAttribute.Parameters[0].SubLiterals.Count > 0)
                 {
                     variable.Attributes.Remove(imageFormatAttribute);
-                    layoutTag.Qualifier.Layouts.Add(new LayoutKeyValue(imageFormatAttribute.Parameters[0].Text, null));
+                    layoutTag.Qualifier.Layouts.Add(new LayoutKeyValue(imageFormatAttribute.Parameters[0].SubLiterals[0].Value.ToString(), null));
                 }
             }
 
@@ -4257,6 +4312,8 @@ namespace Stride.Core.Shaders.Convertor
                 targetTypeName = "texture" + targetTypeName["Texture".Length..];
             else if (targetTypeName.StartsWith("RWTexture", StringComparison.Ordinal))
                 targetTypeName = "image" + targetTypeName["RWTexture".Length..];
+            else if (targetTypeName.StartsWith("RWBuffer", StringComparison.Ordinal))
+                targetTypeName = "imageBuffer";
             else if (targetTypeName.StartsWith("Buffer", StringComparison.Ordinal))
                 targetTypeName = "textureBuffer";
             else return null;

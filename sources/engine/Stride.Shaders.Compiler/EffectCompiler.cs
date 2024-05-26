@@ -145,7 +145,7 @@ namespace Stride.Shaders.Compiler
             // In .sdsl, class has been renamed to shader to avoid ambiguities with HLSL
             shaderMixinSource.AddMacro("class", "shader");
 
-            var parsingResult = GetMixinParser().Parse(shaderMixinSource, shaderMixinSource.Macros.ToArray());
+            var parsingResult = GetMixinParser().Parse(shaderMixinSource, effectParameters.Platform, shaderMixinSource.Macros.ToArray());
 
             // Copy log from parser results to output
             CopyLogs(parsingResult, log);

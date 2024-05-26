@@ -1,6 +1,7 @@
 // Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 using System.Collections.Generic;
+using System.Linq;
 using Stride.Core.Shaders.Ast;
 using Stride.Core.Shaders.Ast.Hlsl;
 
@@ -51,8 +52,6 @@ namespace Stride.Core.Shaders.Writer.Hlsl
         /// <param name="classType">Type of the class.</param>
         public override void Visit(ClassType classType)
         {
-            Write(classType.Attributes, true);
-
             Write("class").Write(" ").Write(classType.Name);
 
             if (classType.GenericParameters.Count > 0)

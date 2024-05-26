@@ -119,7 +119,7 @@ namespace Stride.Rendering.Compositing
         /// On recent platforms that can bind depth buffer as read-only (<see cref="GraphicsDeviceFeatures.HasDepthAsReadOnlyRT"/>), depth buffer will be used as is. Otherwise, a copy will be generated.
         /// </remarks>
         [DefaultValue(true)]
-        public bool BindDepthAsResourceDuringTransparentRendering { get; set; } = true;
+        public bool BindDepthAsResourceDuringTransparentRendering { get; set; } = false;
 
         /// <summary>
         /// If true, render target generated during <see cref="OpaqueRenderStage"/> will be available as a shader resource named OpaqueBase.OpaqueRenderTarget during <see cref="TransparentRenderStage"/>.
@@ -559,6 +559,12 @@ namespace Stride.Rendering.Compositing
                             depthStencilSRV = ResolveDepthAsSRV(drawContext);
 
                         var renderTargetSRV = ResolveRenderTargetAsSRV(drawContext);
+
+                        if (depthStencilSRV != null)
+                            drawContext.CommandList.ResourceBarrierTransition(depthStencilSRV, GraphicsResourceState.GenericRead);
+
+                        if (renderTargetSRV!= null)
+                            drawContext.CommandList.ResourceBarrierTransition(renderTargetSRV, GraphicsResourceState.GenericRead);
 
                         renderSystem.Draw(drawContext, context.RenderView, TransparentRenderStage);
 

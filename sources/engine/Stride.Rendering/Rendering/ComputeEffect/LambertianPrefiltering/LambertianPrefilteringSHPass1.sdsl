@@ -12,6 +12,7 @@ namespace Stride.Rendering.Images
         TextureCube<float4> RadianceMap;
 
         // the output buffer containing SH coefficient partially summed.
+        [ImageFormat("rgba32f")]
         RWBuffer<float4> OutputBuffer;
 
         // The Cosine kernel factors
@@ -99,7 +100,7 @@ namespace Stride.Rendering.Images
                 [unroll]
 		        for(int c = 0; c < CoefficientsCount; ++c)
 		        {
-			        OutputBuffer[indexBias + c] = PartialSHCoeffs[0][0][c];
+			        OutputBuffer[indexBias + c] = PartialSHCoeffs[c];
 		        }
 	        }
         }

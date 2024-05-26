@@ -12,6 +12,7 @@ namespace Stride.Rendering.Images
         Buffer<float4> InputBuffer;
 
         // the output buffer containing the final SH coefficients.
+        [ImageFormat("rgba32f")]
         RWBuffer<float4> OutputBuffer;
 
         // Shared memory for reducing SH-Basis coefficients

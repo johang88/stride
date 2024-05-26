@@ -4,11 +4,14 @@ using Stride.Core.Shaders.Ast.Stride;
 using Stride.Core.Shaders.Ast;
 using Stride.Core.Shaders.Ast.Hlsl;
 using Stride.Core.Shaders.Visitor;
+using System.Collections.Generic;
 
 namespace Stride.Shaders.Parser
 {
     internal class StrideShaderCleaner : ShaderRewriter
     {
+        public HashSet<string> AdditionalAttributesToRemove { get; } = [];
+
         public StrideShaderCleaner() : base(false, false)
         {
         }
@@ -47,7 +50,7 @@ namespace Stride.Shaders.Parser
         
         public override Node Visit(AttributeDeclaration attribute)
         {
-            if (StrideAttributes.AvailableAttributes.Contains(attribute.Name))
+            if (StrideAttributes.AvailableAttributes.Contains(attribute.Name) || AdditionalAttributesToRemove.Contains(attribute.Name))
                 return null;
 
             return attribute;
