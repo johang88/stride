@@ -112,7 +112,7 @@ namespace Stride.Assets.Presentation.SceneEditor
             {
                 drawContext.CommandList.Clear(pickingRenderTarget, Color.Transparent);
                 drawContext.CommandList.Clear(pickingPositionRenderTarget, Color.Transparent);
-                drawContext.CommandList.Clear(pickingDepthStencil, DepthStencilClearOptions.DepthBuffer);
+                drawContext.CommandList.Clear(pickingDepthStencil, DepthStencilClearOptions.DepthBuffer, 0);
 
                 drawContext.CommandList.ResourceBarrierTransition(pickingRenderTarget, BarrierLayout.RenderTarget);
                 drawContext.CommandList.ResourceBarrierTransition(pickingPositionRenderTarget, BarrierLayout.RenderTarget);
