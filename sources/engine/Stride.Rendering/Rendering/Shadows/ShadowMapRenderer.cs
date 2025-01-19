@@ -163,7 +163,7 @@ namespace Stride.Rendering.Shadows
             RenderViewsWithShadows.Clear();
         }
 
-        public void Draw(RenderDrawContext drawContext)
+        public virtual void Draw(RenderDrawContext drawContext)
         {
             using var _ = Profiler.Begin(DrawKey);
             var renderSystem = drawContext.RenderContext.RenderSystem;
