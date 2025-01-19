@@ -474,28 +474,28 @@ namespace Stride.Rendering.Shadows
             }
         }
 
-        private class ShaderGroupData : LightShadowMapShaderGroupDataBase
+        protected class ShaderGroupData : LightShadowMapShaderGroupDataBase
         {
             private const string ShaderName = "ShadowMapReceiverDirectional";
-            private readonly int cascadeCount;
-            private float[] cascadeSplits;
-            private Matrix[] worldToShadowCascadeUV;
-            private Matrix[] inverseWorldToShadowCascadeUV; /////////////////////////////////////////////////// Required for calculating the correct sampling offset for calculating the thickness.
-            private Vector2[] depthRanges;    ///////////////////////////////////////////////////
-            private float[] depthBiases;
-            private float[] offsetScales;
-            private Texture shadowMapTexture;
-            private Vector2 shadowMapTextureSize;
-            private Vector2 shadowMapTextureTexelSize;
-            private ObjectParameterKey<Texture> shadowMapTextureKey;
-            private ValueParameterKey<float> cascadeSplitsKey;
-            private ValueParameterKey<Matrix> worldToShadowCascadeUVsKey;
-            private ValueParameterKey<Matrix> inverseWorldToShadowCascadeUVsKey;    ///////////////////////////////////////////////////
-            private ValueParameterKey<Vector2> depthRangesKey;       ///////////////////////////////////////////////////
-            private ValueParameterKey<float> depthBiasesKey;
-            private ValueParameterKey<float> offsetScalesKey;
-            private ValueParameterKey<Vector2> shadowMapTextureSizeKey;
-            private ValueParameterKey<Vector2> shadowMapTextureTexelSizeKey;
+            protected readonly int cascadeCount;
+            protected float[] cascadeSplits;
+            protected Matrix[] worldToShadowCascadeUV;
+            protected Matrix[] inverseWorldToShadowCascadeUV; /////////////////////////////////////////////////// Required for calculating the correct sampling offset for calculating the thickness.
+            protected Vector2[] depthRanges;    ///////////////////////////////////////////////////
+            protected float[] depthBiases;
+            protected float[] offsetScales;
+            protected Texture shadowMapTexture;
+            protected Vector2 shadowMapTextureSize;
+            protected Vector2 shadowMapTextureTexelSize;
+            protected ObjectParameterKey<Texture> shadowMapTextureKey;
+            protected ValueParameterKey<float> cascadeSplitsKey;
+            protected ValueParameterKey<Matrix> worldToShadowCascadeUVsKey;
+            protected ValueParameterKey<Matrix> inverseWorldToShadowCascadeUVsKey;    ///////////////////////////////////////////////////
+            protected ValueParameterKey<Vector2> depthRangesKey;       ///////////////////////////////////////////////////
+            protected ValueParameterKey<float> depthBiasesKey;
+            protected ValueParameterKey<float> offsetScalesKey;
+            protected ValueParameterKey<Vector2> shadowMapTextureSizeKey;
+            protected ValueParameterKey<Vector2> shadowMapTextureTexelSizeKey;
 
             /// <summary>
             /// Initializes a new instance of the <see cref="ShaderGroupData" /> class.
