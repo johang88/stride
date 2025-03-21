@@ -53,9 +53,9 @@ namespace Stride.Graphics
             256, // Sampler
             0, // CombinedImageSampler
             512, // SampledImage
-            0, // StorageImage
+            32, // StorageImage
             64, // UniformTexelBuffer
-            0, // StorageTexelBuffer
+            32, // StorageTexelBuffer
             512, // UniformBuffer
             0, // StorageBuffer
             0, // UniformBufferDynamic
@@ -291,6 +291,12 @@ namespace Stride.Graphics
                 samplerAnisotropy = true,
                 depthClamp = true,
             };
+
+            if (graphicsProfiles.Any(x => x >= GraphicsProfile.Level_11_0))
+            {
+                enabledFeature.shaderStorageImageReadWithoutFormat = true;
+                enabledFeature.shaderStorageImageWriteWithoutFormat = true;
+            }
 
             var extensionProperties = vkEnumerateDeviceExtensionProperties(NativePhysicalDevice);
             var availableExtensionNames = new List<string>();
