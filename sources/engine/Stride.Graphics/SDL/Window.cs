@@ -24,6 +24,11 @@ namespace Stride.Graphics.SDL
         {
             SDL = Silk.NET.SDL.Sdl.GetApi();
 
+            // jklawreszuk: Workaround for wayland (see #2487 for more details)  
+            // TODO: Wayland SDL_EGL_MakeCurrent does not cover multi-context scenario (https://github.com/libsdl-org/SDL/issues/9072)
+            if (OperatingSystem.IsLinux())
+                SDL.SetHint("SDL_VIDEODRIVER", "x11");
+
             SDL.Init(Sdl.InitEverything);
 
             // Pass first mouse event when user clicked on window 
@@ -85,6 +90,7 @@ namespace Stride.Graphics.SDL
                 // Create the SDL window and then extract the native handle.
                 sdlHandle = SDL.CreateWindow(title, Sdl.WindowposUndefined, Sdl.WindowposUndefined, 640, 480, (uint)flags);
             }
+            
 
 #if STRIDE_PLATFORM_ANDROID || STRIDE_PLATFORM_IOS
             GraphicsAdapter.DefaultWindow = sdlHandle;
@@ -335,6 +341,28 @@ namespace Stride.Graphics.SDL
                 return new Size2(w, h);
             }
             set { SDL.SetWindowSize(sdlHandle, value.Width, value.Height); }
+        }
+        
+        /// <summary>
+        /// The opacity of the window.
+        /// </summary>
+        /// <remarks>The value should be between 0.0f and 1.0f. It will automatically be clamped to this range.</remarks>
+        public float Opacity
+        {
+            get
+            {
+                var opacity = 1.0f;
+                SDL.GetWindowOpacity(sdlHandle,ref opacity);
+                return opacity;
+            }
+            set
+            {
+                if (value is < 0.0f or > 1.0f)
+                {
+                    value = Math.Clamp(value, 0.0f, 1.0f);
+                }
+                SDL.SetWindowOpacity(sdlHandle,value);
+            }
         }
 
         /// <summary>

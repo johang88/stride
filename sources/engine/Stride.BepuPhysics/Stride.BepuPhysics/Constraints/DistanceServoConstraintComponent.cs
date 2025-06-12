@@ -2,7 +2,6 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using BepuPhysics.Constraints;
-using Stride.BepuPhysics.Definitions;
 using Stride.BepuPhysics.Systems;
 using Stride.Core;
 using Stride.Core.Mathematics;
@@ -11,10 +10,22 @@ using Stride.Engine.Design;
 
 namespace Stride.BepuPhysics.Constraints;
 
+/// <summary>
+/// Constrains points on two bodies to be separated by a target distance using servo settings.
+/// This constraint attempts to maintain a specific distance between two points on two bodies
+/// by applying forces to reach the target distance. It uses servo settings to control the speed
+/// and force applied to achieve the target distance.
+/// </summary>
+/// <remarks>
+/// Unlike <see cref="CenterDistanceConstraintComponent"/>, this constraint allows you to specify
+/// exact attachment points on each body using <see cref="LocalOffsetA"/> and <see cref="LocalOffsetB"/> properties. If you need to
+/// constrain only the centers of bodies, use <see cref="CenterDistanceConstraintComponent"/> instead.
+/// For a version that allows a range of distances rather than a single target value, see <see cref="DistanceLimitConstraintComponent"/>.
+/// </remarks>
 [DataContract]
 [DefaultEntityComponentProcessor(typeof(ConstraintProcessor), ExecutionMode = ExecutionMode.Runtime)]
 [ComponentCategory("Physics - Bepu Constraint")]
-public sealed class DistanceServoConstraintComponent : TwoBodyConstraintComponent<DistanceServo>
+public sealed class DistanceServoConstraintComponent : TwoBodyConstraintComponent<DistanceServo>, IServo, ISpring, IWithTwoLocalOffset
 {
     public DistanceServoConstraintComponent() => BepuConstraint = new()
     {
@@ -22,6 +33,7 @@ public sealed class DistanceServoConstraintComponent : TwoBodyConstraintComponen
         ServoSettings = new ServoSettings(10, 1, 1000)
     };
 
+    /// <inheritdoc/>
     public Vector3 LocalOffsetA
     {
         get
@@ -35,6 +47,7 @@ public sealed class DistanceServoConstraintComponent : TwoBodyConstraintComponen
         }
     }
 
+    /// <inheritdoc/>
     public Vector3 LocalOffsetB
     {
         get
@@ -48,6 +61,9 @@ public sealed class DistanceServoConstraintComponent : TwoBodyConstraintComponen
         }
     }
 
+    /// <summary>
+    /// Distance that the constraint will try to reach between the attachment points.
+    /// </summary>
     public float TargetDistance
     {
         get
@@ -61,6 +77,7 @@ public sealed class DistanceServoConstraintComponent : TwoBodyConstraintComponen
         }
     }
 
+    /// <inheritdoc/>
     public float SpringFrequency
     {
         get
@@ -74,6 +91,7 @@ public sealed class DistanceServoConstraintComponent : TwoBodyConstraintComponen
         }
     }
 
+    /// <inheritdoc/>
     public float SpringDampingRatio
     {
         get
@@ -87,6 +105,7 @@ public sealed class DistanceServoConstraintComponent : TwoBodyConstraintComponen
         }
     }
 
+    /// <inheritdoc/>
     public float ServoMaximumSpeed
     {
         get
@@ -100,6 +119,7 @@ public sealed class DistanceServoConstraintComponent : TwoBodyConstraintComponen
         }
     }
 
+    /// <inheritdoc/>
     public float ServoBaseSpeed
     {
         get
@@ -113,6 +133,7 @@ public sealed class DistanceServoConstraintComponent : TwoBodyConstraintComponen
         }
     }
 
+    /// <inheritdoc/>
     public float ServoMaximumForce
     {
         get

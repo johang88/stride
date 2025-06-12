@@ -2,7 +2,6 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using BepuPhysics.Constraints;
-using Stride.BepuPhysics.Definitions;
 using Stride.BepuPhysics.Systems;
 using Stride.Core;
 using Stride.Core.Mathematics;
@@ -11,13 +10,27 @@ using Stride.Engine.Design;
 
 namespace Stride.BepuPhysics.Constraints;
 
+/// <summary>
+/// Constrains a single body to a target orientation in space, controlling both rotation and tilt.
+/// <para>This constraint applies torque to make a body gradually align with a specific target orientation.
+/// It works like a spring system that pulls the body's orientation (rotation around any axis, including tilt)
+/// toward the specified target orientation.</para>
+/// <para>Common uses include:</para>
+/// <list type="bullet">
+/// <item>Stabilizing objects to maintain a specific orientation</item>
+/// <item>Creating motorized joints that rotate/tilt objects to desired angles</item>
+/// <item>Simulating gyroscopic or magnetic orientation control</item>
+/// </list>
+/// <para>The spring and servo settings control how quickly and forcefully the body moves toward the target orientation.</para>
+/// </summary>
 [DataContract]
 [DefaultEntityComponentProcessor(typeof(ConstraintProcessor), ExecutionMode = ExecutionMode.Runtime)]
 [ComponentCategory("Physics - Bepu Constraint")]
-public sealed class OneBodyAngularServoConstraintComponent : OneBodyConstraintComponent<OneBodyAngularServo>
+public sealed class OneBodyAngularServoConstraintComponent : OneBodyConstraintComponent<OneBodyAngularServo>, IServo, ISpring, IOneBody
 {
     public OneBodyAngularServoConstraintComponent() => BepuConstraint = new()
     {
+        TargetOrientation = Quaternion.Identity,
         ServoSettings = new ServoSettings(),
         SpringSettings = new SpringSettings(30, 5)
     };
@@ -35,6 +48,7 @@ public sealed class OneBodyAngularServoConstraintComponent : OneBodyConstraintCo
         }
     }
 
+    /// <inheritdoc/>
     public float SpringFrequency
     {
         get
@@ -48,6 +62,7 @@ public sealed class OneBodyAngularServoConstraintComponent : OneBodyConstraintCo
         }
     }
 
+    /// <inheritdoc/>
     public float SpringDampingRatio
     {
         get
@@ -61,6 +76,7 @@ public sealed class OneBodyAngularServoConstraintComponent : OneBodyConstraintCo
         }
     }
 
+    /// <inheritdoc/>
     public float ServoMaximumSpeed
     {
         get
@@ -74,6 +90,7 @@ public sealed class OneBodyAngularServoConstraintComponent : OneBodyConstraintCo
         }
     }
 
+    /// <inheritdoc/>
     public float ServoBaseSpeed
     {
         get
@@ -87,6 +104,7 @@ public sealed class OneBodyAngularServoConstraintComponent : OneBodyConstraintCo
         }
     }
 
+    /// <inheritdoc/>
     public float ServoMaximumForce
     {
         get

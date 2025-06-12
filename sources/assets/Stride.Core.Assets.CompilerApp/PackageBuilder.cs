@@ -5,12 +5,9 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Reflection;
-
 using Stride.Core.Assets.Compiler;
 using Stride.Core.Assets.Diagnostics;
 using Stride.Core.BuildEngine;
-using Stride.Core;
 using Stride.Core.Diagnostics;
 using Stride.Core.IO;
 using Stride.Core.MicroThreading;
@@ -19,13 +16,9 @@ using System.Threading.Tasks;
 using Stride.Core.Assets.Analysis;
 using Stride.Core.Reflection;
 using Stride.Core.Serialization.Contents;
-using Stride;
 using Stride.Assets;
-using Stride.Graphics;
-using Stride.Core.VisualStudio;
 using ServiceWire.NamedPipes;
 using System.IO;
-using Stride.Core.Storage;
 using System.Text;
 
 namespace Stride.Core.Assets.CompilerApp
@@ -347,7 +340,7 @@ namespace Stride.Core.Assets.CompilerApp
                 }
 
                 // Create scheduler
-                var scheduler = new Scheduler();
+                using var scheduler = new Scheduler();
 
                 var status = ResultStatus.NotProcessed;
 

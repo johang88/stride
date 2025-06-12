@@ -7,17 +7,25 @@ using BepuUtilities.Memory;
 using Stride.Core;
 using Stride.Core.Mathematics;
 using Stride.BepuPhysics.Systems;
+using Stride.Core.Annotations;
 using NRigidPose = BepuPhysics.RigidPose;
 
 namespace Stride.BepuPhysics.Definitions.Colliders;
 
-
+/// <summary>
+/// Represents a compound collider that combines multiple child colliders into a single collider.
+/// </summary>
 [DataContract]
 public sealed class CompoundCollider : ICollider
 {
     private readonly ListOfColliders _colliders;
     private CollidableComponent? _component;
 
+    /// <summary>
+    /// Gets the collection of child colliders that make up this compound collider.
+    /// </summary>
+    /// <value>A list of collider bases that form this compound shape.</value>
+    [MemberCollection(NotNullItems = true)]
     [DataMember]
     public IList<ColliderBase> Colliders => _colliders;
 
