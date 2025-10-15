@@ -42,7 +42,7 @@ namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Game
 
             // Setup renderer
             var editorCompositor = (EditorTopLevelCompositor)game.EditorSceneSystem.GraphicsCompositor.Game;
-            editorCompositor.PostGizmoCompositors.Add(new SingleStageRenderer
+            editorCompositor.PostGizmoCompositors.Insert(0, new SingleStageRenderer
             {
                 Name = "Render wireframe gizmos",
                 RenderStage = wireframeRenderStage,
