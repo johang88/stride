@@ -231,35 +231,21 @@ namespace Stride.Rendering
 
                 if (drawData.IndexBuffer == null)
                 {
-                    if (renderMesh.InstanceCount > 0)
-                    {
-                        if (renderMesh.IndirectBuffer != null)
-                            commandList.DrawInstanced(renderMesh.IndirectBuffer);
-                        else
-                            commandList.DrawInstanced(drawData.DrawCount, renderMesh.InstanceCount, drawData.StartLocation);
-                    }
+                    if (renderMesh.IndirectBuffer != null)
+                        commandList.DrawInstanced(renderMesh.IndirectBuffer);
+                    else if (renderMesh.InstanceCount > 0)
+                        commandList.DrawInstanced(drawData.DrawCount, renderMesh.InstanceCount, drawData.StartLocation);
                     else
-                    {
                         commandList.Draw(drawData.DrawCount, drawData.StartLocation);
-                    }
                 }
                 else
                 {
-                    if (renderMesh.InstanceCount > 0)
-                    {
-                        if (renderMesh.IndirectBuffer != null)
-                        {
-                            commandList.DrawIndexedInstanced(renderMesh.IndirectBuffer);
-                        }
-                        else
-                        {
-                            commandList.DrawIndexedInstanced(drawData.DrawCount, renderMesh.InstanceCount, drawData.StartLocation);
-                        }
-                    }
+                    if (renderMesh.IndirectBuffer != null)
+                        commandList.DrawIndexedInstanced(renderMesh.IndirectBuffer);
+                    else if (renderMesh.InstanceCount > 0)
+                        commandList.DrawIndexedInstanced(drawData.DrawCount, renderMesh.InstanceCount, drawData.StartLocation);
                     else
-                    {
                         commandList.DrawIndexed(drawData.DrawCount, drawData.StartLocation);
-                    }
                 }
 
                 profilingScope?.Dispose();
