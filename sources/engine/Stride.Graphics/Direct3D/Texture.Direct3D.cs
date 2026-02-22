@@ -255,6 +255,11 @@ namespace Stride.Graphics
             // Create the view
             var srvDescription = new ShaderResourceViewDescription() { Format = ComputeShaderResourceViewFormat() };
 
+            if (((PixelFormat)srvDescription.Format).IsTypeless())
+            {
+                return null;
+            }
+
             // Initialize for texture arrays or texture cube
             if (this.ArraySize > 1)
             {
@@ -349,6 +354,11 @@ namespace Stride.Graphics
 
             // Create the render target view
             var rtvDescription = new RenderTargetViewDescription() { Format = (SharpDX.DXGI.Format)ViewFormat };
+
+            if (((PixelFormat)rtvDescription.Format).IsTypeless())
+            {
+                return null;
+            }
 
             if (this.ArraySize > 1)
             {
