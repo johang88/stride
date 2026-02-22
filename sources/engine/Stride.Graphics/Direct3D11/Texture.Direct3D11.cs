@@ -476,6 +476,9 @@ namespace Stride.Graphics
 
             var srvDescription = new ShaderResourceViewDesc { Format = ComputeShaderResourceViewFormat() };
 
+            if (((PixelFormat)srvDescription.Format).IsTypeless)
+                return null;
+
             // Initialize for Texture Array or Texture Cube
             if (ArraySize > 1)
             {
@@ -586,6 +589,9 @@ namespace Stride.Graphics
             GetViewSliceBounds(viewType, ref arrayOrDepthSlice, ref mipIndex, out var arrayCount, out var mipCount);
 
             var rtvDescription = new RenderTargetViewDesc { Format = (Format) ViewFormat };
+
+            if (((PixelFormat)rtvDescription.Format).IsTypeless)
+                return null;
 
             // Initialize for Texture Array or Texture Cube
             if (ArraySize > 1)
