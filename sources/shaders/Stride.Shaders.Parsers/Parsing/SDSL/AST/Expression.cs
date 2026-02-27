@@ -397,6 +397,7 @@ public partial class PrefixExpression(Operator op, Expression expression, TextLo
             case Operator.Not:
             case Operator.Plus:
             case Operator.Minus:
+            case Operator.BitwiseNot:
                 expression.ProcessSymbol(table, expectedType);
                 Type = expression.ValueType;
                 break;
@@ -453,6 +454,14 @@ public partial class PrefixExpression(Operator op, Expression expression, TextLo
                         if (valueType.GetElementType() is not ScalarType { Type: Scalar.Boolean })
                             throw new InvalidOperationException();
                         var result = builder.Insert(new OpLogicalNot(valueExpression.TypeId, context.Bound++, valueExpression.Id));
+                        Type = valueType;
+                        return new(result.ResultId, result.ResultType);
+                    }
+                case Operator.BitwiseNot:
+                    {
+                        if (valueType.GetElementType() is not ScalarType s || !s.IsInteger())
+                            throw new InvalidOperationException();
+                        var result = builder.Insert(new OpNot(valueExpression.TypeId, context.Bound++, valueExpression.Id));
                         Type = valueType;
                         return new(result.ResultId, result.ResultType);
                     }
