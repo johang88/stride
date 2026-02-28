@@ -114,8 +114,12 @@ namespace Stride.Assets.Presentation.SceneEditor
                 drawContext.CommandList.Clear(pickingPositionRenderTarget, Color.Transparent);
                 drawContext.CommandList.Clear(pickingDepthStencil, DepthStencilClearOptions.DepthBuffer, 0);
 
-                drawContext.CommandList.SetRenderTargetAndViewport(pickingDepthStencil, pickingRenderTarget, pickingPositionRenderTarget);
-                //drawContext.CommandList.SetScissorRectangle(new Rectangle(x, y, 1, 1));
+                drawContext.CommandList.ResourceBarrierTransition(pickingRenderTarget, GraphicsResourceState.RenderTarget);
+                drawContext.CommandList.ResourceBarrierTransition(pickingPositionRenderTarget, GraphicsResourceState.RenderTarget);
+                drawContext.CommandList.ResourceBarrierTransition(pickingDepthStencil, GraphicsResourceState.DepthWrite);
+
+                drawContext.CommandList.SetRenderTargetsAndViewport(pickingDepthStencil, pickingRenderTarget, pickingPositionRenderTarget);
+                drawContext.CommandList.SetScissorRectangle(new Rectangle(x, y, 1, 1));
                 context.RenderSystem.Draw(drawContext, context.RenderView, PickingRenderStage);
                 //drawContext.CommandList.SetScissorRectangle(new Rectangle());
             }

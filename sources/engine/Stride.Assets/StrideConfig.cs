@@ -18,20 +18,25 @@ namespace Stride.Assets
 
         public static readonly PackageVersion LatestPackageVersion = new PackageVersion(StrideVersion.NuGetVersion);
 
+        /// <summary>
+        /// All created embedded games (preview, scene, etc...) and asset compilers will have <see cref="DeviceCreationFlags.Debug"/> set.
+        /// </summary>
+        public static bool GraphicsDebugMode { get; set; } = false;
+
         private static readonly string ProgramFilesX86 = Environment.GetEnvironmentVariable(Environment.Is64BitOperatingSystem ? "ProgramFiles(x86)" : "ProgramFiles");
 
         private static readonly Version VS2015Version = new Version(14, 0);
         private static readonly Version VSAnyVersion = new Version(int.MaxValue, int.MaxValue, int.MaxValue, int.MaxValue);
 
-        internal static readonly Dictionary<Version, string> XamariniOSComponents = new Dictionary<Version, string>
+        internal static readonly Dictionary<Version, string> DotNetForiOSComponents = new Dictionary<Version, string>
         {
-            { VSAnyVersion, @"Component.Xamarin" },
+            { VSAnyVersion, @"Microsoft.VisualStudio.Workload.NetCrossPlat" },
             { VS2015Version, @"MSBuild\Xamarin\iOS\Xamarin.iOS.CSharp.targets" }
         };
 
-        internal static readonly Dictionary<Version, string> XamarinAndroidComponents = new Dictionary<Version, string>
+        internal static readonly Dictionary<Version, string> DotNetForAndroidComponents = new Dictionary<Version, string>
         {
-            { VSAnyVersion, @"Component.Xamarin" },
+            { VSAnyVersion, @"Microsoft.VisualStudio.Workload.NetCrossPlat" },
             { VS2015Version, @"MSBuild\Xamarin\Android\Xamarin.Android.CSharp.targets" }
         };
 
@@ -62,7 +67,7 @@ namespace Stride.Assets
             {
                 Name = PlatformType.Windows.ToString(),
                 IsAvailable = true,
-                TargetFramework = "net8.0-windows",
+                TargetFramework = "net10.0-windows",
                 RuntimeIdentifier = "win-x64",
                 Type = PlatformType.Windows
             };
@@ -120,7 +125,7 @@ namespace Stride.Assets
             {
                 Name = PlatformType.Linux.ToString(),
                 IsAvailable = true,
-                TargetFramework = "net8.0",
+                TargetFramework = "net10.0",
                 RuntimeIdentifier = "linux-x64",
                 Type = PlatformType.Linux,
             };
@@ -131,7 +136,7 @@ namespace Stride.Assets
             {
                 Name = PlatformType.macOS.ToString(),
                 IsAvailable = true,
-                TargetFramework = "net8.0",
+                TargetFramework = "net10.0",
                 RuntimeIdentifier = "osx-x64",
                 Type = PlatformType.macOS,
             };
@@ -142,8 +147,8 @@ namespace Stride.Assets
             {
                 Name = PlatformType.Android.ToString(),
                 Type = PlatformType.Android,
-                TargetFramework = "net8.0-android",
-                IsAvailable = IsVSComponentAvailableAnyVersion(XamarinAndroidComponents)
+                TargetFramework = "net10.0-android",
+                IsAvailable = IsVSComponentAvailableAnyVersion(DotNetForAndroidComponents)
             };
             androidPlatform.DefineConstants.Add("STRIDE_PLATFORM_MONO_MOBILE");
             androidPlatform.DefineConstants.Add("STRIDE_PLATFORM_ANDROID");
@@ -169,8 +174,8 @@ namespace Stride.Assets
                 Name = PlatformType.iOS.ToString(),
                 SolutionName = "iPhone", // For iOS, we need to use iPhone as a solution name
                 Type = PlatformType.iOS,
-                TargetFramework = "net8.0-ios",
-                IsAvailable = IsVSComponentAvailableAnyVersion(XamariniOSComponents)
+                TargetFramework = "net10.0-ios",
+                IsAvailable = IsVSComponentAvailableAnyVersion(DotNetForiOSComponents)
             };
             iphonePlatform.PlatformsPart.Add(new SolutionPlatformPart("iPhoneSimulator"));
             iphonePlatform.DefineConstants.Add("STRIDE_PLATFORM_MONO_MOBILE");
@@ -240,12 +245,19 @@ namespace Stride.Assets
             {
                 if (pair.Key == VS2015Version)
                 {
-                    return IsFileInProgramFilesx86Exist(pair.Value);
+                    if (IsFileInProgramFilesx86Exist(pair.Value))
+                    {
+                        return true;
+                    }
+                    continue;
                 }
 
-                return VisualStudioVersions.AvailableInstances.Any(
+                if (VisualStudioVersions.AvailableInstances.Any(
                     ideInfo => ideInfo.PackageVersions.ContainsKey(pair.Value)
-                );
+                ))
+                {
+                    return true;
+                }
             }
             return false;
         }

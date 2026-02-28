@@ -496,10 +496,20 @@ namespace Stride.Core.Assets.Editor.ViewModel
 
         private void AutoSelectCurrentProject()
         {
-            var currentProject = LocalPackages.OfType<ProjectViewModel>().FirstOrDefault(x => x.Type == ProjectType.Executable && x.Platform == PlatformType.Windows) ?? LocalPackages.FirstOrDefault();
-            if (currentProject != null)
+            var executableProjects = LocalPackages
+                .OfType<ProjectViewModel>()
+                .Where(x => x.Type == ProjectType.Executable && x.Platform == PlatformType.Windows);
+            
+            PackageViewModel selectedProject = executableProjects
+                // Prefer solutions with an existing *.sdpkg
+                .FirstOrDefault(x => x.PackageContainer is SolutionProject { IsImplicitProject: false });
+
+            selectedProject ??= executableProjects.FirstOrDefault();
+            selectedProject ??= LocalPackages.FirstOrDefault();
+
+            if (selectedProject != null)
             {
-                SetCurrentProject(currentProject);
+                SetCurrentProject(selectedProject);
             }
         }
 
@@ -509,7 +519,8 @@ namespace Stride.Core.Assets.Editor.ViewModel
             var documentationService = ServiceProvider.Get<UserDocumentationService>();
             foreach (var packageAssembly in LocalPackages.SelectMany(p => p.LoadedAssemblies))
             {
-                Task.Run(() => documentationService.CacheAssemblyDocumentation(packageAssembly.Assembly));
+                if (packageAssembly.Assembly != null)
+                    Task.Run(() => documentationService.CacheAssemblyDocumentation(packageAssembly.Assembly));
             }
         }
 
