@@ -20,7 +20,7 @@ namespace Stride.Graphics
         internal int ConstantBufferDataPlacementAlignment;
 
         internal readonly ConcurrentPool<List<VkDescriptorPool>> DescriptorPoolLists = new ConcurrentPool<List<VkDescriptorPool>>(() => new List<VkDescriptorPool>());
-        internal readonly ConcurrentPool<List<Texture>> StagingResourceLists = new ConcurrentPool<List<Texture>>(() => new List<Texture>());
+        internal readonly ConcurrentPool<List<GraphicsResource>> StagingResourceLists = new ConcurrentPool<List<GraphicsResource>>(() => new List<GraphicsResource>());
 
         private const GraphicsPlatform GraphicPlatform = GraphicsPlatform.Vulkan;
         internal GraphicsProfile RequestedProfile;
@@ -376,6 +376,7 @@ namespace Stride.Graphics
                 shaderCullDistance = true,
                 samplerAnisotropy = true,
                 depthClamp = true,
+                tessellationShader = RequestedProfile >= GraphicsProfile.Level_11_0,
             };
 
             NativeInstanceApi.vkGetPhysicalDeviceFeatures(NativePhysicalDevice, out var deviceFeatures);
@@ -409,9 +410,16 @@ namespace Stride.Graphics
                 IsProfilingSupported = true;
             }
 
+            // Activate VK_KHR_uniform_buffer_standard_layout (promoted Vulkan 1.2)
+            var uniformBufferStandardLayoutFeature = new VkPhysicalDeviceUniformBufferStandardLayoutFeatures();
+            uniformBufferStandardLayoutFeature.sType = VkStructureType.PhysicalDeviceUniformBufferStandardLayoutFeatures;
+            uniformBufferStandardLayoutFeature.uniformBufferStandardLayout = VkBool32.True;
+
+            // Activate VK_KHR_timeline_semaphore (promoted Vulkan 1.2)
             var timelineSemaphoreFeatures = new VkPhysicalDeviceTimelineSemaphoreFeatures();
             timelineSemaphoreFeatures.sType = VkStructureType.PhysicalDeviceTimelineSemaphoreFeatures;
             timelineSemaphoreFeatures.timelineSemaphore = VkBool32.True;
+            timelineSemaphoreFeatures.pNext = &uniformBufferStandardLayoutFeature;
 
             using VkStringArray ppEnabledExtensionNames = new(desiredExtensionProperties);
             var deviceCreateInfo = new VkDeviceCreateInfo

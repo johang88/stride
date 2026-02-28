@@ -209,12 +209,6 @@ namespace Stride.Graphics
 
             //// TODO D3D12 Hardcoded for one viewport
             var viewportCopy = Viewport;
-            if (viewportDirty)
-            {
-                GraphicsDevice.NativeDeviceApi.vkCmdSetViewport(currentCommandList.NativeCommandBuffer, firstViewport: 0, viewportCount: 1, (VkViewport*) &viewportCopy);
-                viewportDirty = false;
-            }
-
             if (activePipeline?.Description.RasterizerState.ScissorTestEnable ?? false)
             {
                 if (scissorsDirty)
@@ -232,8 +226,17 @@ namespace Stride.Graphics
                 var scissor = new VkRect2D((int) viewportCopy.X, (int) viewportCopy.Y, (uint) viewportCopy.Width, (uint) viewportCopy.Height);
                 GraphicsDevice.NativeDeviceApi.vkCmdSetScissor(currentCommandList.NativeCommandBuffer, firstScissor: 0, scissorCount: 1, &scissor);
             }
-
             scissorsDirty = false;
+
+            // Since Vulkan 1.1, we can use negative viewport instead of doing gl_Position.y = -gl_Position.y in the shader
+            // Note: we mutate viewportCopy _after_ vkCmdSetScissor has been called
+            viewportCopy.Y = viewportCopy.Height - viewportCopy.Y;
+            viewportCopy.Height = -viewportCopy.Height;
+            if (viewportDirty)
+            {
+                GraphicsDevice.NativeDeviceApi.vkCmdSetViewport(currentCommandList.NativeCommandBuffer, firstViewport: 0, viewportCount: 1, (VkViewport*)&viewportCopy);
+                viewportDirty = false;
+            }
         }
 
         /// <summary>
@@ -1033,6 +1036,14 @@ namespace Stride.Graphics
                     size = (uint) sourceBuffer.SizeInBytes
                 };
                 GraphicsDevice.NativeDeviceApi.vkCmdCopyBuffer(currentCommandList.NativeCommandBuffer, sourceBuffer.NativeBuffer, destinationBuffer.NativeBuffer, regionCount: 1, &copy);
+
+                if (destinationBuffer.Usage == GraphicsResourceUsage.Staging)
+                {
+                    // VkFence for host access
+                    destinationBuffer.CommandListFenceValue = null;
+                    destinationBuffer.UpdatingCommandList = this;
+                    currentCommandList.StagingResources.Add(destinationBuffer);
+                }
 
                 bufferBarriers[0] = new VkBufferMemoryBarrier(sourceBuffer.NativeBuffer, VkAccessFlags.TransferRead, sourceBuffer.NativeAccessMask);
                 bufferBarriers[1] = new VkBufferMemoryBarrier(destinationBuffer.NativeBuffer, VkAccessFlags.TransferWrite, destinationBuffer.NativeAccessMask);
