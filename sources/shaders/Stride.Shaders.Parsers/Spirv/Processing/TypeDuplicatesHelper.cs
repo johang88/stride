@@ -564,14 +564,33 @@ public class TypeDuplicateHelper
                 }
                 else if (op.Kind == OperandKind.IdResultType && from.Contains(op.Words[0]))
                     op.Words[0] = to;
-                else if (op.Kind == OperandKind.PairIdRefLiteralInteger && from.Contains(op.Words[0]))
-                    op.Words[0] = to;
-                else if (op.Kind == OperandKind.PairLiteralIntegerIdRef && from.Contains(op.Words[1]))
-                    op.Words[1] = to;
+                // The pair kinds are variadic (ZeroOrMore): a single operand carries the whole list
+                // of pairs as [w0, w1, w2, w3, ...], so every pair has to be walked, not just the
+                // first. OpTypeFunctionSDSL stores its parameter types this way (id, modifier), and
+                // only rewriting Words[0] left every parameter after the first pointing at the old
+                // id - so when an OpTypeImage was deduplicated, a Texture2D parameter in a later
+                // slot kept referencing the removed id and the module failed validation with
+                // "requires a previous definition".
+                else if (op.Kind == OperandKind.PairIdRefLiteralInteger)
+                {
+                    // Id in the first slot of each pair.
+                    for (var w = 0; w < op.Words.Length; w += 2)
+                        if (from.Contains(op.Words[w]))
+                            op.Words[w] = to;
+                }
+                else if (op.Kind == OperandKind.PairLiteralIntegerIdRef)
+                {
+                    // Id in the second slot of each pair.
+                    for (var w = 1; w < op.Words.Length; w += 2)
+                        if (from.Contains(op.Words[w]))
+                            op.Words[w] = to;
+                }
                 else if (op.Kind == OperandKind.PairIdRefIdRef)
                 {
-                    op.Words[0] = from.Contains(op.Words[0]) ? to : op.Words[0];
-                    op.Words[1] = from.Contains(op.Words[1]) ? to : op.Words[1];
+                    // Both slots of every pair are ids.
+                    foreach (ref var w in op.Words)
+                        if (from.Contains(w))
+                            w = to;
                 }
             }
         }
