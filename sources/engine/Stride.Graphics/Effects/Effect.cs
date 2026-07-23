@@ -122,6 +122,8 @@ namespace Stride.Graphics
 
         private static void PrepareReflection(EffectReflection reflection)
         {
+            RelinkResourceGroupConstantBuffers(reflection);
+
             var resourceBindingsSpan = CollectionsMarshal.AsSpan(reflection.ResourceBindings);
 
             // prepare resource bindings used internally
@@ -365,23 +367,70 @@ namespace Stride.Graphics
             return key;
         }
 
+        /// <summary>
+        /// Restores the object identity between <see cref="EffectReflection.ConstantBuffers"/> and
+        /// <see cref="EffectResourceGroupDescription.ConstantBuffer"/>.
+        /// </summary>
+        /// <remarks>
+        /// The compiler puts the same <see cref="EffectConstantBufferDescription"/> instance in both places,
+        /// but the bytecode serializer writes it out twice, so an <see cref="EffectBytecode"/> that came back
+        /// from a cache has two separate copies. That matters because <see cref="EffectConstantBufferDescription.Hash"/>
+        /// is <see cref="DataMemberIgnoreAttribute">not serialized</see>: without this, only the copy in
+        /// <see cref="EffectReflection.ConstantBuffers"/> would get a hash and the group's copy would keep a
+        /// zeroed one. <see cref="ResourceGroupDescription"/> mixes that hash into its own, which is the key
+        /// the render features cache resource group layouts by - a zeroed hash makes two effects that share a
+        /// descriptor set layout but not a constant buffer layout collide on it, and the loser then writes its
+        /// constants at the winner's offsets.
+        /// </remarks>
+        private static void RelinkResourceGroupConstantBuffers(EffectReflection reflection)
+        {
+            foreach (var group in reflection.ResourceGroups)
+            {
+                var groupConstantBuffer = group.ConstantBuffer;
+                if (groupConstantBuffer == null)
+                    continue;
+
+                foreach (var constantBuffer in reflection.ConstantBuffers)
+                {
+                    if (constantBuffer.Name == groupConstantBuffer.Name)
+                    {
+                        group.ConstantBuffer = constantBuffer;
+                        break;
+                    }
+                }
+            }
+        }
+
         private static void UpdateConstantBufferHashes(EffectReflection reflection)
         {
             // Update Constant buffers description
             foreach (var constantBuffer in reflection.ConstantBuffers)
             {
-                var hashBuilder = new ObjectIdBuilder();
-                hashBuilder.Write(constantBuffer.Name);
-                hashBuilder.Write(constantBuffer.Size);
-
-                for (int i = 0; i < constantBuffer.Members.Length; ++i)
-                {
-                    var member = constantBuffer.Members[i];
-                    HashConstantBufferMember(ref hashBuilder, ref member);
-                }
-
-                constantBuffer.Hash = hashBuilder.ComputeHash();
+                UpdateConstantBufferHash(constantBuffer);
             }
+
+            // A group's constant buffer is normally one of the above (see RelinkResourceGroupConstantBuffers),
+            // but hash any that are not so no group is ever left with a zeroed hash.
+            foreach (var group in reflection.ResourceGroups)
+            {
+                if (group.ConstantBuffer != null && group.ConstantBuffer.Hash == ObjectId.Empty)
+                    UpdateConstantBufferHash(group.ConstantBuffer);
+            }
+        }
+
+        private static void UpdateConstantBufferHash(EffectConstantBufferDescription constantBuffer)
+        {
+            var hashBuilder = new ObjectIdBuilder();
+            hashBuilder.Write(constantBuffer.Name);
+            hashBuilder.Write(constantBuffer.Size);
+
+            for (int i = 0; i < constantBuffer.Members.Length; ++i)
+            {
+                var member = constantBuffer.Members[i];
+                HashConstantBufferMember(ref hashBuilder, ref member);
+            }
+
+            constantBuffer.Hash = hashBuilder.ComputeHash();
         }
 
         internal static void HashConstantBufferMember(ref ObjectIdBuilder hashBuilder, ref EffectValueDescription member, int baseOffset = 0)
