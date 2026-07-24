@@ -60,10 +60,7 @@ public class EffectDescriptorSetReflection
                 continue;
             }
 
-            var descriptorSetLayoutBuilder = new DescriptorSetLayoutBuilder();
-            bool hasBindings = false;
-
-            AddGroupEntries(graphicsDevice, group, descriptorSetLayoutBuilder, ref hasBindings);
+            var entries = new List<EffectResourceEntry>(group.Entries);
 
             // When building the default set slot, also include entries from unnamed/Globals groups
             // (resources without an explicit resource group). This avoids mutating
@@ -73,9 +70,14 @@ public class EffectDescriptorSetReflection
                 foreach (var fallbackGroup in reflection.ResourceGroups)
                 {
                     if (fallbackGroup != group && fallbackGroup.Name is null or "Globals")
-                        AddGroupEntries(graphicsDevice, fallbackGroup, descriptorSetLayoutBuilder, ref hasBindings);
+                        entries.AddRange(fallbackGroup.Entries);
                 }
             }
+
+            var descriptorSetLayoutBuilder = new DescriptorSetLayoutBuilder();
+            bool hasBindings = false;
+
+            AddEntries(graphicsDevice, entries, descriptorSetLayoutBuilder, ref hasBindings);
 
             descriptorSetLayouts.AddLayout(effectDescriptorSetSlot, hasBindings ? descriptorSetLayoutBuilder : null);
         }
@@ -83,22 +85,50 @@ public class EffectDescriptorSetReflection
         return descriptorSetLayouts;
     }
 
-    private static void AddGroupEntries(GraphicsDevice graphicsDevice, EffectResourceGroupDescription group, DescriptorSetLayoutBuilder builder, ref bool hasBindings)
+    /// <summary>
+    ///   Adds the entries of a Descriptor Set to its layout, laid out so that each logical group occupies
+    ///   a single contiguous run of descriptor slots.
+    /// </summary>
+    /// <remarks>
+    ///   Render features address a logical group as one contiguous range (see
+    ///   <c>ResourceGroupLayout.CreateLogicalGroup</c>, which stops scanning at the first entry outside the
+    ///   group), so an interleaved layout silently truncates the group and leaves its remaining resources
+    ///   unbound. The compiler orders entries by shader register, which does not have to agree with the
+    ///   logical grouping - a "Depth" resource landing between two "Lighting" ones is enough to cut the
+    ///   lighting group in half. Grouping is safe to do here because a descriptor slot is an index into
+    ///   this layout rather than a shader register: <c>ResourceBinder</c> pairs the two up by key.
+    ///   <br/>
+    ///   Groups appear in order of first use and entries keep their relative order within a group.
+    /// </remarks>
+    private static void AddEntries(GraphicsDevice graphicsDevice, List<EffectResourceEntry> entries, DescriptorSetLayoutBuilder builder, ref bool hasBindings)
     {
-        foreach (var entry in group.Entries)
+        var logicalGroupOrder = new List<string>();
+        foreach (var entry in entries)
         {
-            // Note: we do NOT skip entries with Stages == None here.
-            // Unused resources must still occupy their slot in the descriptor set layout
-            // to preserve logical group offsets used by render features.
-            // The ResourceBinder handles this correctly — it simply won't create
-            // binding operations for entries with no matching stage.
+            if (!logicalGroupOrder.Contains(entry.LogicalGroup))
+                logicalGroupOrder.Add(entry.LogicalGroup);
+        }
 
-            SamplerState samplerState = null;
-            if (entry.Class == EffectParameterClass.Sampler && entry.SamplerStateDescription.HasValue)
-                samplerState = SamplerState.New(graphicsDevice, entry.SamplerStateDescription.Value);
+        foreach (var logicalGroup in logicalGroupOrder)
+        {
+            foreach (var entry in entries)
+            {
+                if (entry.LogicalGroup != logicalGroup)
+                    continue;
 
-            hasBindings = true;
-            builder.AddBinding(entry.KeyInfo.Key, entry.LogicalGroup, entry.Class, entry.Type, entry.ElementType.Type, entry.SlotCount, samplerState);
+                // Note: we do NOT skip entries with Stages == None here.
+                // Unused resources must still occupy their slot in the descriptor set layout
+                // to preserve logical group offsets used by render features.
+                // The ResourceBinder handles this correctly — it simply won't create
+                // binding operations for entries with no matching stage.
+
+                SamplerState samplerState = null;
+                if (entry.Class == EffectParameterClass.Sampler && entry.SamplerStateDescription.HasValue)
+                    samplerState = SamplerState.New(graphicsDevice, entry.SamplerStateDescription.Value);
+
+                hasBindings = true;
+                builder.AddBinding(entry.KeyInfo.Key, entry.LogicalGroup, entry.Class, entry.Type, entry.ElementType.Type, entry.SlotCount, samplerState);
+            }
         }
     }
 
