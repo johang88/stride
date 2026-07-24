@@ -581,7 +581,7 @@ namespace Stride.Graphics
                     Format = ComputeShaderResourceViewFormat()
                 };
 
-                if (((PixelFormat)srvDescription.Format).IsTypeless)
+                if (IsUnusableViewFormat((PixelFormat) srvDescription.Format))
                     return default;
 
                 // Initialize for Texture Arrays or Texture Cube
@@ -1136,6 +1136,22 @@ namespace Stride.Graphics
                 or PixelFormat.D24_UNorm_S8_UInt
                 or PixelFormat.D32_Float_S8X24_UInt;
         }
+
+        /// <summary>
+        ///   Determines whether a format cannot be used as a view format, and so no view should be created for it.
+        /// </summary>
+        /// <remarks>
+        ///   A fully typeless format (e.g. <see cref="PixelFormat.R32G8X24_Typeless"/>) has no interpretation of its
+        ///   bits and cannot be bound. The single-plane depth-stencil formats are the exception: they are named
+        ///   "Typeless" only because the *other* plane's bits are undefined in the view, and they are exactly the
+        ///   formats D3D requires to read the depth plane of a depth-stencil resource. Treating those as unusable
+        ///   silently leaves every depth-as-shader-resource texture without a Shader Resource View.
+        /// </remarks>
+        private static bool IsUnusableViewFormat(PixelFormat format)
+            => format.IsTypeless && format is not (PixelFormat.R32_Float_X8X24_Typeless
+                                                or PixelFormat.X32_Typeless_G8X24_UInt
+                                                or PixelFormat.R24_UNorm_X8_Typeless
+                                                or PixelFormat.X24_Typeless_G8_UInt);
 
         internal static PixelFormat ComputeShaderResourceFormatFromDepthFormat(PixelFormat format)
         {
