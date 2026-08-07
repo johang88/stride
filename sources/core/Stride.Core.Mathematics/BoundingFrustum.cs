@@ -33,11 +33,18 @@ public struct BoundingFrustum
     /// <summary>
     /// The near plane of this frustum.
     /// </summary>
+    /// <remarks><inheritdoc cref="FarPlane" path="/remarks"/></remarks>
     public Plane NearPlane;
 
     /// <summary>
     /// The far plane of this frustum.
     /// </summary>
+    /// <remarks>
+    /// The two depth planes are extracted as the plane at clip depth 0 and the plane at clip depth w.
+    /// Under a reversed-depth projection (see <see cref="Matrix.PerspectiveFovReverseRH(float, float, float, float)"/>)
+    /// those two roles are exchanged, so this field holds the near plane and <see cref="NearPlane"/> the far one.
+    /// The set of six planes is the same either way, so culling is unaffected.
+    /// </remarks>
     public Plane FarPlane;
 
     /// <summary>

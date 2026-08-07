@@ -179,15 +179,8 @@ namespace Stride.Rendering.Images
             blurH.Parameters.Set(AmbientOcclusionBlurKeys.IsOrthographic, isOrthographic);
             blurV.Parameters.Set(AmbientOcclusionBlurKeys.IsOrthographic, isOrthographic);
 
-            Vector2 zProj;
-            if (isOrthographic)
-            {
-                zProj = new Vector2(renderView.NearClipPlane, renderView.FarClipPlane - renderView.NearClipPlane);
-            }
-            else
-            {
-                zProj = CameraKeys.ZProjectionACalculate(renderView.NearClipPlane, renderView.FarClipPlane);
-            }
+            // Derived from the projection matrix, so it follows the view's depth range whichever way round it is
+            var zProj = CameraKeys.ZProjectionACalculate(in renderView.Projection);
 
             // Set Near/Far pre-calculated factors to speed up the linear depth reconstruction
             aoRawImageEffect.Parameters.Set(CameraKeys.ZProjection, ref zProj);

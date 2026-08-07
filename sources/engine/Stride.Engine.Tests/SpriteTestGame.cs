@@ -50,7 +50,7 @@ namespace Stride.Engine.Tests
 
             // Creates the camera
             CameraComponent.UseCustomProjectionMatrix = true;
-            CameraComponent.ProjectionMatrix = Matrix.OrthoRH(areaSize.X, areaSize.Y, -2, 2);
+            CameraComponent.ProjectionMatrix = Matrix.OrthoReverseRH(areaSize.X, areaSize.Y, -2, 2);
 
             // Load assets
             groundSprites = Content.Load<SpriteSheet>("GroundSprite");

@@ -15,7 +15,8 @@ public sealed class PresentationParameters : IEquatable<PresentationParameters>
     private const int DefaultBackBufferWidth = 800;
     private const int DefaultBackBufferHeight = 480;
     private const PixelFormat DefaultBackBufferFormat = PixelFormat.R8G8B8A8_UNorm;
-    private const PixelFormat DefaultDepthStencilFormat = PixelFormat.D24_UNorm_S8_UInt;
+    // Floating point, so that the reversed depth range Stride renders with actually gains precision
+    private const PixelFormat DefaultDepthStencilFormat = PixelFormat.D32_Float_S8X24_UInt;
     private const MultisampleCount DefaultMultisampleCount = MultisampleCount.None;
     private const PresentInterval DefaultPresentationInterval = PresentInterval.Immediate;
     private const bool DefaultIsFullScreen = false;

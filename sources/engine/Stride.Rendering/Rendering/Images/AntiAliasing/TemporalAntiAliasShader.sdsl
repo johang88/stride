@@ -35,8 +35,9 @@ shader TemporalAntiAliasShader : ImageEffectShader
         float3 historyUV = currentUV;
 
         //--------------------------------------------------------------------------
-        // Find the offset to the position with minimum depth in neighborhood
-        // for diolation of foreground velocity map
+        // Find the offset to the closest position in the neighborhood
+        // for diolation of foreground velocity map.
+        // Depths are reversed, so the closest fragment is the one with the greatest value.
         //--------------------------------------------------------------------------
         // Four point samples with constant offsets: a gather with four offsets needs an optional Vulkan feature
         // (shaderImageGatherExtended), and reads four times anyway
@@ -49,24 +50,24 @@ shader TemporalAntiAliasShader : ImageEffectShader
         float2 neighborDepthOffset = float2(OFFSET_LENGTH, OFFSET_LENGTH);
         float neighborDepthOffsetX = OFFSET_LENGTH;
 
-        if(neighbor4Depths.x < neighbor4Depths.y)
+        if(neighbor4Depths.x > neighbor4Depths.y)
         {
             neighborDepthOffsetX = -OFFSET_LENGTH;
         }
-        if(neighbor4Depths.z < neighbor4Depths.w)
+        if(neighbor4Depths.z > neighbor4Depths.w)
         {
             neighborDepthOffset.x = -OFFSET_LENGTH;
         }
-        float depthXY = min(neighbor4Depths.x, neighbor4Depths.y);
-        float depthZW = min(neighbor4Depths.z, neighbor4Depths.w);
-        if(depthXY < depthZW)
+        float depthXY = max(neighbor4Depths.x, neighbor4Depths.y);
+        float depthZW = max(neighbor4Depths.z, neighbor4Depths.w);
+        if(depthXY > depthZW)
         {
             neighborDepthOffset.y = -OFFSET_LENGTH;
             neighborDepthOffset.x = neighborDepthOffsetX;
         }
 
-        float depthXYZW = min(depthXY, depthZW);
-        if(centerDepth > depthXYZW)
+        float depthXYZW = max(depthXY, depthZW);
+        if(centerDepth < depthXYZW)
         {
             historyUV.xy += neighborDepthOffset * Texture0TexelSize;
             historyUV.z = depthXYZW;

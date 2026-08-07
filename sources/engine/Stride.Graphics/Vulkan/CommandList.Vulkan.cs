@@ -1206,10 +1206,13 @@ namespace Stride.Graphics
         /// </summary>
         /// <param name="depthStencilBuffer">The depth stencil buffer.</param>
         /// <param name="options">The options.</param>
-        /// <param name="depth">The depth.</param>
+        /// <param name="depth">
+        /// The depth. Defaults to 0, the far plane under Stride's reversed depth range; pass 1 when clearing
+        /// a buffer for a conventionally projected view.
+        /// </param>
         /// <param name="stencil">The stencil.</param>
         /// <exception cref="InvalidOperationException"></exception>
-        public unsafe void Clear(Texture depthStencilBuffer, DepthStencilClearOptions options, float depth = 1, byte stencil = 0)
+        public unsafe void Clear(Texture depthStencilBuffer, DepthStencilClearOptions options, float depth = 0, byte stencil = 0)
         {
             RecordDebugCounter(DebugCounterKind.Clear);
 

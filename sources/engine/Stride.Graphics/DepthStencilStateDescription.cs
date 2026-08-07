@@ -37,7 +37,13 @@ public struct DepthStencilStateDescription : IEquatable<DepthStencilStateDescrip
     /// <summary>
     ///   The default value for <see cref="DepthBufferFunction"/>.
     /// </summary>
-    public const CompareFunction DefaultDepthBufferFunction = CompareFunction.LessEqual;
+    /// <remarks>
+    ///   Stride renders camera views with a reversed depth range, where the near plane maps to a depth of 1
+    ///   and the far plane to a depth of 0, so the default keeps whichever fragment is <em>greater</em>.
+    ///   Views that are rendered with a conventional projection — shadow maps, most notably — have to ask
+    ///   for <see cref="CompareFunction.LessEqual"/> explicitly.
+    /// </remarks>
+    public const CompareFunction DefaultDepthBufferFunction = CompareFunction.GreaterEqual;
     /// <summary>
     ///   The default value for <see cref="StencilEnable"/>.
     /// </summary>
@@ -98,8 +104,8 @@ public struct DepthStencilStateDescription : IEquatable<DepthStencilStateDescrip
     /// </summary>
     /// <remarks>
     ///   This function determines whether a pixel should be drawn based on its depth value.
-    ///   For example, <c>CompareFunction.LessEqual</c> allows a pixel to pass if its depth is less than or equal to
-    ///   the current Depth-Stencil Buffer value.
+    ///   For example, <c>CompareFunction.GreaterEqual</c> allows a pixel to pass if its depth is greater than or
+    ///   equal to the current Depth-Stencil Buffer value.
     /// </remarks>
     public CompareFunction DepthBufferFunction = DefaultDepthBufferFunction;
 
@@ -167,7 +173,7 @@ public struct DepthStencilStateDescription : IEquatable<DepthStencilStateDescrip
     ///   The default values are:
     ///   <list type="bullet">
     ///     <item>Enables depth testing and depth writing.</item>
-    ///     <item>Uses the depth comparison function <see cref="CompareFunction.LessEqual"/>.</item>
+    ///     <item>Uses the depth comparison function <see cref="CompareFunction.GreaterEqual"/>, matching Stride's reversed depth range.</item>
     ///     <item>Disables stencil testing.</item>
     ///     <item>Sets the stencil bitmasks to <see cref="byte.MaxValue"/> (all birs set to 1).</item>
     ///     <item>

@@ -14,13 +14,13 @@ namespace Stride.Rendering.Images
         float    ParamRadius = 1;
         float    ParamRadiusSquared = 1;
 
+        // ZProjection follows the depth range the view was actually projected with, reversed or not
         stage float reconstructCSZ(float depth)
         {
-            float2 zProjection = float2(NearClipPlane / (NearClipPlane - FarClipPlane), (-NearClipPlane * FarClipPlane) / (NearClipPlane - FarClipPlane));
-            if (IsOrthographic) //near + z * (far - near)
-                return zProjection.x + depth * zProjection.y;
+            if (IsOrthographic)
+                return ZProjection.x + depth * ZProjection.y;
             else
-                return zProjection.y / (depth - zProjection.x);
+                return ZProjection.y / (depth - ZProjection.x);
         }
 
         stage float3 reconstructCSPosition(float2 S, float z)

@@ -33,6 +33,10 @@ namespace Stride.Rendering.Images
 
         public bool IsResultAvailable { get; private set; }
 
+        /// <summary>
+        /// The depth of the closest fragment in X and of the furthest non-background one in Y, as raw depth-buffer
+        /// values. Views use a reversed depth range, so X is the greater of the two.
+        /// </summary>
         public Vector2 Result { get; private set; }
 
         protected override void DrawCore(RenderDrawContext context)
@@ -66,19 +70,19 @@ namespace Stride.Rendering.Images
             IsResultAvailable = readback.IsResultAvailable;
             if (IsResultAvailable)
             {
-                float min = float.MaxValue;
-                float max = -float.MaxValue;
+                float closest = -float.MaxValue;
+                float furthest = float.MaxValue;
                 var results = readback.Result;
                 foreach (var result in results)
                 {
-                    min = Math.Min(result.X, min);
-                    if (result.Y != 1.0f)
+                    closest = Math.Max(result.X, closest);
+                    if (result.Y != 0.0f)
                     {
-                        max = Math.Max(result.Y, max);
+                        furthest = Math.Min(result.Y, furthest);
                     }
                 }
 
-                Result = new Vector2(min, max);
+                Result = new Vector2(closest, furthest);
             }
         }
     }

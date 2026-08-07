@@ -18,7 +18,7 @@ namespace Stride.Editor.Engine
             GraphicsDeviceManager.PreferredGraphicsProfile = new [] { GraphicsProfile.Level_11_0, GraphicsProfile.Level_10_1, GraphicsProfile.Level_10_0 };
             GraphicsDeviceManager.PreferredBackBufferWidth = 64;
             GraphicsDeviceManager.PreferredBackBufferHeight = 64;
-            GraphicsDeviceManager.PreferredDepthStencilFormat = PixelFormat.D24_UNorm_S8_UInt;
+            GraphicsDeviceManager.PreferredDepthStencilFormat = PixelFormat.D32_Float_S8X24_UInt;
             GraphicsDeviceManager.DeviceCreationFlags = StrideConfig.GraphicsDebugMode ? DeviceCreationFlags.Debug : DeviceCreationFlags.None;
 
             AutoLoadDefaultSettings = false;

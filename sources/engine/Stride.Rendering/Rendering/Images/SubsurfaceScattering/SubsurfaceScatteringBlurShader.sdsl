@@ -383,9 +383,10 @@ namespace Stride.Rendering.SubsurfaceScattering
         
         float CalculateViewSpaceDepth(float nonlinearDepth) // TODO: Does this really convert to view space Z or just linearize the depth?
         {
+            // ZProjection carries the retro-projection factors of whichever depth range the view was rendered with
             if(OrthographicProjection)
             {
-                return(NearClipPlane + nonlinearDepth * (FarClipPlane - NearClipPlane));    // TODO: PERFORMANCE: Precompute "FarClipPlane - NearClipPlane" because it can't be inlined?    // TODO: PERFORMANCE: And do we need the addition with "NearClipPlane"? I think it's redundant in this case because the orthographic projection matrix's near plane is at 0.0.
+                return(ZProjection.x + nonlinearDepth * ZProjection.y);
             }
 
             return(ZProjection.y / (nonlinearDepth - ZProjection.x));

@@ -15,12 +15,16 @@ public static class DepthStencilStates
     public static readonly DepthStencilStateDescription Default = DepthStencilStateDescription.Default;
 
     /// <summary>
-    ///   A built-in Depth-Stencil State object with default settings using <see cref="CompareFunction.GreaterEqual"/>
+    ///   A built-in Depth-Stencil State object with default settings using <see cref="CompareFunction.LessEqual"/>
     ///   function when comparing depth values.
     /// </summary>
+    /// <remarks>
+    ///   This is the state to use for a view rendered with a conventional (non-reversed) projection, where the
+    ///   near plane maps to a depth of 0. Shadow map casters are rendered this way.
+    /// </remarks>
     public static readonly DepthStencilStateDescription DefaultInverse = new(depthEnable: true, depthWriteEnable: true)
     {
-        DepthBufferFunction = CompareFunction.GreaterEqual
+        DepthBufferFunction = CompareFunction.LessEqual
     };
 
     /// <summary>

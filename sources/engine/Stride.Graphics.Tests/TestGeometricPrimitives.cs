@@ -92,7 +92,7 @@ namespace Stride.Graphics.Tests
             if (Input.IsKeyPressed(Keys.Right))
                 ChangePrimitiveStartOffset(1);
 
-            projection = Matrix.PerspectiveFovRH(MathF.PI / 4.0f, (float)GraphicsDevice.Presenter.BackBuffer.ViewWidth / GraphicsDevice.Presenter.BackBuffer.ViewHeight, 0.1f, 100.0f);
+            projection = Matrix.PerspectiveFovReverseRH(MathF.PI / 4.0f, (float)GraphicsDevice.Presenter.BackBuffer.ViewWidth / GraphicsDevice.Presenter.BackBuffer.ViewHeight, 0.1f, 100.0f);
 
             if (GraphicsDevice.Presenter.BackBuffer.ViewWidth < GraphicsDevice.Presenter.BackBuffer.ViewHeight) // the screen is standing up on Android{
                 view = Matrix.LookAtRH(new Vector3(0, 0, 10), new Vector3(0, 0, 0), Vector3.UnitX);

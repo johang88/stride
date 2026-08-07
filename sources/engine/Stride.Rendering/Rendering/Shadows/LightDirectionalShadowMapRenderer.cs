@@ -25,12 +25,16 @@ namespace Stride.Rendering.Shadows
         private static readonly Vector3[] VectorUps = { Vector3.UnitY, Vector3.UnitX, Vector3.UnitZ };
 
         /// <summary>
-        /// Base points for frustum corners.
+        /// Base points for frustum corners: the first four on the near plane, the last four on the far plane.
         /// </summary>
+        /// <remarks>
+        /// Camera views are projected with a reversed depth range, which puts the near plane at a depth of 1
+        /// and the far plane at 0.
+        /// </remarks>
         private static readonly Vector3[] FrustumBasePoints =
         {
-            new Vector3(-1.0f, -1.0f, 0.0f), new Vector3(1.0f, -1.0f, 0.0f), new Vector3(-1.0f, 1.0f, 0.0f), new Vector3(1.0f, 1.0f, 0.0f),
             new Vector3(-1.0f, -1.0f, 1.0f), new Vector3(1.0f, -1.0f, 1.0f), new Vector3(-1.0f, 1.0f, 1.0f), new Vector3(1.0f, 1.0f, 1.0f),
+            new Vector3(-1.0f, -1.0f, 0.0f), new Vector3(1.0f, -1.0f, 0.0f), new Vector3(-1.0f, 1.0f, 0.0f), new Vector3(1.0f, 1.0f, 0.0f),
         };
 
         private readonly float[] cascadeSplitRatios;

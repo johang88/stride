@@ -118,7 +118,7 @@ namespace Stride.Rendering.UI
                 if (uiElement.RenderObject.IsFullScreen)
                 {
                     var renderTarget = renderingContext.RenderTarget;
-                    var description = TextureDescription.New2D(renderTarget.Width, renderTarget.Height, PixelFormat.D24_UNorm_S8_UInt, TextureFlags.DepthStencil);
+                    var description = TextureDescription.New2D(renderTarget.Width, renderTarget.Height, PixelFormat.D32_Float_S8X24_UInt, TextureFlags.DepthStencil);
                     scopedDepthBuffer = context.RenderContext.Allocator.GetTemporaryTexture(description);
                     break;
                 }
@@ -440,7 +440,7 @@ namespace Stride.Rendering.UI
                     AspectRatio = aspectRatio,
                     VerticalFieldOfView = MathUtil.RadiansToDegrees(verticalFov),
                     ViewMatrix = Matrix.LookAtRH(new Vector3(0, 0, zOffset), Vector3.Zero, Vector3.UnitY),
-                    ProjectionMatrix = Matrix.PerspectiveFovRH(verticalFov, aspectRatio, nearPlane, farPlane),
+                    ProjectionMatrix = Matrix.PerspectiveFovReverseRH(verticalFov, aspectRatio, nearPlane, farPlane),
                 };
 
                 Update(renderObject, cameraComponent);

@@ -62,7 +62,7 @@ namespace Stride.Engine
                 AspectRatio = aspectRatio,
                 VerticalFieldOfView = MathUtil.RadiansToDegrees(verticalFov),
                 ViewMatrix = Matrix.LookAtRH(new Vector3(0, 0, zOffset), Vector3.Zero, Vector3.UnitY),
-                ProjectionMatrix = Matrix.PerspectiveFovRH(verticalFov, aspectRatio, nearPlane, farPlane),
+                ProjectionMatrix = Matrix.PerspectiveFovReverseRH(verticalFov, aspectRatio, nearPlane, farPlane),
             };
 
             return cameraComponent;

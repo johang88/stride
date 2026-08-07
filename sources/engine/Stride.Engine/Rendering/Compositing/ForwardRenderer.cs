@@ -29,7 +29,9 @@ namespace Stride.Rendering.Compositing
         private static readonly ProfilingKey DrawCoreKey = new ProfilingKey("ForwardRenderer.DrawCore");
 
         // TODO: should we use GraphicsDeviceManager.PreferredBackBufferFormat?
-        public const PixelFormat DepthBufferFormat = PixelFormat.D24_UNorm_S8_UInt;
+        // A floating-point depth buffer is what makes the reversed depth range worth having: on a normalized
+        // integer format the reversal buys no precision at all.
+        public const PixelFormat DepthBufferFormat = PixelFormat.D32_Float_S8X24_UInt;
 
         private IShadowMapRenderer shadowMapRenderer;
         private Texture depthStencilROCached;

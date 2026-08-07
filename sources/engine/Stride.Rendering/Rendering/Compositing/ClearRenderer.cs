@@ -21,7 +21,7 @@ namespace Stride.Rendering.Compositing
             Name = "Clear";
             ClearFlags = ClearRendererFlags.ColorAndDepth;
             Color = Core.Mathematics.Color.FromBgra(0xFF67696F);
-            Depth = 1.0f;
+            Depth = 0.0f;
             Stencil = 0;
         }
 
@@ -50,9 +50,13 @@ namespace Stride.Rendering.Compositing
         /// <value>
         /// The depth value used to clear the depth stencil buffer.
         /// </value>
+        /// <remarks>
+        /// Views are rendered with a reversed depth range, so the far plane — what an empty depth buffer should
+        /// start out as — is 0, not 1.
+        /// </remarks>
         /// <userdoc>The depth value to use when clearing the depth buffer</userdoc>
         [DataMember(30)]
-        [DefaultValue(1.0f)]
+        [DefaultValue(0.0f)]
         [Display("Depth Value")]
         public float Depth { get; set; }
 

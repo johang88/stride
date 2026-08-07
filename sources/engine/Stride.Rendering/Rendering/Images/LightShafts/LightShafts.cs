@@ -110,7 +110,9 @@ namespace Stride.Rendering.Images
                 minmaxPipelineState.State.BlendState.RenderTargets[0].BlendEnable = true;
                 minmaxPipelineState.State.BlendState.RenderTargets[0].ColorSourceBlend = Blend.One;
                 minmaxPipelineState.State.BlendState.RenderTargets[0].ColorDestinationBlend = Blend.One;
-                minmaxPipelineState.State.BlendState.RenderTargets[0].ColorBlendFunction = i == 0 ? BlendFunction.Min : BlendFunction.Max;
+                // Pass 0 keeps the volume's entry depth in red, pass 1 its exit depth in green. Views are rendered
+                // with a reversed depth range, so the nearest surface is the one with the *greatest* depth value.
+                minmaxPipelineState.State.BlendState.RenderTargets[0].ColorBlendFunction = i == 0 ? BlendFunction.Max : BlendFunction.Min;
                 minmaxPipelineState.State.BlendState.RenderTargets[0].ColorWriteChannels = i == 0 ? ColorWriteChannels.Red : ColorWriteChannels.Green;
 
                 minmaxPipelineState.State.DepthStencilState.DepthBufferEnable = false;
@@ -169,7 +171,7 @@ namespace Stride.Rendering.Images
             lightShaftsParameters.Set(TransformationKeys.Eye, new Vector4(viewInverse.TranslationVector, 1));
 
             // Setup parameters for Z reconstruction
-            lightShaftsParameters.Set(CameraKeys.ZProjection, CameraKeys.ZProjectionACalculate(renderView.NearClipPlane, renderView.FarClipPlane));
+            lightShaftsParameters.Set(CameraKeys.ZProjection, CameraKeys.ZProjectionACalculate(in renderView.Projection));
 
             Matrix projectionInverse;
             Matrix.Invert(ref renderView.Projection, out projectionInverse);
@@ -201,15 +203,16 @@ namespace Stride.Rendering.Images
 
                     using (context.PushRenderTargetsAndRestore())
                     {
-                        // Clear bounding box buffer
-                        context.CommandList.Clear(boundingBoxBuffer, new Color4(1.0f, 0.0f, 0.0f, 0.0f));
+                        // Clear bounding box buffer: entry to the far plane, exit to the near plane, so that a pixel
+                        // no volume covers ends up with an empty (inverted) depth range
+                        context.CommandList.Clear(boundingBoxBuffer, new Color4(0.0f, 1.0f, 0.0f, 0.0f));
                         context.CommandList.SetRenderTargetAndViewport(null, boundingBoxBuffer);
 
                         // If nothing visible, skip second part
                         if (!DrawBoundingVolumeMinMax(context, currentBoundingVolumes))
                             continue;
 
-                        context.CommandList.Clear(backSideRaycastBuffer, new Color4(1.0f, 0.0f, 0.0f, 0.0f));
+                        context.CommandList.Clear(backSideRaycastBuffer, new Color4(0.0f, 1.0f, 0.0f, 0.0f));
                         context.CommandList.SetRenderTargetAndViewport(null, backSideRaycastBuffer);
 
                         // If nothing visible, skip second part
@@ -375,7 +378,7 @@ namespace Stride.Rendering.Images
         {
             float backSideMaximumDistance = context.RenderContext.RenderView.FarClipPlane;
             float backSideMinimumDistance = -context.RenderContext.RenderView.NearClipPlane;
-            Matrix backSideProjection = context.RenderContext.RenderView.View * Matrix.Scaling(1, 1, -1) * Matrix.OrthoRH(BackSideOrthographicSize, BackSideOrthographicSize, backSideMinimumDistance, backSideMaximumDistance);
+            Matrix backSideProjection = context.RenderContext.RenderView.View * Matrix.Scaling(1, 1, -1) * Matrix.OrthoReverseRH(BackSideOrthographicSize, BackSideOrthographicSize, backSideMinimumDistance, backSideMaximumDistance);
             DrawBoundingVolumes(context, boundingVolumes, backSideProjection);
         }
 

@@ -47,12 +47,12 @@ namespace Stride.Rendering.Compositing
 
 #ifdef INPUT_MSAA_SAMPLES
             
-            // Get the closest depth value
+            // Get the closest depth value. Depths are reversed, so that is the greatest one.
             [unroll]
             for (int sampleIndex = 1; sampleIndex < INPUT_MSAA_SAMPLES; sampleIndex++)
             {
                 float sampleDepth = InputTexture.Load(pixelPos, sampleIndex).r;
-                resolvedDepth = min(resolvedDepth, sampleDepth);
+                resolvedDepth = max(resolvedDepth, sampleDepth);
             }
 
 #endif

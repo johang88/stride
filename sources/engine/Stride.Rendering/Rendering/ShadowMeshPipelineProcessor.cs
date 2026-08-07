@@ -6,7 +6,8 @@ using Stride.Graphics;
 namespace Stride.Rendering
 {
     /// <summary>
-    /// Pipline processor for <see cref="RenderMesh"/> that cast shadows, to properly disable culling and depth clip.
+    /// Pipline processor for <see cref="RenderMesh"/> that cast shadows, to properly disable culling and depth clip,
+    /// and to render them with a conventional depth range.
     /// </summary>
     public class ShadowMeshPipelineProcessor : PipelineProcessor
     {
@@ -21,6 +22,10 @@ namespace Stride.Rendering
             if (renderNode.RenderStage == ShadowMapRenderStage)
             {
                 pipelineState.RasterizerState = new RasterizerStateDescription(CullMode.None) { DepthClipEnable = DepthClipping };
+
+                // Camera views use a reversed depth range, but shadow maps are projected conventionally: their
+                // atlas is cleared to 1 and the caster nearest the light is the one with the smallest depth.
+                pipelineState.DepthStencilState = DepthStencilStates.DefaultInverse;
             }
         }
     }

@@ -2355,6 +2355,147 @@ public struct Matrix : IEquatable<Matrix>, ISpanFormattable
     }
 
     /// <summary>
+    /// Creates a right-handed, orthographic projection matrix with a reversed depth range,
+    /// mapping the near plane to a depth of 1 and the far plane to a depth of 0.
+    /// </summary>
+    /// <param name="width">Width of the viewing volume.</param>
+    /// <param name="height">Height of the viewing volume.</param>
+    /// <param name="znear">Minimum z-value of the viewing volume.</param>
+    /// <param name="zfar">Maximum z-value of the viewing volume.</param>
+    /// <param name="result">When the method completes, contains the created projection matrix.</param>
+    /// <remarks><inheritdoc cref="PerspectiveFovReverseRH(float, float, float, float)" path="/remarks"/></remarks>
+    public static void OrthoReverseRH(float width, float height, float znear, float zfar, out Matrix result)
+    {
+        // Swapping the clip planes is algebraically identical to remapping depth to 1 - depth
+        OrthoRH(width, height, zfar, znear, out result);
+    }
+
+    /// <summary>
+    /// Creates a right-handed, orthographic projection matrix with a reversed depth range,
+    /// mapping the near plane to a depth of 1 and the far plane to a depth of 0.
+    /// </summary>
+    /// <param name="width">Width of the viewing volume.</param>
+    /// <param name="height">Height of the viewing volume.</param>
+    /// <param name="znear">Minimum z-value of the viewing volume.</param>
+    /// <param name="zfar">Maximum z-value of the viewing volume.</param>
+    /// <returns>The created projection matrix.</returns>
+    /// <remarks><inheritdoc cref="PerspectiveFovReverseRH(float, float, float, float)" path="/remarks"/></remarks>
+    public static Matrix OrthoReverseRH(float width, float height, float znear, float zfar)
+    {
+        OrthoReverseRH(width, height, znear, zfar, out var result);
+        return result;
+    }
+
+    /// <summary>
+    /// Creates a right-handed, customized orthographic projection matrix with a reversed depth range,
+    /// mapping the near plane to a depth of 1 and the far plane to a depth of 0.
+    /// </summary>
+    /// <param name="left">Minimum x-value of the viewing volume.</param>
+    /// <param name="right">Maximum x-value of the viewing volume.</param>
+    /// <param name="bottom">Minimum y-value of the viewing volume.</param>
+    /// <param name="top">Maximum y-value of the viewing volume.</param>
+    /// <param name="znear">Minimum z-value of the viewing volume.</param>
+    /// <param name="zfar">Maximum z-value of the viewing volume.</param>
+    /// <param name="result">When the method completes, contains the created projection matrix.</param>
+    /// <remarks><inheritdoc cref="PerspectiveFovReverseRH(float, float, float, float)" path="/remarks"/></remarks>
+    public static void OrthoOffCenterReverseRH(float left, float right, float bottom, float top, float znear, float zfar, out Matrix result)
+    {
+        OrthoOffCenterRH(left, right, bottom, top, zfar, znear, out result);
+    }
+
+    /// <summary>
+    /// Creates a right-handed, customized orthographic projection matrix with a reversed depth range,
+    /// mapping the near plane to a depth of 1 and the far plane to a depth of 0.
+    /// </summary>
+    /// <param name="left">Minimum x-value of the viewing volume.</param>
+    /// <param name="right">Maximum x-value of the viewing volume.</param>
+    /// <param name="bottom">Minimum y-value of the viewing volume.</param>
+    /// <param name="top">Maximum y-value of the viewing volume.</param>
+    /// <param name="znear">Minimum z-value of the viewing volume.</param>
+    /// <param name="zfar">Maximum z-value of the viewing volume.</param>
+    /// <returns>The created projection matrix.</returns>
+    /// <remarks><inheritdoc cref="PerspectiveFovReverseRH(float, float, float, float)" path="/remarks"/></remarks>
+    public static Matrix OrthoOffCenterReverseRH(float left, float right, float bottom, float top, float znear, float zfar)
+    {
+        OrthoOffCenterReverseRH(left, right, bottom, top, znear, zfar, out var result);
+        return result;
+    }
+
+    /// <summary>
+    /// Creates a right-handed, perspective projection matrix based on a field of view, with a reversed
+    /// depth range, mapping the near plane to a depth of 1 and the far plane to a depth of 0.
+    /// </summary>
+    /// <param name="fov">Field of view in the y direction, in radians.</param>
+    /// <param name="aspect">Aspect ratio, defined as view space width divided by height.</param>
+    /// <param name="znear">Minimum z-value of the viewing volume.</param>
+    /// <param name="zfar">Maximum z-value of the viewing volume.</param>
+    /// <param name="result">When the method completes, contains the created projection matrix.</param>
+    /// <remarks><inheritdoc cref="PerspectiveFovReverseRH(float, float, float, float)" path="/remarks"/></remarks>
+    public static void PerspectiveFovReverseRH(float fov, float aspect, float znear, float zfar, out Matrix result)
+    {
+        PerspectiveFovRH(fov, aspect, zfar, znear, out result);
+    }
+
+    /// <summary>
+    /// Creates a right-handed, perspective projection matrix based on a field of view, with a reversed
+    /// depth range, mapping the near plane to a depth of 1 and the far plane to a depth of 0.
+    /// </summary>
+    /// <param name="fov">Field of view in the y direction, in radians.</param>
+    /// <param name="aspect">Aspect ratio, defined as view space width divided by height.</param>
+    /// <param name="znear">Minimum z-value of the viewing volume.</param>
+    /// <param name="zfar">Maximum z-value of the viewing volume.</param>
+    /// <returns>The created projection matrix.</returns>
+    /// <remarks>
+    /// Reversing the depth range spreads the floating-point precision of a depth buffer evenly over the
+    /// view distance instead of concentrating almost all of it right in front of the near plane, which is
+    /// why it is the convention Stride renders its camera views with. It only pays off on a floating-point
+    /// depth buffer; on a normalized-integer one it makes no difference.
+    /// <br/>
+    /// A view rendered with a reversed projection needs a depth buffer cleared to 0 and a depth comparison
+    /// of <c>GreaterEqual</c> rather than <c>LessEqual</c>.
+    /// </remarks>
+    public static Matrix PerspectiveFovReverseRH(float fov, float aspect, float znear, float zfar)
+    {
+        PerspectiveFovReverseRH(fov, aspect, znear, zfar, out var result);
+        return result;
+    }
+
+    /// <summary>
+    /// Creates a right-handed, customized perspective projection matrix with a reversed depth range,
+    /// mapping the near plane to a depth of 1 and the far plane to a depth of 0.
+    /// </summary>
+    /// <param name="left">Minimum x-value of the viewing volume.</param>
+    /// <param name="right">Maximum x-value of the viewing volume.</param>
+    /// <param name="bottom">Minimum y-value of the viewing volume.</param>
+    /// <param name="top">Maximum y-value of the viewing volume.</param>
+    /// <param name="znear">Minimum z-value of the viewing volume.</param>
+    /// <param name="zfar">Maximum z-value of the viewing volume.</param>
+    /// <param name="result">When the method completes, contains the created projection matrix.</param>
+    /// <remarks><inheritdoc cref="PerspectiveFovReverseRH(float, float, float, float)" path="/remarks"/></remarks>
+    public static void PerspectiveOffCenterReverseRH(float left, float right, float bottom, float top, float znear, float zfar, out Matrix result)
+    {
+        PerspectiveOffCenterRH(left, right, bottom, top, zfar, znear, out result);
+    }
+
+    /// <summary>
+    /// Creates a right-handed, customized perspective projection matrix with a reversed depth range,
+    /// mapping the near plane to a depth of 1 and the far plane to a depth of 0.
+    /// </summary>
+    /// <param name="left">Minimum x-value of the viewing volume.</param>
+    /// <param name="right">Maximum x-value of the viewing volume.</param>
+    /// <param name="bottom">Minimum y-value of the viewing volume.</param>
+    /// <param name="top">Maximum y-value of the viewing volume.</param>
+    /// <param name="znear">Minimum z-value of the viewing volume.</param>
+    /// <param name="zfar">Maximum z-value of the viewing volume.</param>
+    /// <returns>The created projection matrix.</returns>
+    /// <remarks><inheritdoc cref="PerspectiveFovReverseRH(float, float, float, float)" path="/remarks"/></remarks>
+    public static Matrix PerspectiveOffCenterReverseRH(float left, float right, float bottom, float top, float znear, float zfar)
+    {
+        PerspectiveOffCenterReverseRH(left, right, bottom, top, znear, zfar, out var result);
+        return result;
+    }
+
+    /// <summary>
     /// Builds a matrix that can be used to reflect vectors about a plane.
     /// </summary>
     /// <param name="plane">The plane for which the reflection occurs. This parameter is assumed to be normalized.</param>

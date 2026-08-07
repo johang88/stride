@@ -96,9 +96,10 @@ namespace Stride.Rendering.UI
             screenPos.X *= graphicsDevice.Presenter.BackBuffer.Width;
             screenPos.Y *= graphicsDevice.Presenter.BackBuffer.Height;
 
-            var unprojectedNear = viewport.Unproject(new Vector3(screenPos, 0.0f), ref worldViewProj);
+            // The view was projected with a reversed depth range, so the near plane sits at a depth of 1
+            var unprojectedNear = viewport.Unproject(new Vector3(screenPos, 1.0f), ref worldViewProj);
 
-            var unprojectedFar = viewport.Unproject(new Vector3(screenPos, 1.0f), ref worldViewProj);
+            var unprojectedFar = viewport.Unproject(new Vector3(screenPos, 0.0f), ref worldViewProj);
 
             var rayDirection = Vector3.Normalize(unprojectedFar - unprojectedNear);
             var clickRay = new Ray(unprojectedNear, rayDirection);

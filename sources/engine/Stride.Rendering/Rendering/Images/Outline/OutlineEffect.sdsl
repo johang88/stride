@@ -19,36 +19,45 @@ namespace Stride.Rendering.Images
 
         stage Texture2D DepthTexture;
         
-        float3 normal_from_depth(float depth, float2 texcoords) {
+        // Depths are reversed: the near plane sits at 1 and the far plane at 0
+        float LinearDepth(float depth)
+        {
+          return zNear * zFar / (depth * (zFar - zNear) + zNear);
+        }
+
+        float LinearDepthAt(float2 texcoords)
+        {
+          return LinearDepth(DepthTexture.SampleLevel(PointSampler, texcoords, 0.0).x);
+        }
+
+        // Works off linear depth, so the gradients stay meaningful over the whole view distance
+        float3 normal_from_depth(float linearDepth, float2 texcoords) {
           const float2 offset1 = float2(0.0,ScreenDiffs.y);
           const float2 offset2 = float2(ScreenDiffs.x,0.0);
-  
-          float depth1 = DepthTexture.SampleLevel(PointSampler, texcoords + offset1, 0.0).x;
-          float depth2 = DepthTexture.SampleLevel(PointSampler, texcoords + offset2, 0.0).x;
-  
-          float3 p1 = float3(offset1, depth1 - depth);
-          float3 p2 = float3(offset2, depth2 - depth);
-  
+
+          float depth1 = LinearDepthAt(texcoords + offset1);
+          float depth2 = LinearDepthAt(texcoords + offset2);
+
+          float3 p1 = float3(offset1, depth1 - linearDepth);
+          float3 p2 = float3(offset2, depth2 - linearDepth);
+
           float3 normal = cross(p1, p2);
           normal.z = -normal.z;
-  
+
           return normalize(normal);
         }
 
         float4 fetchNormalDepth(float2 tc){
             float4 nd; // return value
 
-            // get depth
-            float z_b = DepthTexture.SampleLevel(PointSampler, tc, 0.0).x;
-            float z_n = 2.0 * z_b - 1.0;
-            float linearDepth = 2.0 * zNear * zFar / (zFar + zNear - z_n * (zFar - zNear));
+            float linearDepth = LinearDepthAt(tc);
 
             // linear depth
             nd.w = DepthWeight * linearDepth;
-            
+
             // normal, but skip stuff really close
-            nd.xyz = step(NormalNearCutoff, linearDepth) * normal_from_depth(z_b, tc) * NormalWeight;
-            
+            nd.xyz = step(NormalNearCutoff, linearDepth) * normal_from_depth(linearDepth, tc) * NormalWeight;
+
             return nd;
         }
 

@@ -75,7 +75,7 @@ namespace Stride.Engine.Tests
             }
 
             CameraComponent.UseCustomProjectionMatrix = true;
-            CameraComponent.ProjectionMatrix = Matrix.OrthoOffCenterRH(0, ScreenWidth, 0, ScreenHeight, -10, 10);
+            CameraComponent.ProjectionMatrix = Matrix.OrthoOffCenterReverseRH(0, ScreenWidth, 0, ScreenHeight, -10, 10);
         }
 
         protected override void RegisterTests()

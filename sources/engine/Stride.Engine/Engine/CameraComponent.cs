@@ -243,10 +243,13 @@ namespace Stride.Engine
             // TODO: Should we throw an error if Projection is not set?
             if (!UseCustomProjectionMatrix)
             {
-                // Calculates the projection matrix
+                // Calculates the projection matrix.
+                // Camera views are rendered with a reversed depth range: the near plane maps to a depth of 1
+                // and the far plane to 0, which is what spreads floating-point depth precision evenly over the
+                // view distance. Anything reading the depth buffer of a camera view has to account for that.
                 ProjectionMatrix = Projection == CameraProjectionMode.Perspective ?
-                    Matrix.PerspectiveFovRH(MathUtil.DegreesToRadians(VerticalFieldOfView), ActuallyUsedAspectRatio, NearClipPlane, FarClipPlane) :
-                    Matrix.OrthoRH(ActuallyUsedAspectRatio * OrthographicSize, OrthographicSize, NearClipPlane, FarClipPlane);
+                    Matrix.PerspectiveFovReverseRH(MathUtil.DegreesToRadians(VerticalFieldOfView), ActuallyUsedAspectRatio, NearClipPlane, FarClipPlane) :
+                    Matrix.OrthoReverseRH(ActuallyUsedAspectRatio * OrthographicSize, OrthographicSize, NearClipPlane, FarClipPlane);
             }
 
             // Update ViewProjectionMatrix

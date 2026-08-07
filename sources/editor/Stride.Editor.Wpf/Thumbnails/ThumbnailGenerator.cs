@@ -189,7 +189,7 @@ namespace Stride.Editor.Thumbnails
 
                         // set the master output
                         var renderTarget = GraphicsContext.Allocator.GetTemporaryTexture2D(request.Size.X, request.Size.Y, request.ColorSpace == ColorSpace.Linear ? PixelFormat.R8G8B8A8_UNorm_SRgb : PixelFormat.R8G8B8A8_UNorm, TextureFlags.ShaderResource | TextureFlags.RenderTarget);
-                        var depthStencil = GraphicsContext.Allocator.GetTemporaryTexture2D(request.Size.X, request.Size.Y, PixelFormat.D24_UNorm_S8_UInt, TextureFlags.DepthStencil);
+                        var depthStencil = GraphicsContext.Allocator.GetTemporaryTexture2D(request.Size.X, request.Size.Y, PixelFormat.D32_Float_S8X24_UInt, TextureFlags.DepthStencil);
 
                         // A thumbnail is a frame: without End() the device never releases what a frame leaves behind
                         GraphicsDevice.Begin();

@@ -15,11 +15,13 @@ namespace Stride.Rendering.Images
         Texture2D<float2> TextureReduction;
 
 
-        float max_not_1(float left, float right)
+        // Depths are reversed: the closest fragment has the greatest value and the background sits at 0.
+        // The furthest reduction has to ignore the background, or it would always report it.
+        float min_not_background(float left, float right)
         {
-            if (left == 1.0f) return right;
-            if (right == 1.0f) return left;
-            return max(left, right);
+            if (left == 0.0f) return right;
+            if (right == 0.0f) return left;
+            return min(left, right);
         }
 
         stage override float4 Shading()
@@ -37,32 +39,32 @@ namespace Stride.Rendering.Images
                 values.w = TextureMap.Sample(PointSampler, streams.TexCoord, int2(-1, -1)).r;
 #endif
                 // TODO: do a simple sort for 4 values quicker than min/max
-                var minValue = min(min(values[0], values[1]), min(values[2], values[3]));
-                var maxValue = max_not_1(max_not_1(values[0], values[1]), max_not_1(values[2], values[3]));
+                var closest = max(max(values[0], values[1]), max(values[2], values[3]));
+                var furthest = min_not_background(min_not_background(values[0], values[1]), min_not_background(values[2], values[3]));
 
-                return float4(minValue, maxValue, 0, 0);
+                return float4(closest, furthest, 0, 0);
             }
             else
             {
-                float4 minValues, maxValues;
+                float4 closestValues, furthestValues;
 
 #if STRIDE_GRAPHICS_PROFILE >= GRAPHICS_PROFILE_LEVEL_11_0
-                minValues = TextureReduction.GatherRed(LinearSampler, streams.TexCoord);
-                maxValues = TextureReduction.GatherGreen(LinearSampler, streams.TexCoord);
+                closestValues = TextureReduction.GatherRed(LinearSampler, streams.TexCoord);
+                furthestValues = TextureReduction.GatherGreen(LinearSampler, streams.TexCoord);
 #else
                 float2 value0 = TextureReduction.Sample(PointSampler, streams.TexCoord, int2(-1, 0)).rg;
                 float2 value1 = TextureReduction.Sample(PointSampler, streams.TexCoord, int2(0, 0)).rg;
                 float2 value2 = TextureReduction.Sample(PointSampler, streams.TexCoord, int2(0, -1)).rg;
                 float2 value3 = TextureReduction.Sample(PointSampler, streams.TexCoord, int2(-1, -1)).rg;
-                minValues = float4(value0.r, value1.r, value2.r, value3.r);
-                maxValues = float4(value0.g, value1.g, value2.g, value3.g);
+                closestValues = float4(value0.r, value1.r, value2.r, value3.r);
+                furthestValues = float4(value0.g, value1.g, value2.g, value3.g);
 #endif
 
                 // TODO: do a simple sort for 4 values quicker than min/max
-                var minValue = min(min(minValues[0], minValues[1]), min(minValues[2], minValues[3]));
-                var maxValue = max_not_1(max_not_1(maxValues[0], maxValues[1]), max_not_1(maxValues[2], maxValues[3]));
+                var closest = max(max(closestValues[0], closestValues[1]), max(closestValues[2], closestValues[3]));
+                var furthest = min_not_background(min_not_background(furthestValues[0], furthestValues[1]), min_not_background(furthestValues[2], furthestValues[3]));
 
-                return float4(minValue, maxValue, 0, 0);
+                return float4(closest, furthest, 0, 0);
             }
         }
     };

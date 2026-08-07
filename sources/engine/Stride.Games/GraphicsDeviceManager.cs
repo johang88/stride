@@ -65,7 +65,7 @@ namespace Stride.Games
         private int                preferredBackBufferWidth        = DefaultBackBufferWidth;
         private int                preferredBackBufferHeight       = DefaultBackBufferHeight;
         private Rational           preferredRefreshRate            = 60;
-        private PixelFormat        preferredDepthStencilFormat     = PixelFormat.D24_UNorm_S8_UInt;
+        private PixelFormat        preferredDepthStencilFormat     = PixelFormat.D32_Float_S8X24_UInt;
         private MultisampleCount   preferredMultisampleCount       = MultisampleCount.None;
         private ColorSpace         preferredColorSpace             = ColorSpace.Linear;
         private bool               synchronizeWithVerticalRetrace  = true;

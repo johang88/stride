@@ -175,11 +175,15 @@ namespace Stride.Rendering.Materials
         /// <summary>
         /// The test used to figure out whether the material should be drawn when behind other models
         /// </summary>
+        /// <remarks>
+        /// Camera views are rendered with a reversed depth range, so the fragment nearest the camera is the one
+        /// with the greatest depth: <see cref="CompareFunction.Greater"/> is what draws in front of other models.
+        /// </remarks>
         /// <userdoc>The test used to figure out whether the material should be drawn when behind other models</userdoc>
         [Display("Depth Function", "Misc")]
         [DataMember(135)]
-        [DefaultValue(CompareFunction.Less)]
-        public CompareFunction DepthFunction { get; set; } = CompareFunction.Less;
+        [DefaultValue(CompareFunction.Greater)]
+        public CompareFunction DepthFunction { get; set; } = CompareFunction.Greater;
 
         /// <summary>
         /// Gets or sets the clear coat shading features for the material.
@@ -256,7 +260,7 @@ namespace Stride.Rendering.Materials
             }
 
             // Only set the DepthFunction when the pass is not overriden (Only based on assumptions from how CullMode operates, not exactly sure how/when this would be used) 
-            if (context.Step == MaterialGeneratorStep.GenerateShader && DepthFunction != CompareFunction.Less)
+            if (context.Step == MaterialGeneratorStep.GenerateShader && DepthFunction != CompareFunction.Greater)
             {
                 if (context.MaterialPass.DepthFunction == null)
                 {

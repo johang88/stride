@@ -27,12 +27,12 @@ namespace Stride.Rendering.Skyboxes
                 UseCustomProjectionMatrix = true,
                 UseCustomViewMatrix = true,
             };
-            Camera.ProjectionMatrix = Matrix.PerspectiveFovRH(MathUtil.DegreesToRadians(90.0f), 1.0f, Camera.NearClipPlane, Camera.FarClipPlane);
-            
+            Camera.ProjectionMatrix = Matrix.PerspectiveFovReverseRH(MathUtil.DegreesToRadians(90.0f), 1.0f, Camera.NearClipPlane, Camera.FarClipPlane);
+
             // We can't render directly to the texture cube before feature level 10.1, so let's render to a standard render target and copy instead
             renderTarget = Texture.New2D(device, OutputTextureSize, OutputTextureSize, outputFormat, TextureFlags.RenderTarget);
             if (needDepthStencil)
-                depthStencil = Texture.New2D(device, OutputTextureSize, OutputTextureSize, PixelFormat.D24_UNorm_S8_UInt, TextureFlags.DepthStencil);
+                depthStencil = Texture.New2D(device, OutputTextureSize, OutputTextureSize, Compositing.ForwardRenderer.DepthBufferFormat, TextureFlags.DepthStencil);
         }
 
         public virtual void Dispose()

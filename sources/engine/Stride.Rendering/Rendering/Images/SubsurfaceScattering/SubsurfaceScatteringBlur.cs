@@ -192,7 +192,7 @@ namespace Stride.Rendering.SubsurfaceScattering
         private void UpdateParameters(RenderDrawContext context, RenderView renderView)
         {
             // Compute the camera/view parameters:
-            Vector2 viewSpaceDepthReconstructionParameters = CameraKeys.ZProjectionACalculate(renderView.NearClipPlane, renderView.FarClipPlane);
+            Vector2 viewSpaceDepthReconstructionParameters = CameraKeys.ZProjectionACalculate(in renderView.Projection);
             SetValueParameterForBothShaders(CameraKeys.ZProjection, viewSpaceDepthReconstructionParameters);
             SetValueParameterForBothShaders(CameraKeys.NearClipPlane, renderView.NearClipPlane);
             SetValueParameterForBothShaders(CameraKeys.FarClipPlane, renderView.FarClipPlane);

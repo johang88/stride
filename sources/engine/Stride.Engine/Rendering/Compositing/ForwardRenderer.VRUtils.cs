@@ -52,7 +52,7 @@ namespace Stride.Rendering.Compositing
             // adjust proportionally the parameters (l, r, u, b are defined at near, so we use nears ratio):
             var nearsRatio = commonView.NearClipPlane / oldNear;
             // recreation from scratch:
-            Matrix.PerspectiveOffCenterRH(projectionLeftOfLeftEye * nearsRatio, projectionRightOfRightEye * nearsRatio, bottom * nearsRatio, top * nearsRatio, commonView.NearClipPlane, commonView.FarClipPlane, out commonView.Projection);
+            Matrix.PerspectiveOffCenterReverseRH(projectionLeftOfLeftEye * nearsRatio, projectionRightOfRightEye * nearsRatio, bottom * nearsRatio, top * nearsRatio, commonView.NearClipPlane, commonView.FarClipPlane, out commonView.Projection);
 
             // update the view projection:
             Matrix.Multiply(ref commonView.View, ref commonView.Projection, out commonView.ViewProjection);

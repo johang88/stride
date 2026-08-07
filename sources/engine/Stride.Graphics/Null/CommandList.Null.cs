@@ -300,7 +300,7 @@ namespace Stride.Graphics
         /// <param name="depth">The depth.</param>
         /// <param name="stencil">The stencil.</param>
         /// <exception cref="System.InvalidOperationException"></exception>
-        public void Clear(Texture depthStencilBuffer, DepthStencilClearOptions options, float depth = 1, byte stencil = 0)
+        public void Clear(Texture depthStencilBuffer, DepthStencilClearOptions options, float depth = 0, byte stencil = 0)
         {
             NullHelper.ToImplement();
         }

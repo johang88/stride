@@ -13,7 +13,6 @@ namespace Stride.Rendering
             if (renderNode.RenderStage == RenderStage)
             {
                 pipelineState.RasterizerState = RasterizerStates.Wireframe;
-                pipelineState.DepthStencilState.DepthBufferFunction = CompareFunction.GreaterEqual;
             }
         }
     }

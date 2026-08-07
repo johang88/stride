@@ -139,10 +139,11 @@ namespace Stride.Rendering.Images
 			[loop]
 			while (currSampleIndex < numSamples)
 			{
-				// Sample depth buffer and calculate depth diffrence
+				// Sample depth buffer and calculate depth diffrence.
+				// Depths are reversed, so the ray has passed behind the surface once it reads lower than it.
 				currSample = SampleZ(currOffset.xy);
-				depthDiff = currOffset.z - currSample;
-				
+				depthDiff = currSample - currOffset.z;
+
 				// Check intersection
 				if(depthDiff >= 0)
 				{
@@ -163,7 +164,7 @@ namespace Stride.Rendering.Images
 			}
 			
 			// Check if has valid result after ray traycing
-			if(currSampleIndex >= numSamples || currOffset.z > 0.999)
+			if(currSampleIndex >= numSamples || currOffset.z < 0.001)
 			{
 				// All samples done but no result
 				return 0;

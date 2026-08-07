@@ -378,7 +378,7 @@ namespace Stride.Rendering.Images
             coclinearDepthMapEffect.SetInput(0, originalDepthBuffer);
             coclinearDepthMapEffect.SetOutput(cocLinearDepthTexture);
             coclinearDepthMapEffect.Parameters.Set(CircleOfConfusionKeys.depthAreas, ref depthAreas);
-            coclinearDepthMapEffect.Parameters.Set(CameraKeys.ZProjection, CameraKeys.ZProjectionACalculate(renderView.NearClipPlane, renderView.FarClipPlane));
+            coclinearDepthMapEffect.Parameters.Set(CameraKeys.ZProjection, CameraKeys.ZProjectionACalculate(in renderView.Projection));
             coclinearDepthMapEffect.Draw(context, "CoC_LinearDepth");
 
             if (AutoFocus)

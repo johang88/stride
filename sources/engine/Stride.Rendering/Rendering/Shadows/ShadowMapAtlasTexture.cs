@@ -64,7 +64,8 @@ namespace Stride.Rendering.Shadows
             if (clearNeeded)
             {
                 // TODO GRAPHICS REFACTOR
-                commandList.Clear(Texture, DepthStencilClearOptions.DepthBuffer);
+                // Shadow maps keep the conventional depth range, so the far plane is at 1
+                commandList.Clear(Texture, DepthStencilClearOptions.DepthBuffer, depth: 1.0f);
                 clearNeeded = false;
             }
         }

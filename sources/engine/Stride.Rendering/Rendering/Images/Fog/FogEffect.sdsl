@@ -18,18 +18,23 @@ namespace Stride.Rendering.Images
         stage float3 FogColor = float3(1.0, 1.0, 1.0);
         stage Texture2D DepthTexture;
 
-        stage override float4 Shading() 
+        // Depths are reversed: the near plane sits at 1 and the far plane (the background) at 0
+        float LinearDepth(float depth)
+        {
+            return zNear * zFar / (depth * (zFar - zNear) + zNear);
+        }
+
+        stage override float4 Shading()
         {
             float4 color = Texture0.Sample(PointSampler, streams.TexCoord);
             float z_b = DepthTexture.SampleLevel(PointSampler, streams.TexCoord, 0.0).x;
-            
-            if (!skipBG || z_b < 1.0) {
-                float z_n = 2.0 * z_b - 1.0;
-                float dist = 2.0 * zNear * zFar / (zFar + zNear - z_n * (zFar - zNear));
+
+            if (!skipBG || z_b > 0.0) {
+                float dist = LinearDepth(z_b);
                 dist -= FogStart;
-            
+
                 float fogAmount = clamp(exp(dist * -Density), 0.0, 1.0);
-            
+
                 color.xyz = lerp(FogColor, color.xyz, fogAmount);
             }
 

@@ -381,7 +381,10 @@ namespace Stride.Rendering.Images
             Vector4 eye = inverseViewMatrix.Row4;
             float nearclip = renderView.NearClipPlane;
             float farclip = renderView.FarClipPlane;
-            Vector4 viewInfo = new Vector4(1.0f / projectionMatrix.M11, 1.0f / projectionMatrix.M22, farclip / (farclip - nearclip), (-farclip * nearclip) / (farclip - nearclip) / farclip);
+            // Read the depth retro-projection off the matrix, so it follows the view's (reversed) depth range.
+            // The shader wants the result normalized by the far plane, hence the extra division.
+            var zProjection = CameraKeys.ZProjectionACalculate(in projectionMatrix);
+            Vector4 viewInfo = new Vector4(1.0f / projectionMatrix.M11, 1.0f / projectionMatrix.M22, zProjection.X, zProjection.Y / farclip);
             Vector3 cameraPos = new Vector3(eye.X, eye.Y, eye.Z);
 
             float temporalTime = 0;
@@ -404,7 +407,7 @@ namespace Stride.Rendering.Images
             var roughnessFade = 1 - MathUtil.Clamp(GlossinessThreshold, 0.0f, 1.0f);
             var maxTraceSamples = MathUtil.Clamp(MaxSteps, 1, 128);
 
-            // ViewInfo :  x-1/Projection[0,0]   y-1/Projection[1,1]   z-(Far / (Far - Near)   w-(-Far * Near) / (Far - Near) / Far)
+            // ViewInfo :  x-1/Projection[0,0]   y-1/Projection[1,1]   zw-depth retro-projection factors, w scaled by 1/Far
 
             rayTracePassShader.Parameters.Set(SSLRCommonKeys.ViewFarPlane, farclip);
             rayTracePassShader.Parameters.Set(SSLRCommonKeys.RoughnessFade, roughnessFade);

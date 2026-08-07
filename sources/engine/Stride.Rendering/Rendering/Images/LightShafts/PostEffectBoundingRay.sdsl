@@ -33,26 +33,28 @@ shader PostEffectBoundingRay<int TSampleCount> : ImageEffectShader, DepthBase, T
 
     stage override void PSMain()
     {
-        // minmax.x = min
-        // minmax.y = max
-        float2 minmax = Texture0.Sample(PointSampler, streams.TexCoord).xy;
+        // Depths are reversed, so the entry point of the volume is the one with the greater value.
+        // volume.x = entry depth, volume.y = exit depth
+        float2 volume = Texture0.Sample(PointSampler, streams.TexCoord).xy;
 
-        float backsideMin = Texture1.Sample(PointSampler, 0.0f).x;
-        if(backsideMin < 1.0f)
-            minmax.x = 0.0f;
+        // Something of the volume sits behind the camera: the ray starts right at the near plane
+        float backsideEntry = Texture1.Sample(PointSampler, 0.0f).x;
+        if(backsideEntry > 0.0f)
+            volume.x = 1.0f;
 
-        // Need at least a maximum value for this pixel to be contained in the bounding box
-        if(minmax.y < 1.0f)
+        // Need an entry point in front of the far plane for this pixel to be contained in the bounding box
+        if(volume.x > 0.0f)
         {
             float currentZ = GetZProjDepthFromUV(streams.TexCoord);
-            float minZ = minmax.x;
-            float maxZ = min(minmax.y, currentZ);
-            
-            float minDistance = ComputeDepthFromZProj(minZ);
-            float maxDistance = ComputeDepthFromZProj(maxZ);
+            float entryZ = volume.x;
+            // Stop the ray at the closest opaque surface
+            float exitZ = max(volume.y, currentZ);
+
+            float minDistance = ComputeDepthFromZProj(entryZ);
+            float maxDistance = ComputeDepthFromZProj(exitZ);
 
             // Compute world space direction and position of the ending position
-            float4 positionClipSpace = float4((1.0f - streams.TexCoord.xy * 2.0f) * float2(-1.0f, 1.0f), maxZ, 1.0f);
+            float4 positionClipSpace = float4((1.0f - streams.TexCoord.xy * 2.0f) * float2(-1.0f, 1.0f), exitZ, 1.0f);
             float4 positionVS = mul(positionClipSpace, ProjectionInverse);
             positionVS.xyzw /= positionVS.w;
             float4 endingPosition = mul(positionVS, ViewInverse);
