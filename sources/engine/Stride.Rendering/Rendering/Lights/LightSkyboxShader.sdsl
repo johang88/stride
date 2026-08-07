@@ -35,11 +35,19 @@ namespace Stride.Rendering.Lights
 
             if (streams.subsurfaceLightingAmount > 0.0)
             {
-                const float viewDependantSplit = 0.5;
-                float3 subsurfaceLighting = streams.envLightDiffuseColor * viewDependantSplit;
-                subsurfaceLighting += lightDiffuseColor.Compute(-sampleDirection).rgb * Intensity * ambientAccessibility * streams.matDiffuseSpecularAlphaBlend.x * (1.0 - viewDependantSplit);
+                // Translucency is light reaching the surface through its back, so only the
+                // opposite hemisphere contributes. The previous version also added
+                // envLightDiffuseColor * 0.5 back in, which double counted the front hemisphere
+                // just accumulated above - on its own that inflated ambient by 1.5x at an amount
+                // of 1, before the back side was even considered.
+                float3 backLight = lightDiffuseColor.Compute(-sampleDirection).rgb * Intensity * ambientAccessibility * streams.matDiffuseSpecularAlphaBlend.x;
 
-                streams.envLightDiffuseColor += subsurfaceLighting * streams.subsurfaceLightingAmount;
+                // How much light actually gets through the surface is folded into
+                // subsurfaceLightingAmount by the shading model rather than carried as a separate
+                // per-channel stream. Adding a stream here changes the stream layout of every
+                // lit shader, which perturbs SPIR-V type emission order and trips a backend bug
+                // when atmosphere functions take Texture2D parameters - not worth a colour tint.
+                streams.envLightDiffuseColor += backLight * streams.subsurfaceLightingAmount;
             }
 
             // -----------------------------------------
