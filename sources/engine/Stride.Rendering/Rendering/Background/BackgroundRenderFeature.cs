@@ -75,6 +75,16 @@ namespace Stride.Rendering.Background
             spriteBatch = new SpriteBatch(RenderSystem.GraphicsDevice) { VirtualResolution = new Vector3(1) };
         }
 
+        /// <summary>
+        ///   Layer depth that places the background on the far plane.
+        /// </summary>
+        /// <remarks>
+        ///   The sprite batch projection maps a layer depth <c>d</c> to a clip depth of <c>0.5 - d</c>
+        ///   at the virtual resolution of 1 used here, so +0.5 is a clip depth of 0 -- the far plane
+        ///   under the reversed depth range camera views render with.
+        /// </remarks>
+        private const float BackgroundLayerDepth = 0.5f;
+
         private void Draw2D([NotNull] RenderDrawContext context, [NotNull] RenderBackground renderBackground)
         {
             var target = context.CommandList.RenderTarget;
@@ -115,7 +125,13 @@ namespace Stride.Rendering.Background
             }
 
             spriteBatch.Parameters.Set(BackgroundShaderKeys.Intensity, renderBackground.Intensity);
-            spriteBatch.Draw(texture, destination, source, Color.White, 0, Vector2.Zero, layerDepth: -0.5f);
+
+            // The sprite batch runs at a virtual resolution of 1, so its projection maps a layer
+            // depth d to a clip depth of 0.5 - d. Camera views render with a reversed depth range,
+            // where the far plane is 0, so the background belongs at a layer depth of +0.5. At the
+            // old -0.5 it lands at 1.0 -- the *near* plane -- and the GreaterEqual depth test then
+            // passes against every fragment in the scene, so the background paints over all of it.
+            spriteBatch.Draw(texture, destination, source, Color.White, 0, Vector2.Zero, layerDepth: BackgroundLayerDepth);
             spriteBatch.End();
         }
 
@@ -147,7 +163,7 @@ namespace Stride.Rendering.Background
             spriteBatch.Parameters.Set(SkyboxShaderBaseKeys.ViewInverse, Matrix.Invert(renderView.View));
             spriteBatch.Parameters.Set(SkyboxShaderBaseKeys.ProjectionInverse, Matrix.Invert(renderView.Projection));
             spriteBatch.Parameters.Set(SkyboxShaderBaseKeys.SkyMatrix, Matrix.Invert(Matrix.RotationQuaternion(renderBackground.Rotation)));
-            spriteBatch.Draw(texture, destination, null, Color.White, 0, Vector2.Zero, layerDepth: -0.5f);
+            spriteBatch.Draw(texture, destination, null, Color.White, 0, Vector2.Zero, layerDepth: BackgroundLayerDepth);
             spriteBatch.End();
         }
     }
