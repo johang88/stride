@@ -72,7 +72,8 @@ namespace Stride.Rendering
             if (ReferenceEquals(this, obj)) return true;
             var against = obj as ParameterKey;
             if (against == null) return false;
-            return (Equals(against.Name, Name));
+            // Keys with different names have different hashes: settle most comparisons without comparing the names
+            return against.HashCode == HashCode && Equals(against.Name, Name);
         }
 
         /// <summary>
@@ -96,7 +97,10 @@ namespace Stride.Rendering
         /// </returns>
         public static bool operator ==(ParameterKey left, ParameterKey right)
         {
-            return Equals(left, right);
+            // (hot: parameter collections look keys up by linear search)
+            if (ReferenceEquals(left, right)) return true;
+            if (left is null || right is null) return false;
+            return left.HashCode == right.HashCode && Equals(left.Name, right.Name);
         }
 
         /// <summary>
@@ -109,7 +113,7 @@ namespace Stride.Rendering
         /// </returns>
         public static bool operator !=(ParameterKey left, ParameterKey right)
         {
-            return !Equals(left, right);
+            return !(left == right);
         }
 
         //public abstract ParameterKey AppendKeyOverride(object obj);
