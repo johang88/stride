@@ -36,7 +36,7 @@ namespace Stride.Terrain
     [Display("Terrain", Expand = ExpandRule.Once)]
     [DefaultEntityComponentRenderer(typeof(TerrainProcessor))]
     [ComponentCategory("Terrain")]
-    [ComponentOrder(11000)]
+    [ComponentOrder(11005)]
     public sealed class TerrainComponent : ActivableEntityComponent
     {
         /// <summary>

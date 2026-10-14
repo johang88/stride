@@ -176,7 +176,8 @@ namespace Stride.Terrain
             var data = component.Terrain;
             renderObject.Data = data;
             renderObject.TerrainMaterial = data?.Material;
-            if (data == null)
+            // No samples: an empty placeholder of the asset while it's not loaded yet (editor)
+            if (data == null || data.Resolution < 2)
                 return;
 
             try

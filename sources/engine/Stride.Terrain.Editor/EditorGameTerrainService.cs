@@ -189,7 +189,7 @@ namespace Stride.Assets.Presentation.AssetEditors.TerrainEditor
         {
             return controller.InvokeAsync(() =>
             {
-                var camera = Services.Get<IEditorGameCameraService>();
+                var camera = game.EditorServices.Get<IEditorGameCameraService>();
                 if (camera?.Component == null)
                     return (Vector3.Zero, Vector3.UnitX);
                 var view = Matrix.Invert(camera.ViewMatrix);
@@ -337,7 +337,7 @@ namespace Stride.Assets.Presentation.AssetEditors.TerrainEditor
             }
 
             var input = game.Input;
-            var camera = Services.Get<IEditorGameCameraService>();
+            var camera = game.EditorServices.Get<IEditorGameCameraService>();
             if (camera?.Component == null)
                 return;
 
