@@ -1,0 +1,173 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Runtime virtual texture of the active terrain: page table lookup and sampling (bound per frame).
+    /// The page layout must match TerrainVirtualTexture.cs.
+    /// </summary>
+    shader TerrainVirtualTextureBase
+    {
+        struct TerrainVTSurface
+        {
+            float3 Albedo;
+            float3 NormalTS;
+            float Roughness;
+            float Occlusion;
+        };
+
+        rgroup PerFrame.TerrainVirtualTexture
+        {
+            // Per virtual page and mip: physical page x (bits 0-5), y (6-11) and the mip actually resident (12-15)
+            stage Texture2D<uint> TerrainVTPageTable;
+            // Physical pages: albedo (sRGB) and normal XY + roughness + occlusion
+            stage Texture2D TerrainVTAlbedo;
+            stage Texture2D TerrainVTNormal;
+            // Height field of the terrain (R16 normalized), to blend objects with the terrain
+            stage Texture2D<float> TerrainVTHeightmap;
+        }
+
+        cbuffer PerFrame.TerrainVirtualTexture
+        {
+            // xy = world XZ of the virtual texture origin, z = 1 / virtual world size, w = number of pages at mip 0
+            stage float4 TerrainVTRegion;
+            // x = physical page size (texels), y = border (texels), z = page content size (texels), w = 1 / atlas size
+            stage float4 TerrainVTAtlas;
+            // x = coarsest mip, y = mip bias, z = 1 if active, w = virtual size in texels at mip 0
+            stage float4 TerrainVTParams;
+            // x = min height, y = height range, z = 1 / cell size, w = number of height samples per side
+            stage float4 TerrainVTHeight;
+            // xyz = world position of the terrain origin, w = feedback mip offset (log2 of the feedback downscale)
+            stage float4 TerrainVTOrigin;
+        }
+
+        stage SamplerState TerrainVTSampler
+        {
+            Filter = ANISOTROPIC;
+            MaxAnisotropy = 8;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        stage SamplerState TerrainVTHeightSampler
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        bool TerrainVTIsActive()
+        {
+            return TerrainVTParams.z > 0.5;
+        }
+
+        float2 TerrainVTWorldToUV(float3 positionWS)
+        {
+            return (positionWS.xz - TerrainVTRegion.xy) * TerrainVTRegion.z;
+        }
+
+        // Desired (fractional) mip of the virtual texture from the screen derivatives of the virtual UV
+        float TerrainVTComputeMip(float2 dVuvDx, float2 dVuvDy)
+        {
+            float2 dx = dVuvDx * TerrainVTParams.w;
+            float2 dy = dVuvDy * TerrainVTParams.w;
+            float d = max(dot(dx, dx), dot(dy, dy));
+            return 0.5 * log2(max(d, 1e-10)) + TerrainVTParams.y;
+        }
+
+        // Height of the terrain (world) below a world position
+        float TerrainVTSampleHeight(float3 positionWS)
+        {
+            float2 localXZ = positionWS.xz - TerrainVTOrigin.xz;
+            float2 uv = (localXZ * TerrainVTHeight.z + 0.5) / TerrainVTHeight.w;
+            return TerrainVTOrigin.y + TerrainVTHeight.x + TerrainVTHeightmap.SampleLevel(TerrainVTHeightSampler, uv, 0) * TerrainVTHeight.y;
+        }
+
+        float3 TerrainVTSampleMacroNormal(float3 positionWS)
+        {
+            float2 localXZ = positionWS.xz - TerrainVTOrigin.xz;
+            float cellSize = 1.0 / TerrainVTHeight.z;
+            float invRes = 1.0 / TerrainVTHeight.w;
+            float2 uv = (localXZ * TerrainVTHeight.z + 0.5) * invRes;
+            float hl = TerrainVTHeightmap.SampleLevel(TerrainVTHeightSampler, uv - float2(invRes, 0), 0);
+            float hr = TerrainVTHeightmap.SampleLevel(TerrainVTHeightSampler, uv + float2(invRes, 0), 0);
+            float hd = TerrainVTHeightmap.SampleLevel(TerrainVTHeightSampler, uv - float2(0, invRes), 0);
+            float hu = TerrainVTHeightmap.SampleLevel(TerrainVTHeightSampler, uv + float2(0, invRes), 0);
+            return normalize(float3((hl - hr) * TerrainVTHeight.y, 2.0 * cellSize, (hd - hu) * TerrainVTHeight.y));
+        }
+
+        void TerrainVTSampleLevel(float2 vuv, float2 dVuvDx, float2 dVuvDy, int mip, out float4 albedo, out float4 normalRoughness)
+        {
+            uint pages = (uint)TerrainVTRegion.w;
+            uint pagesAtMip = max(pages >> (uint)mip, 1u);
+            int maxPage = (int)pagesAtMip - 1;
+            int2 page = clamp((int2)floor(vuv * (float)pagesAtMip), int2(0, 0), int2(maxPage, maxPage));
+            uint entry = TerrainVTPageTable.Load(int3(page, mip));
+
+            uint residentMip = entry >> 12;
+            float2 physicalPage = float2((float)(entry & 63), (float)((entry >> 6) & 63));
+            float pagesAtResident = (float)max(pages >> residentMip, 1u);
+            float2 scaled = vuv * pagesAtResident;
+            float2 inPage = saturate(scaled - floor(scaled));
+
+            float2 atlasTexel = physicalPage * TerrainVTAtlas.x + TerrainVTAtlas.y + inPage * TerrainVTAtlas.z;
+            float2 atlasUV = atlasTexel * TerrainVTAtlas.w;
+            float gradientScale = pagesAtResident * TerrainVTAtlas.z * TerrainVTAtlas.w;
+            albedo = TerrainVTAlbedo.SampleGrad(TerrainVTSampler, atlasUV, dVuvDx * gradientScale, dVuvDy * gradientScale);
+            normalRoughness = TerrainVTNormal.SampleGrad(TerrainVTSampler, atlasUV, dVuvDx * gradientScale, dVuvDy * gradientScale);
+        }
+
+        // Samples the virtual texture with trilinear filtering between the two closest mips
+        TerrainVTSurface TerrainVTSample(float2 vuv, float2 dVuvDx, float2 dVuvDy)
+        {
+            float mip = clamp(TerrainVTComputeMip(dVuvDx, dVuvDy), 0.0, TerrainVTParams.x);
+            float mip0 = floor(mip);
+            float mip1 = min(mip0 + 1.0, TerrainVTParams.x);
+            float blend = mip - mip0;
+
+            float4 albedo0 = float4(0, 0, 0, 0);
+            float4 normal0 = float4(0, 0, 0, 0);
+            float4 albedo1 = float4(0, 0, 0, 0);
+            float4 normal1 = float4(0, 0, 0, 0);
+            TerrainVTSampleLevel(vuv, dVuvDx, dVuvDy, (int)mip0, albedo0, normal0);
+            TerrainVTSampleLevel(vuv, dVuvDx, dVuvDy, (int)mip1, albedo1, normal1);
+            float4 albedo = lerp(albedo0, albedo1, blend);
+            float4 normalRoughness = lerp(normal0, normal1, blend);
+
+            TerrainVTSurface surface;
+            surface.Albedo = albedo.rgb;
+            float2 nxy = normalRoughness.xy * 2.0 - 1.0;
+            surface.NormalTS = float3(nxy, sqrt(saturate(1.0 - dot(nxy, nxy))));
+            surface.Roughness = normalRoughness.z;
+            surface.Occlusion = normalRoughness.w;
+            return surface;
+        }
+
+        // Feedback value requesting the page needed at a world position (RGBA8: x 12 bits, y 12 bits, mip + 1 in alpha)
+        float4 TerrainVTEncodeFeedback(float3 positionWS, float2 dVuvDx, float2 dVuvDy)
+        {
+            float2 vuv = TerrainVTWorldToUV(positionWS);
+            if (!TerrainVTIsActive() || any(vuv < 0.0) || any(vuv > 1.0))
+                return float4(0, 0, 0, 0);
+
+            // The feedback is rendered at a lower resolution: derivatives are larger by the downscale factor
+            float mip = clamp(floor(TerrainVTComputeMip(dVuvDx, dVuvDy) - TerrainVTOrigin.w), 0.0, TerrainVTParams.x);
+            uint pages = max((uint)TerrainVTRegion.w >> (uint)mip, 1u);
+            uint2 page = min((uint2)floor(vuv * (float)pages), uint2(pages - 1, pages - 1));
+            uint r = page.x & 255;
+            uint g = ((page.x >> 8) & 15) | ((page.y & 15) << 4);
+            uint b = (page.y >> 4) & 255;
+            uint a = (uint)mip + 1;
+            return float4((float)r, (float)g, (float)b, (float)a) / 255.0;
+        }
+
+        // Expresses a terrain tangent space normal around the macro (height field) normal
+        float3 TerrainVTTangentToWorld(float3 normalTS, float3 macroNormal)
+        {
+            float3 tangent = normalize(float3(1, 0, 0) - macroNormal * macroNormal.x);
+            float3 bitangent = cross(tangent, macroNormal);
+            return normalize(normalTS.x * tangent + normalTS.y * bitangent + normalTS.z * macroNormal);
+        }
+    };
+}

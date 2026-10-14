@@ -23,7 +23,7 @@ public sealed class RecastNavigationProcessor : EntityProcessor<RecastNavigation
 
     protected override void OnSystemAdd()
     {
-        ServicesHelper.LoadBepuServices(Services, out _, out _, out _);
+
         if (Services.GetService<RecastMeshSystem>() is { } recastMeshProcessor)
         {
             _recastMeshSystem = recastMeshProcessor;

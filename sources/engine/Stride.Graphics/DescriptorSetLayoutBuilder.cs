@@ -32,6 +32,16 @@ public class DescriptorSetLayoutBuilder
     /// </summary>
     public ObjectId Hash => hashBuilder.ComputeHash();
 
+    /// <summary>
+    ///   Gets the number of entries (bindings) in the layout.
+    /// </summary>
+    public int EntryCount => Entries.Count;
+
+    /// <summary>
+    ///   Gets the parameter key of an entry, e.g. to bind resources by key within a logical group.
+    /// </summary>
+    public ParameterKey GetEntryKey(int index) => Entries[index].Key;
+
 
     /// <summary>
     ///   Adds a binding to the Descriptor Set layout.

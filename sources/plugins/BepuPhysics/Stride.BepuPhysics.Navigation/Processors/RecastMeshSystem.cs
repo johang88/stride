@@ -346,143 +346,25 @@ public class RecastMeshSystem : GameSystemBase
 
     public static DtStatus FindFollowPath(DtNavMeshQuery navQuery, long startRef, long endRef, RcVec3f startPt, RcVec3f endPt, IDtQueryFilter filter, bool enableRaycast, ref List<long> polys, int pathIterPolyCount, ref List<Vector3> smoothPath, PathfindingSettings navSettings)
     {
-        if (startRef == 0 || endRef == 0)
-        {
-            polys.Clear();
-            smoothPath.Clear();
-
-            return DtStatus.DT_FAILURE;
-        }
-
         polys.Clear();
         smoothPath.Clear();
-        pathIterPolyCount = 0;
-
-        var opt = new DtFindPathOption(enableRaycast ? DtFindPathOptions.DT_FINDPATH_ANY_ANGLE : 0, float.MaxValue);
-        navQuery.FindPath(startRef, endRef, startPt, endPt, filter, ref polys, opt);
-        if (0 >= polys.Count)
+        if (startRef == 0 || endRef == 0)
             return DtStatus.DT_FAILURE;
 
-        pathIterPolyCount = polys.Count;
+        Span<long> path = stackalloc long[MaxPolys];
+        var status = navQuery.FindPath(startRef, endRef, startPt, endPt, filter, path, out var pathCount, MaxPolys);
+        if (status.Failed() || pathCount == 0)
+            return DtStatus.DT_FAILURE;
+        for (int i = 0; i < pathCount; i++)
+            polys.Add(path[i]);
 
-        // Iterate over the path to find smooth path on the detail mesh surface.
-        navQuery.ClosestPointOnPoly(startRef, startPt, out var iterPos, out _);
-        navQuery.ClosestPointOnPoly(polys[polys.Count - 1], endPt, out var targetPos, out _);
-
-        const float STEP_SIZE = 0.5f;
-        const float SLOP = 0.01f;
-
-        smoothPath.Clear();
-        smoothPath.Add(iterPos.ToStrideVector());
-
-        Span<long> visited = stackalloc long[navSettings.MaxAllowedVisitedTiles];
-        int nvisited = 0;
-
-        // Move towards target a small advancement at a time until target reached or
-        // when ran out of memory to store the path.
-        while (0 < polys.Count && smoothPath.Count < MaxSmooth)
-        {
-            // Find location to steer towards.
-            if (!DtPathUtils.GetSteerTarget(navQuery, iterPos, targetPos, SLOP,
-                    polys, polys.Count, out var steerPos, out var steerPosFlag, out var steerPosRef))
-            {
-                break;
-            }
-
-            bool endOfPath = (steerPosFlag & DtStraightPathFlags.DT_STRAIGHTPATH_END) != 0
-                ? true
-                : false;
-            bool offMeshConnection = (steerPosFlag & DtStraightPathFlags.DT_STRAIGHTPATH_OFFMESH_CONNECTION) != 0
-                ? true
-                : false;
-            // Find movement delta.
-            RcVec3f delta = RcVec3f.Subtract(steerPos, iterPos);
-            float len = MathF.Sqrt(RcVec3f.Dot(delta, delta));
-            // If the steer target is end of path or off-mesh link, do not move past the location.
-            if ((endOfPath || offMeshConnection) && len < STEP_SIZE)
-            {
-                len = 1;
-            }
-            else
-            {
-                len = STEP_SIZE / len;
-            }
-
-            RcVec3f moveTgt = RcVec.Mad(iterPos, delta, len);
-
-            // Move
-            navQuery.MoveAlongSurface(polys[0], iterPos, moveTgt, filter, out var result, visited, out nvisited, visited.Length);
-
-            iterPos = result;
-
-            pathIterPolyCount = DtPathUtils.MergeCorridorStartMoved(ref polys, pathIterPolyCount, MaxPolys, visited, nvisited);
-            pathIterPolyCount = DtPathUtils.FixupShortcuts(ref polys, pathIterPolyCount, navQuery);
-
-            var status = navQuery.GetPolyHeight(polys[0], result, out var h);
-            if (status.Succeeded())
-            {
-                iterPos.Y = h;
-            }
-
-            // Handle end of path and off-mesh links when close enough.
-            //if (endOfPath && DtPathUtils.InRange(iterPos, steerPos, SLOP, 1.0f))
-            //{
-            //	// Reached end of path.
-            //	iterPos = targetPos;
-            //	if (smoothPath.Count < MaxSmooth)
-            //	{
-            //		smoothPath.Add(iterPos.ToStrideVector());
-            //	}
-            //
-            //	break;
-            //}
-            //else if (offMeshConnection && DtPathUtils.InRange(iterPos, steerPos, SLOP, 1.0f))
-            //{
-            //	// Reached off-mesh connection.
-            //	RcVec3f startPos = RcVec3f.Zero;
-            //	RcVec3f endPos = RcVec3f.Zero;
-            //
-            //	// Advance the path up to and over the off-mesh connection.
-            //	long prevRef = 0;
-            //	long polyRef = polys[0];
-            //	int npos = 0;
-            //	while (npos < polys.Count && polyRef != steerPosRef)
-            //	{
-            //		prevRef = polyRef;
-            //		polyRef = polys[npos];
-            //		npos++;
-            //	}
-            //
-            //	polys = polys.GetRange(npos, polys.Count - npos);
-            //
-            //	// Handle the connection.
-            //	var status2 = navMesh.GetOffMeshConnectionPolyEndPoints(prevRef, polyRef, ref startPos, ref endPos);
-            //	if (status2.Succeeded())
-            //	{
-            //		if (smoothPath.Count < MaxSmooth)
-            //		{
-            //			smoothPath.Add(startPos.ToStrideVector());
-            //			// Hack to make the dotted path not visible during off-mesh connection.
-            //			if ((smoothPath.Count & 1) != 0)
-            //			{
-            //				smoothPath.Add(startPos.ToStrideVector());
-            //			}
-            //		}
-            //
-            //		// Move position at the other side of the off-mesh link.
-            //		iterPos = endPos;
-            //		navQuery.GetPolyHeight(polys[0], iterPos, out var eh);
-            //		iterPos.Y = eh;
-            //	}
-            //}
-
-            // Store results.
-            if (smoothPath.Count < MaxSmooth)
-            {
-                smoothPath.Add(iterPos.ToStrideVector());
-            }
-        }
-
+        navQuery.ClosestPointOnPoly(path[pathCount - 1], endPt, out var targetPos, out _);
+        Span<DtStraightPath> corners = stackalloc DtStraightPath[MaxPolys];
+        status = navQuery.FindStraightPath(startPt, targetPos, path, pathCount, corners, out var cornerCount, MaxPolys, 0);
+        if (status.Failed())
+            return status;
+        for (int i = 0; i < cornerCount; i++)
+            smoothPath.Add(corners[i].pos.ToStrideVector());
         return DtStatus.DT_SUCCESS;
     }
 

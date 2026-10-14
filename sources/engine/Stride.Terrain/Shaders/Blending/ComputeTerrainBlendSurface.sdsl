@@ -1,0 +1,20 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Glossiness (x) and ambient occlusion (y) of the terrain under the object.
+    /// </summary>
+    shader ComputeTerrainBlendSurface : ComputeColor, TerrainVirtualTextureBase, PositionStream4
+    {
+        override float4 Compute()
+        {
+            float2 vuv = TerrainVTWorldToUV(streams.PositionWS.xyz);
+            TerrainVTSurface surface = TerrainVTSample(vuv, ddx(vuv), ddy(vuv));
+            // Ground is never mirror-like (and a near-1 glossiness makes a sun highlight that blooms over the whole screen)
+            float gloss = clamp(1.0 - surface.Roughness, 0.0, 0.8);
+            return float4(gloss, surface.Occlusion, gloss, 1);
+        }
+    };
+}

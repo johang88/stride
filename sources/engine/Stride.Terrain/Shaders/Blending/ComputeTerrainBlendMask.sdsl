@@ -1,0 +1,51 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Blend mask of an object with the terrain below it: 1 where the object touches the ground, fading out over
+    /// <c>BlendHeight</c> meters above the terrain, favoring upward facing surfaces and broken up by noise.
+    /// </summary>
+    shader ComputeTerrainBlendMask<float BlendHeight, float Sharpness, float UpFacing, float NoiseAmount> : ComputeColor, TerrainVirtualTextureBase, PositionStream4, NormalStream
+    {
+        float Hash(float2 p)
+        {
+            return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+        }
+
+        float ValueNoise(float2 p)
+        {
+            float2 i = floor(p);
+            float2 f = frac(p);
+            float2 u = f * f * (3.0 - 2.0 * f);
+            return lerp(lerp(Hash(i), Hash(i + float2(1, 0)), u.x), lerp(Hash(i + float2(0, 1)), Hash(i + float2(1, 1)), u.x), u.y);
+        }
+
+        override float4 Compute()
+        {
+            float3 positionWS = streams.PositionWS.xyz;
+            float2 vuv = TerrainVTWorldToUV(positionWS);
+            if (!TerrainVTIsActive() || any(vuv < 0.0) || any(vuv > 1.0))
+                return float4(0, 0, 0, 0);
+
+            float heightAboveTerrain = positionWS.y - TerrainVTSampleHeight(positionWS);
+            // Noise moves the blend line up and down so it doesn't look like a cut
+            float noise = ValueNoise(positionWS.xz * 1.7 + positionWS.y * 0.9) * 0.65 + ValueNoise(positionWS.xz * 5.3) * 0.35;
+            float threshold = max(BlendHeight * (1.0 + (noise - 0.5) * 2.0 * NoiseAmount), 1e-3);
+            float mask = saturate(1.0 - heightAboveTerrain / threshold);
+            mask = pow(mask, max(Sharpness, 0.01));
+
+            // Upward facing surfaces collect more of the ground (dirt on top of rocks)
+            // (the interpolated mesh normal isn't always available at this point of the pixel shader: fall back to the geometric normal)
+            float3 meshNormal = streams.meshNormalWS;
+            float lengthSquared = dot(meshNormal, meshNormal);
+            float up = lengthSquared > 1e-8
+                ? saturate(meshNormal.y * rsqrt(lengthSquared))
+                : abs(normalize(cross(ddx(positionWS), ddy(positionWS))).y);
+            mask *= lerp(1.0, up, saturate(UpFacing));
+            mask = isfinite(mask) ? mask : 0.0;
+            return float4(mask, mask, mask, mask);
+        }
+    };
+}

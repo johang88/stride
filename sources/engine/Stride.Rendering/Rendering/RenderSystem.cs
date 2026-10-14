@@ -52,6 +52,11 @@ namespace Stride.Rendering
         public FastTrackingCollection<RenderStage> RenderStages { get; } = new FastTrackingCollection<RenderStage>();
 
         /// <summary>
+        /// Extensions called by scene renderers for each camera view they collect and draw (see <see cref="IRenderViewExtension"/>).
+        /// </summary>
+        public List<IRenderViewExtension> ViewExtensions { get; } = new List<IRenderViewExtension>();
+
+        /// <summary>
         /// Frame counter, mostly for internal use.
         /// </summary>
         public int FrameCounter { get; private set; } = 1;
@@ -610,15 +615,17 @@ namespace Stride.Rendering
         /// <param name="renderObject"></param>
         public void AddRenderObject(RenderObject renderObject)
         {
-            List<RootRenderFeature> renderFeatures;
-
-            if (renderFeaturesByType.TryGetValue(renderObject.GetType(), out renderFeatures))
+            // Render objects deriving from a supported type (e.g. a RenderMesh subclass) use the closest feature
+            for (var type = renderObject.GetType(); type != null && type != typeof(RenderObject); type = type.BaseType)
             {
+                if (!renderFeaturesByType.TryGetValue(type, out var renderFeatures))
+                    continue;
+
                 // Try each available compatible render feature
                 foreach (var renderFeature in renderFeatures)
                 {
                     if (renderFeature.TryAddRenderObject(renderObject))
-                        break;
+                        return;
                 }
             }
         }

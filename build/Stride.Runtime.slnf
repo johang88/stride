@@ -15,6 +15,7 @@
       "..\\sources\\engine\\Stride.Native\\Stride.Native.csproj",
       "..\\sources\\engine\\Stride.Rendering\\Stride.Rendering.csproj",
       "..\\sources\\engine\\Stride.VirtualReality\\Stride.VirtualReality.csproj",
+      "..\\sources\\engine\\Stride.Terrain\\Stride.Terrain.csproj",
       "..\\sources\\plugins\\Audio\\Stride.Audio\\Stride.Audio.csproj",
       "..\\sources\\plugins\\BulletPhysics\\Stride.Navigation\\Stride.Navigation.csproj",
       "..\\sources\\plugins\\BulletPhysics\\Stride.Physics\\Stride.Physics.csproj",

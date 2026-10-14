@@ -1,0 +1,25 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Normal of the terrain under the object, in the tangent space of the object (normal map, scaled and biased).
+    /// </summary>
+    shader ComputeTerrainBlendNormal : ComputeColor, TerrainVirtualTextureBase, PositionStream4, NormalStream
+    {
+        override float4 Compute()
+        {
+            float3 positionWS = streams.PositionWS.xyz;
+            float2 vuv = TerrainVTWorldToUV(positionWS);
+            TerrainVTSurface surface = TerrainVTSample(vuv, ddx(vuv), ddy(vuv));
+            float3 normalWS = TerrainVTTangentToWorld(surface.NormalTS, TerrainVTSampleMacroNormal(positionWS));
+            // tangentToWorld maps tangent space to world space (rows are the tangent frame): its transpose maps back
+            float3 normalTS = mul(streams.tangentToWorld, normalWS);
+            float lengthSquared = dot(normalTS, normalTS);
+            // Degenerate tangent frames (poles of a sphere, missing tangents) keep the flat normal
+            normalTS = lengthSquared > 1e-8 && all(isfinite(normalTS)) ? normalTS * rsqrt(lengthSquared) : float3(0, 0, 1);
+            return float4(normalTS * 0.5 + 0.5, 1);
+        }
+    };
+}

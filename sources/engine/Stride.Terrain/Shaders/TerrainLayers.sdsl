@@ -1,0 +1,262 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Decodes the terrain splat map and blends the material layers (height-based blending).
+    /// The splat layout must match TerrainSplat.cs.
+    /// </summary>
+    shader TerrainLayers : TerrainBase
+    {
+        struct TerrainSurface
+        {
+            float3 Albedo;
+            // Tangent space normal: X along +X local, Y along +Z local, Z up
+            float3 NormalTS;
+            float Roughness;
+            float Occlusion;
+        };
+
+        rgroup PerMaterial
+        {
+            // Albedo (sRGB) + height
+            stage Texture2DArray TerrainAlbedoHeightArray;
+            // Normal XY + roughness + occlusion
+            stage Texture2DArray TerrainNormalRoughnessArray;
+        }
+
+        cbuffer PerMaterial
+        {
+            // x = 1 / tile size, y = normal strength, z = height blend scale, w = height blend offset
+            stage float4 TerrainLayerParams[64];
+            // rgb = albedo tint, a = roughness scale
+            stage float4 TerrainLayerTints[64];
+            stage float TerrainHeightBlendSharpness;
+            // x = cliff layer (negative: none), y = slope where it starts, z = slope where it fully covers (slope = 1 - normal.y)
+            stage float4 TerrainCliffParams;
+        }
+
+        stage SamplerState TerrainLayerSampler
+        {
+            Filter = ANISOTROPIC;
+            MaxAnisotropy = 8;
+            AddressU = Wrap;
+            AddressV = Wrap;
+        };
+
+
+        // Value noise (0-1) used to break the splat grid
+        float TerrainHash(float2 p)
+        {
+            p = frac(p * float2(0.1031, 0.1030));
+            p += dot(p, p.yx + 33.33);
+            return frac((p.x + p.y) * p.x);
+        }
+
+        float TerrainValueNoise(float2 p)
+        {
+            float2 i = floor(p);
+            float2 f = frac(p);
+            float2 u = f * f * (3.0 - 2.0 * f);
+            return lerp(lerp(TerrainHash(i), TerrainHash(i + float2(1, 0)), u.x), lerp(TerrainHash(i + float2(0, 1)), TerrainHash(i + float2(1, 1)), u.x), u.y);
+        }
+
+        void TerrainAddLayer(uint layer, float weight, inout uint layers[12], inout float weights[12], inout int count)
+        {
+            if (weight > 0.0 && layer != 63)
+            {
+                bool found = false;
+                for (int i = 0; i < count; i++)
+                {
+                    if (layers[i] == layer)
+                    {
+                        weights[i] += weight;
+                        found = true;
+                    }
+                }
+                if (!found)
+                {
+                    layers[count] = layer;
+                    weights[count] = weight;
+                    count++;
+                }
+            }
+        }
+
+        void TerrainAddSplat(uint value, float scale, inout uint layers[12], inout float weights[12], inout int count)
+        {
+            float weightA = (float)((value >> 18) & 127);
+            float weightB = (float)((value >> 25) & 127);
+            float weightC = max(0.0, 127.0 - weightA - weightB);
+            float s = scale / 127.0;
+            TerrainAddLayer(value & 63, weightA * s, layers, weights, count);
+            TerrainAddLayer((value >> 6) & 63, weightB * s, layers, weights, count);
+            TerrainAddLayer((value >> 12) & 63, weightC * s, layers, weights, count);
+        }
+
+        // Samples and blends the layers at a local position.
+        // dLocalDx/dLocalDy are the local position derivatives used to filter the layer textures.
+        TerrainSurface TerrainSampleLayers(float2 localXZ, float2 dLocalDx, float2 dLocalDy)
+        {
+            uint layers[12];
+            float weights[12];
+            float4 albedoHeight[12];
+            float blendHeights[12];
+            for (int k = 0; k < 12; k++)
+            {
+                layers[k] = 0;
+                weights[k] = 0.0;
+                albedoHeight[k] = float4(0, 0, 0, 0);
+                blendHeights[k] = 0.0;
+            }
+            int count = 0;
+
+            // Bilinear interpolation of the splat samples (texel centers are on the samples), at a position warped by
+            // noise so that layer transitions don't follow the sample grid (stair steps along painted edges)
+            float2 warpCoordinates = localXZ / (TerrainCellSize * 3.0);
+            float2 warp = float2(TerrainValueNoise(warpCoordinates), TerrainValueNoise(warpCoordinates + float2(37.2, 11.7))) - 0.5;
+            warp += (float2(TerrainValueNoise(warpCoordinates * 3.1 + 5.3), TerrainValueNoise(warpCoordinates * 3.1 + float2(71.9, 2.1))) - 0.5) * 0.4;
+            float2 t = (localXZ + warp * TerrainCellSize * 1.6) / TerrainCellSize;
+            float2 cell = floor(t);
+            float2 f = t - cell;
+            int2 p = (int2)cell;
+            TerrainAddSplat(TerrainLoadSplat(p), (1.0 - f.x) * (1.0 - f.y), layers, weights, count);
+            TerrainAddSplat(TerrainLoadSplat(p + int2(1, 0)), f.x * (1.0 - f.y), layers, weights, count);
+            TerrainAddSplat(TerrainLoadSplat(p + int2(0, 1)), (1.0 - f.x) * f.y, layers, weights, count);
+            TerrainAddSplat(TerrainLoadSplat(p + int2(1, 1)), f.x * f.y, layers, weights, count);
+
+            if (count == 0)
+            {
+                layers[0] = 0;
+                weights[0] = 1.0;
+                count = 1;
+            }
+
+            // Height-based blending: layers compete with (weight + height), only those close to the highest one remain.
+            // A little per-layer noise keeps the borders irregular where layers have flat height maps.
+            float maxHeight = -1e9;
+            for (int i = 0; i < count; i++)
+            {
+                float4 layerParams = TerrainLayerParams[layers[i]];
+                float2 uv = localXZ * layerParams.x;
+                albedoHeight[i] = TerrainAlbedoHeightArray.SampleGrad(TerrainLayerSampler, float3(uv, (float)layers[i]), dLocalDx * layerParams.x, dLocalDy * layerParams.x);
+                float layerNoise = TerrainValueNoise(localXZ * 1.7 + (float)layers[i] * 17.31) - 0.5;
+                // The height map only competes where the layer is actually painted: a nearly absent layer with a strong
+                // height map would otherwise win right up to the line where its weight reaches zero (hard edges)
+                float presence = saturate(weights[i] * 3.0);
+                blendHeights[i] = weights[i] + (albedoHeight[i].a * layerParams.z + layerParams.w + layerNoise * 0.25) * presence;
+                maxHeight = max(maxHeight, blendHeights[i]);
+            }
+
+            float threshold = maxHeight - TerrainHeightBlendSharpness;
+            float3 albedo = 0;
+            float4 normalRoughness = 0;
+            float totalWeight = 0;
+            for (int j = 0; j < count; j++)
+            {
+                float w = max(blendHeights[j] - threshold, 0.0);
+                if (w > 0.0)
+                {
+                    float4 layerParams = TerrainLayerParams[layers[j]];
+                    float4 tint = TerrainLayerTints[layers[j]];
+                    float2 uv = localXZ * layerParams.x;
+                    float4 nr = TerrainNormalRoughnessArray.SampleGrad(TerrainLayerSampler, float3(uv, (float)layers[j]), dLocalDx * layerParams.x, dLocalDy * layerParams.x);
+                    nr.xy = (nr.xy * 2.0 - 1.0) * layerParams.y;
+                    nr.z *= tint.a;
+                    albedo += albedoHeight[j].rgb * tint.rgb * w;
+                    normalRoughness += nr * w;
+                    totalWeight += w;
+                }
+            }
+
+            float invTotal = 1.0 / max(totalWeight, 1e-5);
+            TerrainSurface surface;
+            surface.Albedo = albedo * invTotal;
+            normalRoughness *= invTotal;
+            float2 nxy = normalRoughness.xy;
+            surface.NormalTS = float3(nxy, sqrt(saturate(1.0 - dot(nxy, nxy))));
+            surface.Roughness = saturate(normalRoughness.z);
+            surface.Occlusion = saturate(normalRoughness.w);
+            return surface;
+        }
+
+        // Samples a layer with a planar projection (uv in meters) and returns albedo (rgb) and the tangent space normal (xy) + roughness + occlusion
+        void TerrainSampleProjected(uint layer, float2 uvMeters, float2 gradient, out float4 albedoHeight, out float4 normalRoughness)
+        {
+            float4 layerParams = TerrainLayerParams[layer];
+            float2 uv = uvMeters * layerParams.x;
+            float2 g = gradient * layerParams.x;
+            albedoHeight = TerrainAlbedoHeightArray.SampleGrad(TerrainLayerSampler, float3(uv, (float)layer), float2(g.x, 0), float2(0, g.y));
+            normalRoughness = TerrainNormalRoughnessArray.SampleGrad(TerrainLayerSampler, float3(uv, (float)layer), float2(g.x, 0), float2(0, g.y));
+            normalRoughness.xy = (normalRoughness.xy * 2.0 - 1.0) * layerParams.y;
+        }
+
+        // Covers steep slopes with the cliff layer, projected tri-planar so it doesn't stretch on cliffs.
+        // localPosition is the terrain local position (height included), macroNormal the height field normal.
+        TerrainSurface TerrainApplyCliff(TerrainSurface surface, float3 localPosition, float3 macroNormal, float2 dLocalDx, float2 dLocalDy)
+        {
+            if (TerrainCliffParams.x < 0.0)
+                return surface;
+            float coverage = smoothstep(TerrainCliffParams.y, max(TerrainCliffParams.z, TerrainCliffParams.y + 1e-3), 1.0 - macroNormal.y);
+            if (coverage <= 0.0)
+                return surface;
+
+            uint layer = (uint)TerrainCliffParams.x;
+            float4 tint = TerrainLayerTints[layer];
+            float3 blend = pow(abs(macroNormal), 4.0);
+            blend /= max(blend.x + blend.y + blend.z, 1e-5);
+
+            // Texture footprint: horizontal from the derivatives, vertical stretched by the slope
+            float horizontal = max(length(dLocalDx), length(dLocalDy));
+            float vertical = horizontal / max(macroNormal.y, 0.2);
+
+            float3 albedo = 0;
+            float4 normalRoughness = 0;
+            float3 normalLocal = macroNormal;
+            float4 a;
+            float4 n;
+            if (blend.x > 0.01)
+            {
+                TerrainSampleProjected(layer, localPosition.zy, float2(horizontal, vertical), a, n);
+                albedo += a.rgb * blend.x;
+                normalRoughness.zw += n.zw * blend.x;
+                normalLocal += float3(0, n.y, n.x) * blend.x;
+            }
+            if (blend.z > 0.01)
+            {
+                TerrainSampleProjected(layer, localPosition.xy, float2(horizontal, vertical), a, n);
+                albedo += a.rgb * blend.z;
+                normalRoughness.zw += n.zw * blend.z;
+                normalLocal += float3(n.x, n.y, 0) * blend.z;
+            }
+            if (blend.y > 0.01)
+            {
+                TerrainSampleProjected(layer, localPosition.xz, float2(horizontal, horizontal), a, n);
+                albedo += a.rgb * blend.y;
+                normalRoughness.zw += n.zw * blend.y;
+                normalLocal += float3(n.x, 0, n.y) * blend.y;
+            }
+            normalLocal = normalize(normalLocal);
+
+            // Back to the tangent space of the macro normal (as the layers are)
+            float3 tangent = normalize(float3(1, 0, 0) - macroNormal * macroNormal.x);
+            float3 bitangent = cross(tangent, macroNormal);
+            float3 cliffNormalTS = float3(dot(normalLocal, tangent), dot(normalLocal, bitangent), dot(normalLocal, macroNormal));
+
+            surface.Albedo = lerp(surface.Albedo, albedo * tint.rgb, coverage);
+            surface.NormalTS = normalize(lerp(surface.NormalTS, cliffNormalTS, coverage));
+            surface.Roughness = lerp(surface.Roughness, saturate(normalRoughness.z * tint.a), coverage);
+            surface.Occlusion = lerp(surface.Occlusion, saturate(normalRoughness.w), coverage);
+            return surface;
+        }
+
+        // Transforms a terrain tangent space normal to local space around the macro (height field) normal
+        float3 TerrainTangentToLocal(float3 normalTS, float3 macroNormal)
+        {
+            float3 tangent = normalize(float3(1, 0, 0) - macroNormal * macroNormal.x);
+            float3 bitangent = cross(tangent, macroNormal);
+            return normalize(normalTS.x * tangent + normalTS.y * bitangent + normalTS.z * macroNormal);
+        }
+    };
+}

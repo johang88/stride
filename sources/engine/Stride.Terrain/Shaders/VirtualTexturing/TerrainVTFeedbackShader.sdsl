@@ -1,0 +1,17 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Outputs the virtual texture page needed by each pixel (feedback pass).
+    /// </summary>
+    shader TerrainVTFeedbackShader : ShaderBase, TerrainVirtualTextureBase, PositionStream4
+    {
+        stage override void PSMain()
+        {
+            float2 vuv = TerrainVTWorldToUV(streams.PositionWS.xyz);
+            streams.ColorTarget = TerrainVTEncodeFeedback(streams.PositionWS.xyz, ddx(vuv), ddy(vuv));
+        }
+    };
+}

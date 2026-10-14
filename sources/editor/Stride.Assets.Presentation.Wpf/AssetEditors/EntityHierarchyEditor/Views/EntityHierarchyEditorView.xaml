@@ -492,6 +492,11 @@
         <Border Background="{StaticResource BackgroundBrush}" DockPanel.Dock="Top" Padding="8,2">
           <DockPanel>
             <WrapPanel HorizontalAlignment="Right" DockPanel.Dock="Right">
+              <!-- Terrain tools -->
+              <ToggleButton IsChecked="{Binding TerrainTools.IsActive}" IsEnabled="{Binding TerrainTools.IsAvailable}" Height="28" Padding="6,0" Background="Transparent"
+                            Content="{sd:Localize Terrain, Context=Button}"
+                            ToolTip="{sd:Localize Sculpt and paint terrains in the viewport, Context=ToolTip}" ToolTipService.ShowOnDisabled="True"/>
+              <Separator Background="{StaticResource ToggleButtonNormalBackground}"/>
               <!-- Grid -->
               <ToggleButton x:Name="ToggleGrid" Content="{sd:Image {StaticResource ImageGrid}, 16, 16, NearestNeighbor}"
                             ToolTip="{sd:Localize Viewport grid settings..., Context=ToolTip}" sd:ToolTipHelper.Status="{Binding Session.Editor.Status}" ToolTipService.ShowOnDisabled="True"
@@ -839,6 +844,54 @@
             <TextBlock Text="{Binding SelectedItemName}"/>
           </StatusBarItem>-->
         </StatusBar>
+        <!-- Terrain tools panel (beside the viewport: WPF can't draw over the game view) -->
+        <Border DockPanel.Dock="Left" Width="230" Background="{StaticResource BackgroundBrush}" BorderThickness="0,0,1,0" BorderBrush="{StaticResource NormalBrush}"
+                Visibility="{Binding TerrainTools.IsActive, Converter={sd:VisibleOrCollapsed}, FallbackValue=Collapsed}">
+          <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="8" DataContext="{Binding TerrainTools}">
+              <TextBlock Text="{sd:Localize Terrain tools}" FontWeight="Bold" Margin="0,0,0,4"/>
+              <TextBlock Text="{Binding TargetName, StringFormat=Target: {0}, TargetNullValue=No terrain in the scene}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+              <ListBox ItemsSource="{Binding Tools}" SelectedItem="{Binding Tool}" Margin="0,0,0,8">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding Converter={sd:EnumToDisplayName}}" Margin="2"/>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+              <TextBlock Text="{sd:Localize Radius (m)}"/>
+              <sd:NumericTextBox Value="{Binding Radius}" Minimum="0.5" Maximum="500" SmallChange="0.5" LargeChange="5" DecimalPlaces="2" Margin="0,2,0,6"/>
+              <TextBlock Text="{sd:Localize Strength}"/>
+              <sd:NumericTextBox Value="{Binding Strength}" Minimum="0" Maximum="1" SmallChange="0.05" LargeChange="0.1" DecimalPlaces="2" Margin="0,2,0,6"/>
+              <TextBlock Text="{sd:Localize Falloff}"/>
+              <sd:NumericTextBox Value="{Binding Falloff}" Minimum="0" Maximum="1" SmallChange="0.05" LargeChange="0.1" DecimalPlaces="2" Margin="0,2,0,6"/>
+              <StackPanel Visibility="{Binding IsFlattenTool, Converter={sd:VisibleOrCollapsed}}">
+                <TextBlock Text="{sd:Localize Target height (m)}"/>
+                <sd:NumericTextBox Value="{Binding FlattenHeight}" SmallChange="0.1" LargeChange="1" DecimalPlaces="2" Margin="0,2,0,6"/>
+              </StackPanel>
+              <StackPanel Visibility="{Binding IsNoiseTool, Converter={sd:VisibleOrCollapsed}}">
+                <TextBlock Text="{sd:Localize Noise feature size (m)}"/>
+                <sd:NumericTextBox Value="{Binding NoiseScale}" Minimum="0.1" SmallChange="0.5" LargeChange="5" DecimalPlaces="2" Margin="0,2,0,6"/>
+              </StackPanel>
+              <StackPanel Visibility="{Binding IsPaintTool, Converter={sd:VisibleOrCollapsed}}">
+                <TextBlock Text="{sd:Localize Layer}"/>
+                <ListBox ItemsSource="{Binding Layers}" SelectedItem="{Binding SelectedLayer}" DisplayMemberPath="DisplayName" MaxHeight="220" Margin="0,2,0,6"/>
+              </StackPanel>
+              <TextBlock Text="{Binding Hint}" TextWrapping="Wrap" Opacity="0.7" Margin="0,4,0,8"/>
+              <Button Content="{sd:Localize Import height map..., Context=Button}" Command="{Binding ImportHeightmapCommand}" Margin="0,2"/>
+              <Button Content="{sd:Localize Export height map..., Context=Button}" Command="{Binding ExportHeightmapCommand}" Margin="0,2"/>
+              <TextBlock Text="{sd:Localize Splines}" FontWeight="Bold" Margin="0,12,0,4"/>
+              <TextBlock Text="{sd:Localize 'Roads and rivers are entities with a terrain spline component; their child entities are the control points (X scale sets the width).'}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"/>
+              <UniformGrid Columns="2" Margin="0,0,0,2">
+                <Button Content="{sd:Localize New road, Context=Button}" Command="{Binding NewRoadCommand}" Margin="0,0,2,0"/>
+                <Button Content="{sd:Localize New river, Context=Button}" Command="{Binding NewRiverCommand}" Margin="2,0,0,0"/>
+              </UniformGrid>
+              <Button Content="{sd:Localize Snap spline points to terrain, Context=Button}" Command="{Binding SnapSplinePointsCommand}" Margin="0,2"
+                      ToolTip="{sd:Localize Moves the control points of the selected splines (or all of them when none is selected) onto the terrain surface}"/>
+              <Button Content="{sd:Localize Apply splines to terrain, Context=Button}" Command="{Binding ApplySplinesCommand}" Margin="0,2"
+                      ToolTip="{sd:Localize 'Flattens, carves and paints the terrain along the selected splines (or all of them when none is selected)'}"/>
+            </StackPanel>
+          </ScrollViewer>
+        </Border>
         <Grid Background="Transparent" Focusable="True" PreviewKeyDown="EditorPreviewKeyDown">
           <i:Interaction.Behaviors>
             <sd:FrameworkElementDragDropBehavior DragVisualTemplate="{StaticResource DragVisualTemplate}" CanDrag="False" />

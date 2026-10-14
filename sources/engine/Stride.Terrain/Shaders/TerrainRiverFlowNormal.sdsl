@@ -1,0 +1,35 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+/// <summary>
+/// Animated tangent space normal of flowing water, for the normal map of a river material on a terrain spline mesh
+/// (the texture V coordinate runs downstream, U across the river from 0 to 1).
+/// </summary>
+/// <remarks>
+/// Speed: flow speed in texture repetitions per second. WaveScale: number of waves per texture repetition.
+/// Strength: slope of the waves.
+/// </remarks>
+shader TerrainRiverFlowNormal<float Speed, float WaveScale, float Strength> : ComputeColor, Texturing
+{
+    override float4 Compute()
+    {
+        float2 uv = streams.TexCoord;
+        float time = Global.Time;
+        float2 p = float2(uv.x * 2.5, uv.y) * WaveScale;
+        float tau = 6.2831853;
+
+        // Height field: waves carried downstream at slightly different speeds and angles, distorted across the flow
+        float2 slope = 0;
+        float phase1 = (p.y - time * Speed) * tau + sin(p.x * 3.1 + time * 0.7) * 0.8;
+        slope += float2(0.15, 1.0) * cos(phase1) * 0.6;
+        float phase2 = (p.y * 1.7 + p.x * 0.6 - time * Speed * 1.3) * tau;
+        slope += float2(0.6, 1.7) * cos(phase2) * 0.25;
+        float phase3 = (p.y * 3.3 - p.x * 1.1 - time * Speed * 1.9) * tau;
+        slope += float2(-1.1, 3.3) * cos(phase3) * 0.1;
+        float phase4 = (p.x * 4.0 + p.y * 0.5 + time * 0.35) * tau;
+        slope += float2(4.0, 0.5) * cos(phase4) * 0.04;
+
+        float3 normal = normalize(float3(-slope * Strength / WaveScale, 1));
+        return float4(normal * 0.5 + 0.5, 1);
+    }
+};

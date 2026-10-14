@@ -1,0 +1,31 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Renders a physical page of the terrain virtual texture by blending the material layers.
+    /// Outputs albedo (target 0) and normal XY + roughness + occlusion (target 1).
+    /// </summary>
+    shader TerrainVTComposeShader : ImageEffectShader, TerrainLayers
+    {
+        cbuffer PerDraw
+        {
+            // xy = terrain local XZ of the first texel center of the physical page (border included), z = texel size (meters), w = page size in texels
+            stage float4 TerrainVTPage;
+        }
+
+        stage override void PSMain()
+        {
+            float2 texel = streams.TexCoord * TerrainVTPage.w;
+            float2 localXZ = TerrainVTPage.xy + (texel - 0.5) * TerrainVTPage.z;
+            float2 dx = float2(TerrainVTPage.z, 0.0);
+            float2 dy = float2(0.0, TerrainVTPage.z);
+
+            TerrainSurface surface = TerrainSampleLayers(localXZ, dx, dy);
+            surface = TerrainApplyCliff(surface, float3(localXZ.x, TerrainSampleHeight(localXZ), localXZ.y), TerrainSampleNormalLevel(localXZ, 0), dx, dy);
+            streams.ColorTarget = float4(surface.Albedo, 1.0);
+            streams.ColorTarget1 = float4(surface.NormalTS.xy * 0.5 + 0.5, surface.Roughness, surface.Occlusion);
+        }
+    };
+}

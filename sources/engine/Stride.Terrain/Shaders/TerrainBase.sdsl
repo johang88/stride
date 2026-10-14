@@ -1,0 +1,95 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Terrain height field parameters and sampling, in terrain local space (origin at the first sample, Y up).
+    /// </summary>
+    shader TerrainBase
+    {
+        // Terrain local position (XZ), passed from the vertex to the pixel stage
+        stage stream float2 TerrainLocalXZ;
+
+        rgroup PerMaterial
+        {
+            // R16_UNorm heights, one texel per sample (texel centers are on the samples), with mip maps
+            stage Texture2D<float> TerrainHeightmap;
+            // Packed splat samples (see TerrainSplat.cs), one texel per sample
+            stage Texture2D<uint> TerrainSplatMap;
+        }
+
+        cbuffer PerMaterial
+        {
+            // Distance between two samples
+            stage float TerrainCellSize;
+            // Number of samples along each side
+            stage float TerrainResolution;
+            stage float TerrainMinHeight;
+            stage float TerrainHeightRange;
+        }
+
+        stage SamplerState TerrainHeightSampler
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        float2 TerrainLocalToUV(float2 localXZ)
+        {
+            return (localXZ / TerrainCellSize + 0.5) / TerrainResolution;
+        }
+
+        uint TerrainLoadSplat(int2 samplePos)
+        {
+            int maxIndex = (int)TerrainResolution - 1;
+            return TerrainSplatMap.Load(int3(clamp(samplePos, int2(0, 0), int2(maxIndex, maxIndex)), 0));
+        }
+
+        // Weight (0-1) of the reserved hole layer (63) in a packed splat sample
+        float TerrainHoleWeight(uint value)
+        {
+            float weightA = (float)((value >> 18) & 127);
+            float weightB = (float)((value >> 25) & 127);
+            float weightC = max(0.0, 127.0 - weightA - weightB);
+            float hole = 0.0;
+            if ((value & 63) == 63) hole += weightA;
+            if (((value >> 6) & 63) == 63) hole += weightB;
+            if (((value >> 12) & 63) == 63) hole += weightC;
+            return hole / 127.0;
+        }
+
+        float TerrainSampleHeight(float2 localXZ)
+        {
+            return TerrainMinHeight + TerrainHeightmap.SampleLevel(TerrainHeightSampler, TerrainLocalToUV(localXZ), 0) * TerrainHeightRange;
+        }
+
+        float TerrainSampleHeightLevel(float2 localXZ, float mip)
+        {
+            return TerrainMinHeight + TerrainHeightmap.SampleLevel(TerrainHeightSampler, TerrainLocalToUV(localXZ), mip) * TerrainHeightRange;
+        }
+
+        // Normal from central differences, sampling the given mip with a matching step
+        float3 TerrainSampleNormalLevel(float2 localXZ, float mip)
+        {
+            float step = TerrainCellSize * exp2(mip);
+            float hl = TerrainSampleHeightLevel(localXZ - float2(step, 0), mip);
+            float hr = TerrainSampleHeightLevel(localXZ + float2(step, 0), mip);
+            float hd = TerrainSampleHeightLevel(localXZ - float2(0, step), mip);
+            float hu = TerrainSampleHeightLevel(localXZ + float2(0, step), mip);
+            return normalize(float3(hl - hr, 2.0 * step, hd - hu));
+        }
+
+        // Normal with a mip chosen from the screen footprint of the position (pixel shader only)
+        float3 TerrainSampleNormal(float2 localXZ, float2 dLocalDx, float2 dLocalDy)
+        {
+            float footprint = max(length(dLocalDx), length(dLocalDy)) / TerrainCellSize;
+            float mip = max(0.0, log2(max(footprint, 1e-6)));
+            float mip0 = floor(mip);
+            float3 n0 = TerrainSampleNormalLevel(localXZ, mip0);
+            float3 n1 = TerrainSampleNormalLevel(localXZ, mip0 + 1.0);
+            return normalize(lerp(n0, n1, mip - mip0));
+        }
+    };
+}

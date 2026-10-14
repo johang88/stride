@@ -292,6 +292,9 @@ namespace Stride.Rendering.Compositing
             {
                 context.RenderView.RenderStages.Add(GBufferRenderStage);
             }
+
+            foreach (var extension in context.RenderSystem.ViewExtensions)
+                extension.Collect(context);
         }
 
         protected override unsafe void CollectCore(RenderContext context)
@@ -494,6 +497,9 @@ namespace Stride.Rendering.Compositing
             var renderSystem = context.RenderSystem;
 
             PrepareVRConstantBuffer(context, eyeIndex, eyeCount);
+
+            foreach (var extension in renderSystem.ViewExtensions)
+                extension.Draw(context, drawContext);
 
             // Z Prepass
             var lightProbes = LightProbes && GBufferRenderStage != null;

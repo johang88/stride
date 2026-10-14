@@ -50,5 +50,11 @@ namespace Stride.Rendering
 
         // Will be used during draw call if not null
         public ProfilingKey ProfilingKey;
+
+        /// <summary>
+        /// Gets the number of instances to draw in a given view, for meshes whose instances depend on the view (e.g. terrain LOD selection).
+        /// </summary>
+        /// <returns><c>0</c> for a non-instanced draw, a negative value to skip the draw in this view.</returns>
+        public virtual int GetViewInstanceCount(RenderView renderView) => InstanceCount;
     }
 }

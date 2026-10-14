@@ -1,0 +1,10 @@
+!TemplateAssetFactory
+Id: 2B9D5F10-8C3E-4A6B-B7E1-5F0C2A9D8E64
+AssetTypeName: TerrainMaterialAsset
+Name: Terrain material
+Scope: Asset
+Description: The material layers (albedo, normal, roughness, height textures) a terrain is painted with
+Group: Terrain
+Order: 10
+DefaultOutputName: TerrainMaterial
+FactoryTypeName: TerrainMaterialAssetFactory

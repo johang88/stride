@@ -1,0 +1,10 @@
+!TemplateAssetFactory
+Id: 6A4E2C7D-3F1B-4E8A-9C52-1D7B0E9F4A31
+AssetTypeName: TerrainAsset
+Name: Terrain
+Scope: Asset
+Description: A height field terrain painted with the layers of a terrain material, edited with the terrain tools of the scene editor
+Group: Terrain
+Order: 0
+DefaultOutputName: Terrain
+FactoryTypeName: TerrainAssetFactory

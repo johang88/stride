@@ -1,0 +1,32 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Draws the editor brush on the terrain surface.
+    /// </summary>
+    shader TerrainBrushOverlay
+    {
+        cbuffer PerMaterial
+        {
+            // xy = center (local XZ), z = radius (0 = hidden), w = inner radius where the falloff starts
+            stage float4 TerrainBrush;
+            stage float4 TerrainBrushColor;
+        }
+
+        float3 TerrainApplyBrush(float3 albedo, float2 localXZ, float2 dLocalDx, float2 dLocalDy)
+        {
+            if (TerrainBrush.z <= 0.0)
+                return albedo;
+
+            float d = distance(localXZ, TerrainBrush.xy);
+            float pixel = max(length(dLocalDx), length(dLocalDy));
+            float outer = 1.0 - saturate(abs(d - TerrainBrush.z) / (pixel * 1.5));
+            float inner = TerrainBrush.w > 0.0 ? (1.0 - saturate(abs(d - TerrainBrush.w) / (pixel * 1.0))) * 0.5 : 0.0;
+            float fill = d < TerrainBrush.z ? 0.12 : 0.0;
+            float amount = saturate(max(max(outer, inner), fill)) * TerrainBrushColor.a;
+            return lerp(albedo, TerrainBrushColor.rgb, amount);
+        }
+    };
+}

@@ -813,6 +813,14 @@ namespace Stride.Core.Assets.Editor.ViewModel
         public void PrepareSave(ILogger logger)
         {
             PropertyGraph?.PrepareForSave(logger, assetItem);
+            OnPrepareSave(logger);
+        }
+
+        /// <summary>
+        /// Called (from a worker thread) when the session is about to be saved, e.g. to write data an asset keeps outside of its file.
+        /// </summary>
+        protected virtual void OnPrepareSave(ILogger logger)
+        {
         }
     }
 }

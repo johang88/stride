@@ -10,6 +10,7 @@ using Stride.Core.Reflection;
 [assembly: InternalsVisibleTo("Stride.BepuPhysics.Navigation")]
 [assembly: InternalsVisibleTo("Stride.BepuPhysics.Soft")]
 [assembly: InternalsVisibleTo("Stride.BepuPhysics.Tests")]
+[assembly: InternalsVisibleTo("Stride.Terrain")]
 
 namespace Stride.BepuPhysics;
 

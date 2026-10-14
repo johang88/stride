@@ -1,0 +1,74 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Material vertex stage of the terrain: places the grid patch vertex of the current CDLOD node on the height field,
+    /// morphing towards the next coarser level with distance.
+    /// </summary>
+    shader TerrainMaterialVertex : IMaterialSurfaceVertex, TerrainBase, ShaderBaseStream
+    {
+        rgroup PerDraw.Terrain
+        {
+            // Selected nodes of all views: (x, z, size, level) in terrain local space
+            stage StructuredBuffer<float4> TerrainNodes;
+        }
+
+        cbuffer PerDraw.Terrain
+        {
+            // xyz = LOD origin in terrain local space, w = offset of this view's first node in TerrainNodes
+            stage float4 TerrainLodOrigin;
+        }
+
+        cbuffer PerMaterial
+        {
+            // Number of quads along each side of the grid patch
+            stage float TerrainPatchQuads;
+            // Per level: x = morph start distance, y = 1 / (morph end - morph start), z = node size
+            stage float4 TerrainMorph[16];
+        }
+
+        override void Compute()
+        {
+            float4 node = TerrainNodes[streams.InstanceID + (uint)TerrainLodOrigin.w];
+            int level = (int)node.w;
+            float quads = TerrainPatchQuads;
+
+            // Patch vertices are on a [0, 1] grid in XZ
+            float2 grid = round(streams.Position.xz * quads);
+            float2 localXZ = node.xy + grid * (node.z / quads);
+
+            float height = TerrainSampleHeight(localXZ);
+            float distanceToOrigin = distance(float3(localXZ.x, height, localXZ.y), TerrainLodOrigin.xyz);
+            float4 morph = TerrainMorph[level];
+            float morphFactor = saturate((distanceToOrigin - morph.x) * morph.y);
+
+            // Odd vertices slide onto the coarser grid
+            float2 odd = frac(grid * 0.5) * 2.0;
+            grid -= odd * morphFactor;
+            localXZ = node.xy + grid * (node.z / quads);
+
+            // Clamp to the terrain (the last row of nodes reaches exactly the border)
+            float terrainSize = (TerrainResolution - 1.0) * TerrainCellSize;
+            localXZ = clamp(localXZ, 0.0, terrainSize);
+            height = TerrainSampleHeight(localXZ);
+
+            float mip = (float)level;
+            streams.meshNormal = TerrainSampleNormalLevel(localXZ, mip);
+            streams.TerrainLocalXZ = localXZ;
+
+            float4 position = float4(localXZ.x, height, localXZ.y, 1.0);
+
+            // Vertices in holes are made invalid so the rasterizer drops their triangles
+            int2 samplePos = (int2)round(localXZ / TerrainCellSize);
+            if (TerrainHoleWeight(TerrainLoadSplat(samplePos)) > 0.5)
+            {
+                float nanValue = asfloat(2143289344);
+                position = float4(nanValue, nanValue, nanValue, nanValue);
+            }
+
+            streams.Position = position;
+        }
+    };
+}

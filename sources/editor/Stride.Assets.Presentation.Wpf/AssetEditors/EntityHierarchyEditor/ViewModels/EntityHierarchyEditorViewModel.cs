@@ -65,6 +65,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewMode
             Overlays = new EditorOverlaysViewModel(ServiceProvider, Controller);
             Lighting = new EditorLightingViewModel(ServiceProvider, Controller, this);
             Rendering = new EditorRenderingViewModel(ServiceProvider, Controller);
+            TerrainTools = new TerrainEditor.TerrainToolsViewModel(ServiceProvider, Controller, this);
             EntityGizmos = new EntityGizmosViewModel(ServiceProvider, Controller);
             CreateEntityCommand = new AnonymousTaskCommand<IEntityFactory>(ServiceProvider, x => CreateEntity(true, x, ActiveRoot ?? HierarchyRoot));
             CreateEntityInRootCommand = new AnonymousTaskCommand<IEntityFactory>(ServiceProvider, x => CreateEntity(false, x, ActiveRoot ?? HierarchyRoot));
@@ -119,6 +120,8 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewMode
 
         [NotNull]
         public EditorLightingViewModel Lighting { get; }
+
+        public TerrainEditor.TerrainToolsViewModel TerrainTools { get; }
 
         [NotNull]
         public EntityGizmosViewModel EntityGizmos { get; }
@@ -179,6 +182,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewMode
 
             // Unregister editor view models
             Overlays.Destroy();
+            TerrainTools.Destroy();
 
             base.Destroy();
         }

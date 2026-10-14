@@ -199,6 +199,10 @@ namespace Stride.Rendering
                 if (renderEffect.Effect == null)
                     continue;
 
+                var instanceCount = renderMesh.GetViewInstanceCount(renderView);
+                if (instanceCount < 0)
+                    continue;
+
                 var drawData = GetDrawData(renderMesh, renderEffect);
 
                 // Bind VB
@@ -246,8 +250,8 @@ namespace Stride.Rendering
                 {
                     if (renderMesh.IndirectBuffer != null)
                         commandList.DrawInstanced(renderMesh.IndirectBuffer);
-                    else if (renderMesh.InstanceCount > 0)
-                        commandList.DrawInstanced(drawData.DrawCount, renderMesh.InstanceCount, drawData.StartLocation);
+                    else if (instanceCount > 0)
+                        commandList.DrawInstanced(drawData.DrawCount, instanceCount, drawData.StartLocation);
                     else
                         commandList.Draw(drawData.DrawCount, drawData.StartLocation);
                 }
@@ -255,8 +259,8 @@ namespace Stride.Rendering
                 {
                     if (renderMesh.IndirectBuffer != null)
                         commandList.DrawIndexedInstanced(renderMesh.IndirectBuffer);
-                    else if (renderMesh.InstanceCount > 0)
-                        commandList.DrawIndexedInstanced(drawData.DrawCount, renderMesh.InstanceCount, drawData.StartLocation);
+                    else if (instanceCount > 0)
+                        commandList.DrawIndexedInstanced(drawData.DrawCount, instanceCount, drawData.StartLocation);
                     else
                         commandList.DrawIndexed(drawData.DrawCount, drawData.StartLocation);
                 }

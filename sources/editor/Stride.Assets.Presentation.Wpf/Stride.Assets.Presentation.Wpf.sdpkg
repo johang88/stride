@@ -22,6 +22,8 @@ TemplateFolders:
         - !file Templates/Assets/Misc/DefaultGraphicsCompositorLevel10.sdtpl
         - !file Templates/Assets/Misc/DefaultGraphicsCompositorLevel9.sdtpl
         - !file Templates/Assets/Misc/DefaultRawAsset.sdtpl
+        - !file Templates/Assets/Terrain/Terrain.sdtpl
+        - !file Templates/Assets/Terrain/TerrainMaterial.sdtpl
         - !file Templates/Assets/Misc/DefaultSkybox.sdtpl
         - !file Templates/Assets/Models/DefaultModel.sdtpl
         - !file Templates/Assets/Models/PrefabModel.sdtpl
