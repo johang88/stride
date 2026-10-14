@@ -41,6 +41,7 @@ namespace Stride.Terrain.Rendering
         {
             var layerParams = new Vector4[TerrainSplat.MaxLayers];
             var layerTints = new Vector4[TerrainSplat.MaxLayers];
+            var layerVariations = new Vector4[TerrainSplat.MaxLayers];
             for (int i = 0; i < layerParams.Length; i++)
             {
                 var layer = material != null && i < material.Layers.Count ? material.Layers[i] : null;
@@ -52,13 +53,16 @@ namespace Stride.Terrain.Rendering
                 }
                 layerParams[i] = new Vector4(1.0f / Math.Max(layer.TileSize, 0.01f), layer.NormalStrength, layer.HeightBlendScale, layer.HeightBlendOffset);
                 layerTints[i] = new Vector4(layer.Tint.R, layer.Tint.G, layer.Tint.B, layer.RoughnessScale);
+                layerVariations[i] = new Vector4(Math.Clamp(layer.TilingVariation, 0, 1), 0, 0, 0);
             }
 
             parameters.Set(TerrainLayersKeys.TerrainLayerParams, layerParams);
             parameters.Set(TerrainLayersKeys.TerrainLayerTints, layerTints);
+            parameters.Set(TerrainLayersKeys.TerrainLayerVariations, layerVariations);
             parameters.Set(TerrainLayersKeys.TerrainHeightBlendSharpness, Math.Max(material?.HeightBlendSharpness ?? 0.2f, 1e-3f));
             var cliffLayer = material != null && material.CliffLayer >= 0 && material.CliffLayer < material.Layers.Count ? material.CliffLayer : -1;
             parameters.Set(TerrainLayersKeys.TerrainCliffParams, new Vector4(cliffLayer, material?.CliffSlopeStart ?? 0.35f, material?.CliffSlopeEnd ?? 0.5f, 0));
+            parameters.Set(TerrainLayersKeys.TerrainParallax, new Vector4(material?.ParallaxDepth ?? 0, Math.Max(material?.ParallaxFadeDistance ?? 40, 1), 0, 0));
 
             var fallback = Fallbacks.GetValue(device, d => new FallbackTextures(d));
             parameters.Set(TerrainLayersKeys.TerrainAlbedoHeightArray, material?.AlbedoHeightArray ?? fallback.AlbedoHeight);

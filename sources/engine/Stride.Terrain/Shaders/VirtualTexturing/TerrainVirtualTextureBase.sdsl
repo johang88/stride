@@ -15,13 +15,15 @@ namespace Stride.Terrain
             float3 NormalTS;
             float Roughness;
             float Occlusion;
+            // Blended layer height (0-1)
+            float Height;
         };
 
         rgroup PerFrame.TerrainVirtualTexture
         {
             // Per virtual page and mip: physical page x (bits 0-5), y (6-11) and the mip actually resident (12-15)
             stage Texture2D<uint> TerrainVTPageTable;
-            // Physical pages: albedo (sRGB) and normal XY + roughness + occlusion
+            // Physical pages: albedo (sRGB) + blended layer height, and normal XY + roughness + occlusion
             stage Texture2D TerrainVTAlbedo;
             stage Texture2D TerrainVTNormal;
             // Height field of the terrain (R16 normalized), to blend objects with the terrain
@@ -97,7 +99,9 @@ namespace Stride.Terrain
             return normalize(float3((hl - hr) * TerrainVTHeight.y, 2.0 * cellSize, (hd - hu) * TerrainVTHeight.y));
         }
 
-        void TerrainVTSampleLevel(float2 vuv, float2 dVuvDx, float2 dVuvDy, int mip, out float4 albedo, out float4 normalRoughness)
+        // Atlas UV of a virtual UV at a mip (uses the coarser resident page when that mip isn't loaded); gradientScale converts
+        // virtual UV derivatives to atlas UV derivatives
+        float2 TerrainVTAtlasUV(float2 vuv, int mip, out float gradientScale)
         {
             uint pages = (uint)TerrainVTRegion.w;
             uint pagesAtMip = max(pages >> (uint)mip, 1u);
@@ -110,10 +114,22 @@ namespace Stride.Terrain
             float pagesAtResident = (float)max(pages >> residentMip, 1u);
             float2 scaled = vuv * pagesAtResident;
             float2 inPage = saturate(scaled - floor(scaled));
+            gradientScale = pagesAtResident * TerrainVTAtlas.z * TerrainVTAtlas.w;
+            return (physicalPage * TerrainVTAtlas.x + TerrainVTAtlas.y + inPage * TerrainVTAtlas.z) * TerrainVTAtlas.w;
+        }
 
-            float2 atlasTexel = physicalPage * TerrainVTAtlas.x + TerrainVTAtlas.y + inPage * TerrainVTAtlas.z;
-            float2 atlasUV = atlasTexel * TerrainVTAtlas.w;
-            float gradientScale = pagesAtResident * TerrainVTAtlas.z * TerrainVTAtlas.w;
+        // Blended layer height (0-1) at a mip
+        float TerrainVTSampleHeightLevel(float2 vuv, float2 dVuvDx, float2 dVuvDy, int mip)
+        {
+            float gradientScale;
+            float2 atlasUV = TerrainVTAtlasUV(vuv, mip, gradientScale);
+            return TerrainVTAlbedo.SampleGrad(TerrainVTSampler, atlasUV, dVuvDx * gradientScale, dVuvDy * gradientScale).a;
+        }
+
+        void TerrainVTSampleLevel(float2 vuv, float2 dVuvDx, float2 dVuvDy, int mip, out float4 albedo, out float4 normalRoughness)
+        {
+            float gradientScale;
+            float2 atlasUV = TerrainVTAtlasUV(vuv, mip, gradientScale);
             albedo = TerrainVTAlbedo.SampleGrad(TerrainVTSampler, atlasUV, dVuvDx * gradientScale, dVuvDy * gradientScale);
             normalRoughness = TerrainVTNormal.SampleGrad(TerrainVTSampler, atlasUV, dVuvDx * gradientScale, dVuvDy * gradientScale);
         }
@@ -141,6 +157,7 @@ namespace Stride.Terrain
             surface.NormalTS = float3(nxy, sqrt(saturate(1.0 - dot(nxy, nxy))));
             surface.Roughness = normalRoughness.z;
             surface.Occlusion = normalRoughness.w;
+            surface.Height = albedo.a;
             return surface;
         }
 

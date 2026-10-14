@@ -16,6 +16,8 @@ namespace Stride.Terrain
             float3 NormalTS;
             float Roughness;
             float Occlusion;
+            // Blended height map value (0-1), used for parallax occlusion mapping
+            float Height;
         };
 
         rgroup PerMaterial
@@ -32,9 +34,13 @@ namespace Stride.Terrain
             stage float4 TerrainLayerParams[64];
             // rgb = albedo tint, a = roughness scale
             stage float4 TerrainLayerTints[64];
+            // x = tiling variation amount
+            stage float4 TerrainLayerVariations[64];
             stage float TerrainHeightBlendSharpness;
             // x = cliff layer (negative: none), y = slope where it starts, z = slope where it fully covers (slope = 1 - normal.y)
             stage float4 TerrainCliffParams;
+            // x = parallax depth (meters, 0: off), y = distance over which it fades out (meters)
+            stage float4 TerrainParallax;
         }
 
         stage SamplerState TerrainLayerSampler
@@ -60,6 +66,54 @@ namespace Stride.Terrain
             float2 f = frac(p);
             float2 u = f * f * (3.0 - 2.0 * f);
             return lerp(lerp(TerrainHash(i), TerrainHash(i + float2(1, 0)), u.x), lerp(TerrainHash(i + float2(0, 1)), TerrainHash(i + float2(1, 1)), u.x), u.y);
+        }
+
+        // Mix factor of the variation sample of a layer: always partly present (no visible period), varying in patches of a few meters
+        float TerrainVariationMix(uint layer, float2 localXZ)
+        {
+            float n = TerrainValueNoise(localXZ * 0.11 + (float)layer * 7.13) * 0.65 + TerrainValueNoise(localXZ * 0.37 + (float)layer * 3.71) * 0.35;
+            return TerrainLayerVariations[layer].x * lerp(0.35, 1.0, smoothstep(0.3, 0.7, n));
+        }
+
+        // Variation sample coordinates: rotated by about 37 degrees and scaled by 0.61 (matches TerrainVariationNormal)
+        float2 TerrainVariationUV(float2 uv)
+        {
+            return float2(uv.x * 0.8 - uv.y * 0.6, uv.x * 0.6 + uv.y * 0.8) * 0.61 + float2(0.37, 0.71);
+        }
+
+        float2 TerrainVariationGradient(float2 d)
+        {
+            return float2(d.x * 0.8 - d.y * 0.6, d.x * 0.6 + d.y * 0.8) * 0.61;
+        }
+
+        // Rotates a variation sample normal (xy) back to the layer tangent space
+        float2 TerrainVariationNormal(float2 n)
+        {
+            return float2(n.x * 0.8 + n.y * 0.6, -n.x * 0.6 + n.y * 0.8);
+        }
+
+        float4 TerrainSampleAlbedoHeight(uint layer, float2 uv, float2 dUvDx, float2 dUvDy, float amount)
+        {
+            float4 value = TerrainAlbedoHeightArray.SampleGrad(TerrainLayerSampler, float3(uv, (float)layer), dUvDx, dUvDy);
+            if (amount > 0.001)
+            {
+                float4 variation = TerrainAlbedoHeightArray.SampleGrad(TerrainLayerSampler, float3(TerrainVariationUV(uv), (float)layer), TerrainVariationGradient(dUvDx), TerrainVariationGradient(dUvDy));
+                value = lerp(value, variation, amount);
+            }
+            return value;
+        }
+
+        float4 TerrainSampleNormalRoughness(uint layer, float2 uv, float2 dUvDx, float2 dUvDy, float amount)
+        {
+            float4 value = TerrainNormalRoughnessArray.SampleGrad(TerrainLayerSampler, float3(uv, (float)layer), dUvDx, dUvDy);
+            value.xy = value.xy * 2.0 - 1.0;
+            if (amount > 0.001)
+            {
+                float4 variation = TerrainNormalRoughnessArray.SampleGrad(TerrainLayerSampler, float3(TerrainVariationUV(uv), (float)layer), TerrainVariationGradient(dUvDx), TerrainVariationGradient(dUvDy));
+                variation.xy = TerrainVariationNormal(variation.xy * 2.0 - 1.0);
+                value = lerp(value, variation, amount);
+            }
+            return value;
         }
 
         void TerrainAddLayer(uint layer, float weight, inout uint layers[12], inout float weights[12], inout int count)
@@ -103,8 +157,10 @@ namespace Stride.Terrain
             float weights[12];
             float4 albedoHeight[12];
             float blendHeights[12];
+            float variationMix[12];
             for (int k = 0; k < 12; k++)
             {
+                variationMix[k] = 0.0;
                 layers[k] = 0;
                 weights[k] = 0.0;
                 albedoHeight[k] = float4(0, 0, 0, 0);
@@ -140,7 +196,8 @@ namespace Stride.Terrain
             {
                 float4 layerParams = TerrainLayerParams[layers[i]];
                 float2 uv = localXZ * layerParams.x;
-                albedoHeight[i] = TerrainAlbedoHeightArray.SampleGrad(TerrainLayerSampler, float3(uv, (float)layers[i]), dLocalDx * layerParams.x, dLocalDy * layerParams.x);
+                variationMix[i] = TerrainVariationMix(layers[i], localXZ);
+                albedoHeight[i] = TerrainSampleAlbedoHeight(layers[i], uv, dLocalDx * layerParams.x, dLocalDy * layerParams.x, variationMix[i]);
                 float layerNoise = TerrainValueNoise(localXZ * 1.7 + (float)layers[i] * 17.31) - 0.5;
                 // The height map only competes where the layer is actually painted: a nearly absent layer with a strong
                 // height map would otherwise win right up to the line where its weight reaches zero (hard edges)
@@ -152,6 +209,7 @@ namespace Stride.Terrain
             float threshold = maxHeight - TerrainHeightBlendSharpness;
             float3 albedo = 0;
             float4 normalRoughness = 0;
+            float height = 0;
             float totalWeight = 0;
             for (int j = 0; j < count; j++)
             {
@@ -161,23 +219,27 @@ namespace Stride.Terrain
                     float4 layerParams = TerrainLayerParams[layers[j]];
                     float4 tint = TerrainLayerTints[layers[j]];
                     float2 uv = localXZ * layerParams.x;
-                    float4 nr = TerrainNormalRoughnessArray.SampleGrad(TerrainLayerSampler, float3(uv, (float)layers[j]), dLocalDx * layerParams.x, dLocalDy * layerParams.x);
-                    nr.xy = (nr.xy * 2.0 - 1.0) * layerParams.y;
+                    float4 nr = TerrainSampleNormalRoughness(layers[j], uv, dLocalDx * layerParams.x, dLocalDy * layerParams.x, variationMix[j]);
+                    nr.xy *= layerParams.y;
                     nr.z *= tint.a;
                     albedo += albedoHeight[j].rgb * tint.rgb * w;
                     normalRoughness += nr * w;
+                    height += albedoHeight[j].a * w;
                     totalWeight += w;
                 }
             }
 
             float invTotal = 1.0 / max(totalWeight, 1e-5);
+            // Large scale brightness variation (breaks the uniformity of big areas of the same layer)
+            float macro = TerrainValueNoise(localXZ * 0.031) * 0.6 + TerrainValueNoise(localXZ * 0.093 + 13.7) * 0.4;
             TerrainSurface surface;
-            surface.Albedo = albedo * invTotal;
+            surface.Albedo = albedo * invTotal * lerp(0.86, 1.12, macro);
             normalRoughness *= invTotal;
             float2 nxy = normalRoughness.xy;
             surface.NormalTS = float3(nxy, sqrt(saturate(1.0 - dot(nxy, nxy))));
             surface.Roughness = saturate(normalRoughness.z);
             surface.Occlusion = saturate(normalRoughness.w);
+            surface.Height = saturate(height * invTotal);
             return surface;
         }
 
@@ -187,9 +249,10 @@ namespace Stride.Terrain
             float4 layerParams = TerrainLayerParams[layer];
             float2 uv = uvMeters * layerParams.x;
             float2 g = gradient * layerParams.x;
-            albedoHeight = TerrainAlbedoHeightArray.SampleGrad(TerrainLayerSampler, float3(uv, (float)layer), float2(g.x, 0), float2(0, g.y));
-            normalRoughness = TerrainNormalRoughnessArray.SampleGrad(TerrainLayerSampler, float3(uv, (float)layer), float2(g.x, 0), float2(0, g.y));
-            normalRoughness.xy = (normalRoughness.xy * 2.0 - 1.0) * layerParams.y;
+            float amount = TerrainVariationMix(layer, uvMeters);
+            albedoHeight = TerrainSampleAlbedoHeight(layer, uv, float2(g.x, 0), float2(0, g.y), amount);
+            normalRoughness = TerrainSampleNormalRoughness(layer, uv, float2(g.x, 0), float2(0, g.y), amount);
+            normalRoughness.xy *= layerParams.y;
         }
 
         // Covers steep slopes with the cliff layer, projected tri-planar so it doesn't stretch on cliffs.
@@ -213,6 +276,7 @@ namespace Stride.Terrain
 
             float3 albedo = 0;
             float4 normalRoughness = 0;
+            float height = 0;
             float3 normalLocal = macroNormal;
             float4 a;
             float4 n;
@@ -220,6 +284,7 @@ namespace Stride.Terrain
             {
                 TerrainSampleProjected(layer, localPosition.zy, float2(horizontal, vertical), a, n);
                 albedo += a.rgb * blend.x;
+                height += a.a * blend.x;
                 normalRoughness.zw += n.zw * blend.x;
                 normalLocal += float3(0, n.y, n.x) * blend.x;
             }
@@ -227,6 +292,7 @@ namespace Stride.Terrain
             {
                 TerrainSampleProjected(layer, localPosition.xy, float2(horizontal, vertical), a, n);
                 albedo += a.rgb * blend.z;
+                height += a.a * blend.z;
                 normalRoughness.zw += n.zw * blend.z;
                 normalLocal += float3(n.x, n.y, 0) * blend.z;
             }
@@ -234,6 +300,7 @@ namespace Stride.Terrain
             {
                 TerrainSampleProjected(layer, localPosition.xz, float2(horizontal, horizontal), a, n);
                 albedo += a.rgb * blend.y;
+                height += a.a * blend.y;
                 normalRoughness.zw += n.zw * blend.y;
                 normalLocal += float3(n.x, 0, n.y) * blend.y;
             }
@@ -248,6 +315,7 @@ namespace Stride.Terrain
             surface.NormalTS = normalize(lerp(surface.NormalTS, cliffNormalTS, coverage));
             surface.Roughness = lerp(surface.Roughness, saturate(normalRoughness.z * tint.a), coverage);
             surface.Occlusion = lerp(surface.Occlusion, saturate(normalRoughness.w), coverage);
+            surface.Height = lerp(surface.Height, saturate(height), coverage);
             return surface;
         }
 

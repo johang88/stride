@@ -6,12 +6,70 @@ namespace Stride.Terrain
     /// <summary>
     /// Material pixel stage of the terrain using the runtime virtual texture (falls back to blending the layers when it isn't active).
     /// </summary>
-    shader TerrainMaterialSurfaceVirtualTexture : IMaterialSurfacePixel, TerrainLayers, TerrainBrushOverlay, TerrainVirtualTextureBase, NormalStream, PositionStream4
+    shader TerrainMaterialSurfaceVirtualTexture : IMaterialSurfacePixel, TerrainLayers, TerrainBrushOverlay, TerrainVirtualTextureBase, NormalStream, PositionStream4, Transformation
     {
         cbuffer PerMaterial
         {
             // 1 when the active virtual texture is this terrain's
             stage float TerrainVTIsOwn;
+        }
+
+        // Parallax occlusion mapping: marches the view ray through the blended layer height stored in the virtual texture
+        // (height 1 is the geometric surface) and returns the virtual UV where it hits
+        float2 TerrainParallaxUV(float2 vuv, float2 dVuvDx, float2 dVuvDy, float3 macroNormal, float3 positionWS)
+        {
+            float3 toEye = Eye.xyz - positionWS;
+            float distance = length(toEye);
+            // Fades out with the distance and on slopes (the virtual texture is a top-down projection)
+            float fade = saturate(1.0 - distance / TerrainParallax.y) * saturate((macroNormal.y - 0.7) / 0.15);
+            float depth = TerrainParallax.x * fade;
+            if (depth <= 1e-4)
+                return vuv;
+
+            float3 view = toEye / distance;
+            float3 tangent = normalize(float3(1, 0, 0) - macroNormal * macroNormal.x);
+            float3 bitangent = cross(tangent, macroNormal);
+            float3 viewTS = float3(dot(view, tangent), dot(view, bitangent), dot(view, macroNormal));
+            viewTS.z = max(viewTS.z, 0.15);
+
+            // Shift (meters, tangent space) over the full depth, limited at grazing angles
+            float2 shift = -viewTS.xy / viewTS.z * depth;
+            float shiftLength = length(shift);
+            if (shiftLength > depth * 4.0)
+                shift *= depth * 4.0 / shiftLength;
+            float3 shiftWS = tangent * shift.x + bitangent * shift.y;
+            float2 shiftUV = shiftWS.xz * TerrainVTRegion.z;
+
+            // More steps at grazing angles
+            int stepCount = clamp((int)lerp(28.0, 8.0, viewTS.z), 8, 28);
+            int mip = (int)clamp(floor(TerrainVTComputeMip(dVuvDx, dVuvDy)), 0.0, TerrainVTParams.x);
+            float stepSize = 1.0 / (float)stepCount;
+
+            float rayHeight = 1.0;
+            float2 uv = vuv;
+            float previousRayHeight = 1.0;
+            float previousSurface = TerrainVTSampleHeightLevel(vuv, dVuvDx, dVuvDy, mip);
+            float surface = previousSurface;
+            [loop]
+            for (int i = 0; i < 28; i++)
+            {
+                if (i >= stepCount || surface >= rayHeight)
+                    break;
+                previousRayHeight = rayHeight;
+                previousSurface = surface;
+                rayHeight -= stepSize;
+                uv += shiftUV * stepSize;
+                surface = TerrainVTSampleHeightLevel(uv, dVuvDx, dVuvDy, mip);
+            }
+
+            if (rayHeight >= 1.0)
+                return vuv;
+
+            // Linear refinement between the last two steps
+            float after = surface - rayHeight;
+            float before = previousSurface - previousRayHeight;
+            float t = saturate(after / max(after - before, 1e-5));
+            return uv - shiftUV * stepSize * t;
         }
 
         override void Compute()
@@ -28,7 +86,10 @@ namespace Stride.Terrain
             if (TerrainVTIsActive() && TerrainVTIsOwn > 0.5)
             {
                 float2 vuv = TerrainVTWorldToUV(streams.PositionWS.xyz);
-                TerrainVTSurface surface = TerrainVTSample(vuv, ddx(vuv), ddy(vuv));
+                float2 dVuvDx = ddx(vuv);
+                float2 dVuvDy = ddy(vuv);
+                vuv = TerrainParallaxUV(vuv, dVuvDx, dVuvDy, macroNormal, streams.PositionWS.xyz);
+                TerrainVTSurface surface = TerrainVTSample(vuv, dVuvDx, dVuvDy);
                 albedo = surface.Albedo;
                 normalTS = surface.NormalTS;
                 roughness = surface.Roughness;

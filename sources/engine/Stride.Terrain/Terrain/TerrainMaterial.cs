@@ -64,6 +64,20 @@ namespace Stride.Terrain
         [DataMember(70)]
         [DefaultValue(0.5f)]
         public float CliffSlopeEnd { get; set; } = 0.5f;
+
+        /// <summary>
+        /// Depth of the parallax occlusion mapping in meters (0 disables it). Uses the blended layer heights (virtual texture path).
+        /// </summary>
+        [DataMember(80)]
+        [DefaultValue(0.05f)]
+        public float ParallaxDepth { get; set; } = 0.05f;
+
+        /// <summary>
+        /// Distance from the camera over which the parallax effect fades out, in meters.
+        /// </summary>
+        [DataMember(90)]
+        [DefaultValue(40.0f)]
+        public float ParallaxFadeDistance { get; set; } = 40.0f;
     }
 
     /// <summary>
@@ -118,6 +132,13 @@ namespace Stride.Terrain
         [DataMember(80)]
         [DefaultValue(0.0f)]
         public float HeightBlendOffset { get; set; }
+
+        /// <summary>
+        /// Amount of the second, rotated and scaled sample mixed in to hide the texture tiling (0-1).
+        /// </summary>
+        [DataMember(85)]
+        [DefaultValue(0.5f)]
+        public float TilingVariation { get; set; } = 0.5f;
 
         /// <summary>
         /// A free-form tag (e.g. footstep sound or VFX surface type) available to gameplay through terrain queries.

@@ -227,27 +227,48 @@ namespace Stride.Assets.Presentation.AssetEditors.TerrainEditor
         }
 
         /// <summary>
-        /// Applies a stroke at a world position without the mouse (automated tests, scripted edits). Returns false if there's no editable terrain.
+        /// Waits until an editable terrain is resolved (its asset is compiled and loaded after the scene), up to a timeout.
         /// </summary>
-        public async Task<bool> SimulateStroke(Vector3 worldPosition, TerrainBrushSettings settings, int steps = 10)
+        public async Task<bool> WaitForTarget(TimeSpan timeout)
         {
-            // The target and its asset are resolved asynchronously after the scene is loaded
-            for (int i = 0; i < 300; i++)
+            var end = DateTime.UtcNow + timeout;
+            while (true)
             {
                 if (await controller.InvokeAsync(() => session != null && targetData != null))
-                    break;
+                    return true;
+                if (DateTime.UtcNow > end)
+                    return false;
                 await Task.Delay(50);
             }
+        }
 
+        /// <summary>
+        /// Applies a stroke at a world position without the mouse (automated tests, scripted edits). Returns false if there's no editable terrain.
+        /// </summary>
+        public Task<bool> SimulateStroke(Vector3 worldPosition, TerrainBrushSettings settings, int steps = 10)
+        {
+            return SimulateStroke(new[] { worldPosition }, settings, steps);
+        }
+
+        /// <summary>
+        /// Applies a stroke along world positions (one undoable stroke), with <paramref name="steps"/> brush applications at each position.
+        /// Returns false if there's no editable terrain.
+        /// </summary>
+        public async Task<bool> SimulateStroke(IReadOnlyList<Vector3> path, TerrainBrushSettings settings, int steps = 10)
+        {
+            await WaitForTarget(TimeSpan.FromSeconds(15));
             return await controller.InvokeAsync(() =>
             {
                 if (session == null || targetData == null || target == null)
                     return false;
-                var local = worldPosition - target.Origin;
                 strokeBefore = new TerrainSnapshot();
                 strokeTool = settings.Tool;
-                for (int i = 0; i < steps; i++)
-                    ApplyBrush(new Vector2(local.X, local.Z), settings, 1 / 30.0f);
+                foreach (var worldPosition in path)
+                {
+                    var local = worldPosition - target.Origin;
+                    for (int i = 0; i < steps; i++)
+                        ApplyBrush(new Vector2(local.X, local.Z), settings, 1 / 30.0f);
+                }
                 EndStroke();
                 return true;
             });

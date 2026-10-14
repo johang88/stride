@@ -68,6 +68,22 @@ namespace Stride.Assets.Terrain
         [DefaultValue(0.5f)]
         [DataMemberRange(0, 1, 0.01, 0.1, 2)]
         public float CliffSlopeEnd { get; set; } = 0.5f;
+
+        /// <summary>
+        /// Depth of the parallax occlusion mapping (displacement of the layer height maps seen up close), in meters. 0 disables it.
+        /// </summary>
+        [DataMember(70)]
+        [DefaultValue(0.05f)]
+        [DataMemberRange(0, 0.5, 0.005, 0.02, 3)]
+        public float ParallaxDepth { get; set; } = 0.05f;
+
+        /// <summary>
+        /// Distance over which the parallax effect fades out, in meters.
+        /// </summary>
+        [DataMember(80)]
+        [DefaultValue(40.0f)]
+        [DataMemberRange(1, 500, 1, 10, 1)]
+        public float ParallaxFadeDistance { get; set; } = 40.0f;
     }
 
     public enum TerrainLayerTextureSize
@@ -157,6 +173,15 @@ namespace Stride.Assets.Terrain
         [DefaultValue(0.0f)]
         [DataMemberRange(-1, 1, 0.01, 0.1, 2)]
         public float HeightBlendOffset { get; set; }
+
+        /// <summary>
+        /// Hides the tiling of natural textures by mixing in a second sample at another scale and rotation (0 disables it,
+        /// for regular patterns such as cobblestones).
+        /// </summary>
+        [DataMember(125)]
+        [DefaultValue(0.5f)]
+        [DataMemberRange(0, 1, 0.01, 0.1, 2)]
+        public float TilingVariation { get; set; } = 0.5f;
 
         /// <summary>
         /// Free-form tag available to gameplay (footsteps, VFX).

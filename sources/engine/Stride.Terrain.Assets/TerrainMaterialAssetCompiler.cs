@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Stride.Assets.Textures;
 using Stride.Core;
@@ -29,9 +30,8 @@ namespace Stride.Assets.Terrain
 
         public override IEnumerable<BuildDependencyInfo> GetInputTypes(AssetItem assetItem)
         {
-            // The layer textures are read at compile time; they're also declared as runtime content because the same textures are
-            // often used by regular materials, and a texture only known through compile-time links can be left out of the bundle
-            yield return new BuildDependencyInfo(typeof(TextureAsset), typeof(AssetCompilationContext), BuildDependencyType.Runtime | BuildDependencyType.CompileAsset);
+            // The layer textures are only read at compile time (packed into the layer arrays): they aren't game content by themselves
+            yield return new BuildDependencyInfo(typeof(TextureAsset), typeof(AssetCompilationContext), BuildDependencyType.CompileAsset);
             yield return new BuildDependencyInfo(typeof(GameSettingsAsset), typeof(AssetCompilationContext), BuildDependencyType.CompileAsset);
         }
 
@@ -108,19 +108,21 @@ namespace Stride.Assets.Terrain
                 var size = (int)asset.TextureSize;
                 // Texture arrays need at least two slices to always get an array view
                 var sliceCount = Math.Max(2, asset.Layers.Count);
-                var albedoSlices = new List<Image>();
-                var normalSlices = new List<Image>();
+                var albedoSlices = new Image[sliceCount];
+                var normalSlices = new Image[sliceCount];
 
                 try
                 {
                     using var textureTool = new TextureTool();
-                    for (int i = 0; i < sliceCount; i++)
+                    // Layers are decoded and resized in parallel (several large source images each)
+                    Parallel.For(0, sliceCount, i =>
                     {
+                        using var layerTool = new TextureTool();
                         var layer = i < asset.Layers.Count ? asset.Layers[i] : null;
                         var sources = i < Parameters.Layers.Count ? Parameters.Layers[i] : new TerrainLayerSources();
-                        albedoSlices.Add(BuildAlbedoHeight(textureTool, layer, sources, size, commandContext));
-                        normalSlices.Add(BuildNormalRoughness(textureTool, layer, sources, size, commandContext));
-                    }
+                        albedoSlices[i] = BuildAlbedoHeight(layerTool, layer, sources, size, commandContext);
+                        normalSlices[i] = BuildNormalRoughness(layerTool, layer, sources, size, commandContext);
+                    });
 
                     var contentManager = new ContentManager(MicrothreadLocalDatabases.ProviderService);
                     var albedoFormat = Parameters.UseBC7 ? PixelFormat.BC7_UNorm_SRgb : PixelFormat.BC3_UNorm_SRgb;
@@ -136,6 +138,8 @@ namespace Stride.Assets.Terrain
                         CliffLayer = asset.CliffLayer,
                         CliffSlopeStart = asset.CliffSlopeStart,
                         CliffSlopeEnd = asset.CliffSlopeEnd,
+                        ParallaxDepth = asset.ParallaxDepth,
+                        ParallaxFadeDistance = asset.ParallaxFadeDistance,
                     };
                     for (int i = 0; i < asset.Layers.Count; i++)
                     {
@@ -149,6 +153,7 @@ namespace Stride.Assets.Terrain
                             NormalStrength = layer.NormalStrength,
                             HeightBlendScale = layer.HeightBlendScale,
                             HeightBlendOffset = layer.HeightBlendOffset,
+                            TilingVariation = layer.TilingVariation,
                             SurfaceTag = layer.SurfaceTag,
                         });
                     }
@@ -157,35 +162,39 @@ namespace Stride.Assets.Terrain
                 finally
                 {
                     foreach (var image in albedoSlices)
-                        image.Dispose();
+                        image?.Dispose();
                     foreach (var image in normalSlices)
-                        image.Dispose();
+                        image?.Dispose();
                 }
 
                 return Task.FromResult(ResultStatus.Successful);
             }
 
-            private void SaveArray(ContentManager contentManager, TextureTool textureTool, List<Image> slices, bool isSRgb, PixelFormat format, string url)
+            private void SaveArray(ContentManager contentManager, TextureTool textureTool, Image[] slices, bool isSRgb, PixelFormat format, string url)
             {
-                var texImages = new List<TexImage>();
+                var texImages = new TexImage[slices.Length];
                 try
                 {
-                    foreach (var slice in slices)
+                    // Slices are compressed independently and in parallel (block compression is single threaded and slow), then
+                    // assembled: the array creation only copies the slice data
+                    var quality = (TextureConverter.Requests.TextureQuality)Parameters.Quality;
+                    Parallel.For(0, slices.Length, i =>
                     {
-                        var texImage = textureTool.Load(slice, isSRgb);
-                        textureTool.GenerateMipMaps(texImage, Filter.MipMapGeneration.Box);
-                        texImages.Add(texImage);
-                    }
+                        using var sliceTool = new TextureTool();
+                        var texImage = sliceTool.Load(slices[i], isSRgb);
+                        texImages[i] = texImage;
+                        sliceTool.GenerateMipMaps(texImage, Filter.MipMapGeneration.Box);
+                        sliceTool.Compress(texImage, format, quality);
+                    });
 
-                    using var array = textureTool.CreateTextureArray(texImages);
-                    textureTool.Compress(array, format, (TextureConverter.Requests.TextureQuality)Parameters.Quality);
+                    using var array = textureTool.CreateTextureArray(texImages.ToList());
                     using var image = textureTool.ConvertToStrideImage(array);
                     contentManager.Save(url, image.ToSerializableVersion(), typeof(Texture));
                 }
                 finally
                 {
                     foreach (var texImage in texImages)
-                        texImage.Dispose();
+                        texImage?.Dispose();
                 }
             }
 
