@@ -1,9 +1,9 @@
 // Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
-// GameStudio check of the terrain tools driven by the real mouse (needs an unlocked desktop): activates the tools
+// GameStudio check of the terrain tools driven by the real mouse (needs an unlocked desktop and nobody using the mouse): activates the tools
 // on the scene STRIDE_TERRAIN_TEST_SCENE, drags a raise stroke then a paint stroke across the viewport with OS mouse
-// input and checks that the terrain samples changed. Nothing is saved.
+// input and checks that the terrain samples changed, then that a right drag rotates the camera without editing. Nothing is saved.
 using System;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -14,6 +14,7 @@ using System.Windows.Media;
 using Stride.Assets.Presentation.AssetEditors.SceneEditor.ViewModels;
 using Stride.Core.Assets.Editor.Services;
 using Stride.Core.Assets.Editor.ViewModel;
+using Vector3 = Stride.Core.Mathematics.Vector3;
 using Stride.Core.Presentation.Controls;
 using Stride.GameStudio.AutoTesting;
 using Stride.Terrain.Editing;
@@ -114,8 +115,17 @@ public class TerrainMouseTools : IUITest
         var painted = await service.GetTargetDataCopy();
         var splatChanges = raised.Splat.Zip(painted.Splat).Count(x => !x.First.Equals(x.Second));
 
-        Console.WriteLine($"TERRAIN MOUSE heights changed: {heightChanges}, splat changed: {splatChanges}");
-        ctx.Exit(heightChanges > 0 && splatChanges > 0 ? 0 : 6);
+        // The camera still rotates with a right drag over the terrain while the tools are active
+        var viewBefore = await service.GetViewCenter();
+        await RightDrag(rect.Value, 0.5, 0.65, 200);
+        await ctx.WaitForRendering(10);
+        var viewAfter = await service.GetViewCenter();
+        var rotated = Vector3.Distance(viewBefore.Position, viewAfter.Position) > 1.0f;
+        var unchanged = await service.GetTargetDataCopy();
+        var changedByRightDrag = painted.Heights.Zip(unchanged.Heights).Any(x => x.First != x.Second);
+
+        Console.WriteLine($"TERRAIN MOUSE heights changed: {heightChanges}, splat changed: {splatChanges}, camera rotated: {rotated} ({viewBefore.Position} -> {viewAfter.Position}), right drag edited: {changedByRightDrag}");
+        ctx.Exit(heightChanges > 0 && splatChanges > 0 && rotated && !changedByRightDrag ? 0 : 6);
     }
 
     private static async Task Drag(Rect rect, double x0, double y0, double x1, double y1)
@@ -136,6 +146,22 @@ public class TerrainMouseTools : IUITest
         await Task.Delay(300);
     }
 
+    private static async Task RightDrag(Rect rect, double x, double y, int pixels)
+    {
+        SetCursorPos((int)(rect.Left + rect.Width * x), (int)(rect.Top + rect.Height * y));
+        await Task.Delay(300);
+        mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, IntPtr.Zero);
+        await Task.Delay(100);
+        // Relative moves: the camera locks the cursor while rotating
+        for (int i = 0; i < 40; i++)
+        {
+            mouse_event(MOUSEEVENTF_MOVE, pixels / 40, 0, 0, IntPtr.Zero);
+            await Task.Delay(25);
+        }
+        mouse_event(MOUSEEVENTF_RIGHTUP, 0, 0, 0, IntPtr.Zero);
+        await Task.Delay(300);
+    }
+
     private static T FindVisual<T>(DependencyObject parent) where T : DependencyObject
     {
         for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
@@ -152,6 +178,9 @@ public class TerrainMouseTools : IUITest
 
     private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
     private const uint MOUSEEVENTF_LEFTUP = 0x0004;
+    private const uint MOUSEEVENTF_MOVE = 0x0001;
+    private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
+    private const uint MOUSEEVENTF_RIGHTUP = 0x0010;
 
     [DllImport("user32.dll")]
     private static extern bool SetCursorPos(int x, int y);

@@ -50,6 +50,8 @@ namespace Stride.Assets.Presentation.AssetEditors.TerrainEditor
         private TerrainSnapshot strokeBefore;
         private TerrainBrushTool strokeTool;
         private Vector3? lastHit;
+        // Whether a left click on the terrain owns the mouse (until the button is released)
+        private bool mouseClaimed;
 
         public EditorGameTerrainService([NotNull] EntityHierarchyEditorViewModel editor, [NotNull] IEditorGameController controller)
         {
@@ -332,6 +334,7 @@ namespace Stride.Assets.Presentation.AssetEditors.TerrainEditor
             {
                 EndStroke();
                 HideOverlay();
+                mouseClaimed = false;
                 IsControllingMouse = false;
                 return;
             }
@@ -398,8 +401,11 @@ namespace Stride.Assets.Presentation.AssetEditors.TerrainEditor
                     ApplyBrush(new Vector2(local.X, local.Z), settings, dt);
                 }
             }
-            else if (hit.HasValue && input.IsMouseButtonPressed(MouseButton.Left) && IsMouseAvailable && !input.IsMouseButtonDown(MouseButton.Right))
+            else if (hit.HasValue && input.IsMouseButtonPressed(MouseButton.Left) && IsMouseAvailable && !input.IsMouseButtonDown(MouseButton.Right)
+                     && !input.IsKeyDown(Keys.LeftAlt) && !input.IsKeyDown(Keys.RightAlt))
             {
+                // Alt + left drag orbits the camera
+                mouseClaimed = true;
                 var local = hit.Value - origin;
                 if (input.IsKeyDown(Keys.LeftCtrl) || input.IsKeyDown(Keys.RightCtrl))
                 {
@@ -414,7 +420,11 @@ namespace Stride.Assets.Presentation.AssetEditors.TerrainEditor
                 }
             }
 
-            IsControllingMouse = hit.HasValue || strokeBefore != null;
+            // Only clicks and strokes take the mouse, so the camera keeps working while hovering the terrain.
+            // The release frame is kept so that the click doesn't also change the selection.
+            if (mouseClaimed && !input.IsMouseButtonDown(MouseButton.Left) && !input.IsMouseButtonReleased(MouseButton.Left))
+                mouseClaimed = false;
+            IsControllingMouse = mouseClaimed || strokeBefore != null;
         }
 
         private void ApplyBrush(Vector2 localCenter, TerrainBrushSettings settings, float dt)
