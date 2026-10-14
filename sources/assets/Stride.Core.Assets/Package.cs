@@ -1219,6 +1219,13 @@ public sealed partial class Package : IFileSynchronizable, IAssetFinder
                     log.Error($"Unable to load assembly reference [{assemblyPath}]");
                 }
             }
+            else if (assemblyContainer.LoadedAssemblies.Any(x => x.Assembly == assembly))
+            {
+                // Already loaded by the container as a dependency of another package assembly (e.g. a game
+                // library referenced by the platform executable loaded first): it was never registered, and
+                // its asset types would be missing
+                AssemblyRegistry.Register(assembly, AssemblyCommonCategories.Assets);
+            }
 
             if (assembly is not null)
                 RegisterContainerAssembly(assembly);

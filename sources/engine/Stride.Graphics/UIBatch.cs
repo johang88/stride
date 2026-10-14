@@ -508,6 +508,7 @@ namespace Stride.Graphics
         {
             const int VertexCountPerAxis = 2;
 
+            // UI is projected with a reversed depth range: elements with a higher depth bias (children) move towards a depth of 1
             var depthBiasMultiplier = MathF.CopySign(drawInfo->DepthBias * DepthBiasShiftOneUnit, FacingDirection(drawInfo));
             var colorScale = drawInfo->ColorScale.ToColor4();
             var colorAdd = drawInfo->ColorAdd.ToColor4();
@@ -528,7 +529,7 @@ namespace Stride.Graphics
 
                         vertex->Position.X = currentPosition.X;
                         vertex->Position.Y = currentPosition.Y;
-                        vertex->Position.Z = currentPosition.Z - currentPosition.W * depthBiasMultiplier;
+                        vertex->Position.Z = currentPosition.Z + currentPosition.W * depthBiasMultiplier;
                         vertex->Position.W = currentPosition.W;
 
                         vertex++;     // Move vertex pointer position
@@ -616,7 +617,7 @@ namespace Stride.Graphics
                     var vertPos = Vector4Add(ref drawInfo->LeftTopCornerWorld, ref posOffsetX[c], ref posOffsetY[r]);
                     vertex->Position.X = vertPos.X;
                     vertex->Position.Y = vertPos.Y;
-                    vertex->Position.Z = vertPos.Z - vertPos.W * depthBiasMultiplier;
+                    vertex->Position.Z = vertPos.Z + vertPos.W * depthBiasMultiplier;
                     vertex->Position.W = vertPos.W;
 
                     vertex++;     // Move vertex pointer position
@@ -687,7 +688,7 @@ namespace Stride.Graphics
                 ref var vertPos = ref vertexPositions[i];
                 vertex->Position.X = vertPos.X;
                 vertex->Position.Y = vertPos.Y;
-                vertex->Position.Z = vertPos.Z - vertPos.W * depthBiasMultiplier;
+                vertex->Position.Z = vertPos.Z + vertPos.W * depthBiasMultiplier;
                 vertex->Position.W = vertPos.W;
             }
         }
