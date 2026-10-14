@@ -321,8 +321,10 @@ namespace Stride.TextureConverter.TexLibraries
                     throw new TextureToolsException(string.Format("The provided texture cannot be compressed into format '{0}' " +
                                                                   "because its top resolution ({1}-{2}) is not a multiple of 4.", request.Format, topImage.Width, topImage.Height));
 
+                // The exhaustive BC7 mode search is very slow on the CPU (minutes per 2k texture): only use it for the best qualities
+                var flags = request.Quality < TextureQuality.High ? TEX_COMPRESS_FLAGS.TEX_COMPRESS_BC7_QUICK : TEX_COMPRESS_FLAGS.TEX_COMPRESS_DEFAULT;
                 hr = Utilities.Compress(libraryData.DxtImages, libraryData.DxtImages.Length, ref libraryData.Metadata,
-                                        RetrieveNativeFormat(request.Format), TEX_COMPRESS_FLAGS.TEX_COMPRESS_DEFAULT, 0.5f, out newSet);
+                                        RetrieveNativeFormat(request.Format), flags, 0.5f, out newSet);
             }
             else
             {
