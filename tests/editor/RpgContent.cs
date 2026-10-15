@@ -32,6 +32,8 @@ public class RpgContent : IUITest
         if (!condition)
             failures++;
         report.Add($"{(condition ? "PASS" : "FAIL")} {what}");
+        // Also logged as it goes: the report file is only written at the end
+        Console.WriteLine($"RPG {report[^1]}");
     }
 
     public async Task Run(IUITestContext ctx)

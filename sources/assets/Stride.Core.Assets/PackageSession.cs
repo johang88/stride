@@ -1169,6 +1169,10 @@ public sealed partial class PackageSession : IDisposable, IAssetFinder
             if (TryLoadAssemblies(this, log, package, loadParameters, out var assetInfo))
                 assetLoadInfos.Add(assetInfo);
         }
+        // List the asset files once every package's assemblies are loaded: a package's assets can be of
+        // types defined in another package's assembly (e.g. a content package referencing its game's
+        // design-time library), and files of unknown types would be silently skipped
+        assetLoadInfos.RemoveAll(assetInfo => !TryListAssetFiles(assetInfo));
         foreach (AssetLoadingInfo assetInfo in assetLoadInfos)
         {
             // Check if the same package exists in the list but with a newer version.
@@ -1746,6 +1750,24 @@ public sealed partial class PackageSession : IDisposable, IAssetFinder
             newLoadParameters.ExtraCompileProperties.Add("StrideCurrentPackagePath", package.FullPath);
             package.LoadAssemblies(log, newLoadParameters);
 
+            info = new AssetLoadingInfo(session, log, package, loadParameters, pendingPackageUpgrades, newLoadParameters);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            log.Error($"Error while pre-loading package [{package}]", ex);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Lists the asset files of a package whose assemblies are loaded (see <see cref="TryLoadAssemblies"/>) and upgrades them if needed.
+    /// </summary>
+    private static bool TryListAssetFiles(AssetLoadingInfo info)
+    {
+        var (session, log, package, loadParameters, pendingPackageUpgrades, newLoadParameters) = info;
+        try
+        {
             // Load list of assets
             newLoadParameters.AssetFiles = Package.ListAssetFiles(package, true, false, loadParameters.LoadAssetsOfUnknownType);
             // Sort them by size (to improve concurrency during load)
@@ -1771,7 +1793,6 @@ public sealed partial class PackageSession : IDisposable, IAssetFinder
                 // Mark package as dirty
                 package.IsDirty = true;
             }
-            info = new AssetLoadingInfo(session, log, package, loadParameters, pendingPackageUpgrades, newLoadParameters);
             return true;
         }
         catch (Exception ex)

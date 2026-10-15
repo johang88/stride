@@ -1177,7 +1177,10 @@ public sealed partial class Package : IFileSynchronizable, IAssetFinder
                 if (loadedProjectAssembly is not null)
                 {
                     LoadedAssemblies.Add(new PackageLoadedAssembly(projectReference, GetAssemblyPath(loadedProjectAssembly)) { Assembly = loadedProjectAssembly });
-                    RegisterContainerAssembly(loadedProjectAssembly);
+                    // It may have been loaded as a dependency of another project's assembly (e.g. a game library
+                    // referenced by a test or content project loaded first) and never registered: its asset
+                    // types would be missing (no-op when already registered)
+                    AssemblyRegistry.Register(loadedProjectAssembly, AssemblyCommonCategories.Assets);
                     return;
                 }
 
