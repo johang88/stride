@@ -1,0 +1,59 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Bakes the terrain shadows for one sun direction: each texel marches the height field towards the sun and stores
+    /// the height above which a point is lit (x, normalized like the heightmap) and the distance to that occluder (y).
+    /// Texel centers map linearly onto the terrain: local XZ = TexCoord * terrain size.
+    /// </summary>
+    shader TerrainShadowBakeShader : ImageEffectShader, TerrainBase
+    {
+        cbuffer PerDraw
+        {
+            // xy = direction towards the sun in XZ (normalized), z = tan of the sun elevation, w = maximum march distance
+            stage float4 TerrainShadowSun;
+        }
+
+        stage override float4 Shading()
+        {
+            float terrainSize = (TerrainResolution - 1.0) * TerrainCellSize;
+            float2 origin = streams.TexCoord * terrainSize;
+            float2 direction = TerrainShadowSun.xy;
+            float tanElevation = TerrainShadowSun.z;
+            float maxDistance = TerrainShadowSun.w;
+            float maxHeight = TerrainMinHeight + TerrainHeightRange;
+            float originHeight = TerrainSampleHeight(origin);
+
+            // Height of the highest ray towards the sun blocked by the terrain, relative to this point
+            float litHeight = -1e9;
+            float occluderDistance = 0.0;
+            float t = TerrainCellSize;
+            [loop]
+            for (int i = 0; i < 320 && t < maxDistance; i++)
+            {
+                float2 position = origin + direction * t;
+                if (any(position < 0.0) || any(position > terrainSize))
+                    break;
+                // The ray climbs above the highest point of the terrain: nothing further can block it
+                if (originHeight + t * tanElevation > maxHeight)
+                    break;
+
+                // Coarser heights for longer steps (one mip finer than the step, so peaks aren't flattened too much)
+                float step = max(TerrainCellSize, t * 0.03);
+                float mip = max(0.0, log2(step / TerrainCellSize) - 1.0);
+                float blocking = TerrainSampleHeightLevel(position, mip) - t * tanElevation;
+                if (blocking > litHeight)
+                {
+                    litHeight = blocking;
+                    occluderDistance = t;
+                }
+                t += step;
+            }
+
+            float lit = litHeight > -1e8 ? saturate((litHeight - TerrainMinHeight) / max(TerrainHeightRange, 1e-4)) : 0.0;
+            return float4(lit, saturate(occluderDistance / max(maxDistance, 1e-4)), 0.0, 1.0);
+        }
+    };
+}

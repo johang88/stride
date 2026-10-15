@@ -29,6 +29,7 @@ public sealed class TerrainProcessor : EntityProcessor<TerrainComponent, Terrain
     private GraphicsDevice graphicsDevice;
     private Mesh patchMesh;
     private VirtualTexturing.TerrainVirtualTextureManager virtualTextures;
+    private Shadows.TerrainShadowManager shadows;
 
     public TerrainProcessor() : base(typeof(TransformComponent))
     {
@@ -47,6 +48,8 @@ public sealed class TerrainProcessor : EntityProcessor<TerrainComponent, Terrain
         patchMesh = CreatePatchMesh(graphicsDevice, PatchQuads);
         virtualTextures = new VirtualTexturing.TerrainVirtualTextureManager(graphicsDevice);
         Services.AddService(virtualTextures);
+        shadows = new Shadows.TerrainShadowManager(graphicsDevice);
+        Services.AddService(shadows);
     }
 
     protected override void OnSystemRemove()
@@ -60,6 +63,10 @@ public sealed class TerrainProcessor : EntityProcessor<TerrainComponent, Terrain
         Services.RemoveService<VirtualTexturing.TerrainVirtualTextureManager>();
         virtualTextures?.Dispose();
         virtualTextures = null;
+        VisibilityGroup?.RenderSystem.ViewExtensions.Remove(shadows);
+        Services.RemoveService<Shadows.TerrainShadowManager>();
+        shadows?.Dispose();
+        shadows = null;
     }
 
     protected override TerrainRenderObject GenerateComponentData(Entity entity, TerrainComponent component)
@@ -115,7 +122,9 @@ public sealed class TerrainProcessor : EntityProcessor<TerrainComponent, Terrain
     {
         EnsureRenderFeature(VisibilityGroup.RenderSystem);
         virtualTextures.Register(VisibilityGroup.RenderSystem);
+        shadows.Register(VisibilityGroup.RenderSystem);
         VirtualTexturing.TerrainVirtualTexture activeVirtualTexture = null;
+        TerrainRenderObject activeShadowCaster = null;
 
         foreach (var (component, renderObject) in ComponentDatas)
         {
@@ -143,6 +152,8 @@ public sealed class TerrainProcessor : EntityProcessor<TerrainComponent, Terrain
             }
             if (!visible)
                 continue;
+            if (component.CastShadows)
+                activeShadowCaster ??= renderObject;
 
             if (Math.Abs(renderObject.QuadTree.LodDistance - component.LodDistance) > 1e-3f)
                 UpdateLodDistance(renderObject, component.LodDistance);
@@ -162,6 +173,7 @@ public sealed class TerrainProcessor : EntityProcessor<TerrainComponent, Terrain
         }
 
         virtualTextures.Active = activeVirtualTexture;
+        shadows.Active = activeShadowCaster;
         foreach (var renderObject in ComponentDatas.Values)
         {
             if (renderObject.UsesVirtualTexture && renderObject.MaterialPass != null)
