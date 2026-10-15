@@ -11,62 +11,61 @@ using Stride.Core.IO;
 using Stride.Core.Serialization.Contents;
 using Stride.Terrain;
 
-namespace Stride.Assets.Terrain
+namespace Stride.Assets.Terrain;
+
+[AssetCompiler(typeof(TerrainAsset), typeof(AssetCompilationContext))]
+internal sealed class TerrainAssetCompiler : AssetCompilerBase
 {
-    [AssetCompiler(typeof(TerrainAsset), typeof(AssetCompilationContext))]
-    internal sealed class TerrainAssetCompiler : AssetCompilerBase
+    public override IEnumerable<BuildDependencyInfo> GetInputTypes(AssetItem assetItem)
     {
-        public override IEnumerable<BuildDependencyInfo> GetInputTypes(AssetItem assetItem)
+        yield return new BuildDependencyInfo(typeof(TerrainMaterialAsset), typeof(AssetCompilationContext), BuildDependencyType.Runtime);
+    }
+
+    protected override void Prepare(AssetCompilerContext context, AssetItem assetItem, string targetUrlInStorage, AssetCompilerResult result)
+    {
+        var asset = (TerrainAsset)assetItem.Asset;
+        var sourcePath = !UPath.IsNullOrEmpty(asset.DataFile) ? GetAbsolutePath(assetItem, asset.DataFile) : null;
+        result.BuildSteps = new AssetBuildStep(assetItem);
+        result.BuildSteps.Add(new TerrainCompileCommand(targetUrlInStorage, asset, sourcePath, assetItem.Package));
+    }
+
+    private sealed class TerrainCompileCommand : AssetCommand<TerrainAsset>
+    {
+        private readonly UFile sourcePath;
+
+        public TerrainCompileCommand(string url, TerrainAsset parameters, UFile sourcePath, IAssetFinder assetFinder)
+            : base(url, parameters, assetFinder)
         {
-            yield return new BuildDependencyInfo(typeof(TerrainMaterialAsset), typeof(AssetCompilationContext), BuildDependencyType.Runtime);
+            this.sourcePath = sourcePath;
+            Version = 1;
         }
 
-        protected override void Prepare(AssetCompilerContext context, AssetItem assetItem, string targetUrlInStorage, AssetCompilerResult result)
+        public override IEnumerable<ObjectUrl> GetInputFiles()
         {
-            var asset = (TerrainAsset)assetItem.Asset;
-            var sourcePath = !UPath.IsNullOrEmpty(asset.DataFile) ? GetAbsolutePath(assetItem, asset.DataFile) : null;
-            result.BuildSteps = new AssetBuildStep(assetItem);
-            result.BuildSteps.Add(new TerrainCompileCommand(targetUrlInStorage, asset, sourcePath, assetItem.Package));
+            if (sourcePath != null && System.IO.File.Exists(sourcePath))
+                yield return new ObjectUrl(UrlType.File, sourcePath);
         }
 
-        private sealed class TerrainCompileCommand : AssetCommand<TerrainAsset>
+        protected override Task<ResultStatus> DoCommandOverride(ICommandContext commandContext)
         {
-            private readonly UFile sourcePath;
-
-            public TerrainCompileCommand(string url, TerrainAsset parameters, UFile sourcePath, IAssetFinder assetFinder)
-                : base(url, parameters, assetFinder)
+            TerrainData data;
+            try
             {
-                this.sourcePath = sourcePath;
-                Version = 1;
+                data = Parameters.LoadData(sourcePath);
+            }
+            catch (System.Exception e)
+            {
+                commandContext.Logger.Error($"Failed to load the terrain source [{sourcePath}]", e);
+                return Task.FromResult(ResultStatus.Failed);
             }
 
-            public override IEnumerable<ObjectUrl> GetInputFiles()
-            {
-                if (sourcePath != null && System.IO.File.Exists(sourcePath))
-                    yield return new ObjectUrl(UrlType.File, sourcePath);
-            }
+            if (sourcePath == null || !System.IO.File.Exists(sourcePath))
+                commandContext.Logger.Verbose($"Terrain source [{sourcePath}] doesn't exist yet, using a flat terrain.");
 
-            protected override Task<ResultStatus> DoCommandOverride(ICommandContext commandContext)
-            {
-                TerrainData data;
-                try
-                {
-                    data = Parameters.LoadData(sourcePath);
-                }
-                catch (System.Exception e)
-                {
-                    commandContext.Logger.Error($"Failed to load the terrain source [{sourcePath}]", e);
-                    return Task.FromResult(ResultStatus.Failed);
-                }
-
-                if (sourcePath == null || !System.IO.File.Exists(sourcePath))
-                    commandContext.Logger.Verbose($"Terrain source [{sourcePath}] doesn't exist yet, using a flat terrain.");
-
-                data.Material = Parameters.Material;
-                var contentManager = new ContentManager(MicrothreadLocalDatabases.ProviderService);
-                contentManager.Save(Url, data);
-                return Task.FromResult(ResultStatus.Successful);
-            }
+            data.Material = Parameters.Material;
+            var contentManager = new ContentManager(MicrothreadLocalDatabases.ProviderService);
+            contentManager.Save(Url, data);
+            return Task.FromResult(ResultStatus.Successful);
         }
     }
 }

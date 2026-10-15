@@ -8,58 +8,57 @@ using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Engine.Design;
 
-namespace Stride.Terrain.Decals
+namespace Stride.Terrain.Decals;
+
+/// <summary>
+/// Shape of the area covered by a terrain decal.
+/// </summary>
+public enum TerrainDecalShape
+{
+    Rectangle,
+
+    /// <summary>
+    /// The ellipse inscribed in the rectangle (the edge fade follows the ellipse).
+    /// </summary>
+    Ellipse,
+}
+
+/// <summary>
+/// A decal baked into the terrain virtual texture: projected from above onto the terrain, centered on the entity and
+/// rotated with it (the scale of the entity scales the size). Costs nothing per frame once the pages are rendered.
+/// </summary>
+[DataContract("TerrainDecalComponent")]
+[Display("Terrain decal", Expand = ExpandRule.Once)]
+[DefaultEntityComponentProcessor(typeof(TerrainDecalProcessor), ExecutionMode = ExecutionMode.All)]
+[ComponentCategory("Terrain")]
+[ComponentOrder(11020)]
+public sealed class TerrainDecalComponent : ActivableEntityComponent
 {
     /// <summary>
-    /// Shape of the area covered by a terrain decal.
+    /// Size in meters along the local X and Z axes.
     /// </summary>
-    public enum TerrainDecalShape
-    {
-        Rectangle,
+    [DataMember(10)]
+    public Vector2 Size { get; set; } = new(4.0f, 4.0f);
 
-        /// <summary>
-        /// The ellipse inscribed in the rectangle (the edge fade follows the ellipse).
-        /// </summary>
-        Ellipse,
-    }
+    [DataMember(20)]
+    [DefaultValue(TerrainDecalShape.Rectangle)]
+    public TerrainDecalShape Shape { get; set; } = TerrainDecalShape.Rectangle;
 
     /// <summary>
-    /// A decal baked into the terrain virtual texture: projected from above onto the terrain, centered on the entity and
-    /// rotated with it (the scale of the entity scales the size). Costs nothing per frame once the pages are rendered.
+    /// Number of repetitions of the textures over the size.
     /// </summary>
-    [DataContract("TerrainDecalComponent")]
-    [Display("Terrain decal", Expand = ExpandRule.Once)]
-    [DefaultEntityComponentProcessor(typeof(TerrainDecalProcessor), ExecutionMode = ExecutionMode.All)]
-    [ComponentCategory("Terrain")]
-    [ComponentOrder(11020)]
-    public sealed class TerrainDecalComponent : ActivableEntityComponent
-    {
-        /// <summary>
-        /// Size in meters along the local X and Z axes.
-        /// </summary>
-        [DataMember(10)]
-        public Vector2 Size { get; set; } = new(4.0f, 4.0f);
+    [DataMember(30)]
+    public Vector2 Tiling { get; set; } = Vector2.One;
 
-        [DataMember(20)]
-        [DefaultValue(TerrainDecalShape.Rectangle)]
-        public TerrainDecalShape Shape { get; set; } = TerrainDecalShape.Rectangle;
+    /// <summary>
+    /// Decals with a higher order are drawn over the others (spline decals and decals of the same order: in the order they were added).
+    /// </summary>
+    [DataMember(40)]
+    [DefaultValue(0)]
+    public int Order { get; set; }
 
-        /// <summary>
-        /// Number of repetitions of the textures over the size.
-        /// </summary>
-        [DataMember(30)]
-        public Vector2 Tiling { get; set; } = Vector2.One;
-
-        /// <summary>
-        /// Decals with a higher order are drawn over the others (spline decals and decals of the same order: in the order they were added).
-        /// </summary>
-        [DataMember(40)]
-        [DefaultValue(0)]
-        public int Order { get; set; }
-
-        [DataMember(50)]
-        [NotNull]
-        [Display(Expand = ExpandRule.Always)]
-        public TerrainDecalSurface Surface { get; set; } = new();
-    }
+    [DataMember(50)]
+    [NotNull]
+    [Display(Expand = ExpandRule.Always)]
+    public TerrainDecalSurface Surface { get; set; } = new();
 }

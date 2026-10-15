@@ -4,14 +4,13 @@ using System.Reflection;
 using Stride.Core;
 using Stride.Core.Reflection;
 
-namespace Stride.Terrain
+namespace Stride.Terrain;
+
+internal class Module
 {
-    internal class Module
+    [ModuleInitializer]
+    public static void Initialize()
     {
-        [ModuleInitializer]
-        public static void Initialize()
-        {
-            AssemblyRegistry.Register(typeof(Module).GetTypeInfo().Assembly, AssemblyCommonCategories.Assets);
-        }
+        AssemblyRegistry.Register(typeof(Module).GetTypeInfo().Assembly, AssemblyCommonCategories.Assets);
     }
 }
