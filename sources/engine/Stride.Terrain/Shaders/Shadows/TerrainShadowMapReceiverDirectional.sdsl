@@ -4,7 +4,7 @@
 namespace Stride.Terrain
 {
     /// <summary>
-    /// Directional light shadows combined with the baked terrain shadows (see TerrainShadowBakeShader), which reach beyond
+    /// Directional light shadows combined with the baked terrain shadows (see TerrainShadowManager), which reach beyond
     /// the shadow map cascades.
     /// </summary>
     shader TerrainShadowMapReceiverDirectional<int TCascadeCount,

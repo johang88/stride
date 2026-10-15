@@ -15,33 +15,28 @@ namespace Stride.Terrain.Shadows;
 /// Directional light shadow maps that also receive the shadows of the terrain (<see cref="TerrainShadowManager"/>),
 /// which reach beyond the cascades. Replaces the stock renderer when the terrain processor registers.
 /// </summary>
+/// <remarks>
+/// The terrain shadows come from the manager of the game being drawn (its services), not one captured at registration:
+/// editor games can share compositor objects, and each game's textures belong to its own device.
+/// </remarks>
 public sealed class TerrainDirectionalShadowMapRenderer : LightDirectionalShadowMapRenderer
 {
-    private readonly TerrainShadowManager manager;
-
-    public TerrainDirectionalShadowMapRenderer(TerrainShadowManager manager)
-    {
-        this.manager = manager;
-    }
-
     public override ILightShadowMapShaderGroupData CreateShaderGroupData(LightShadowType shadowType)
     {
-        return new TerrainShaderGroupData(shadowType, manager);
+        return new TerrainShaderGroupData(shadowType);
     }
 
     private sealed class TerrainShaderGroupData : ShaderGroupData
     {
         private const string ShaderName = "TerrainShadowMapReceiverDirectional";
 
-        private readonly TerrainShadowManager manager;
         private ObjectParameterKey<Texture> textureKey;
         private ValueParameterKey<Vector4> regionKey;
         private ValueParameterKey<Vector4> paramsKey;
         private ValueParameterKey<Vector2> biasKey;
 
-        public TerrainShaderGroupData(LightShadowType shadowType, TerrainShadowManager manager) : base(shadowType)
+        public TerrainShaderGroupData(LightShadowType shadowType) : base(shadowType)
         {
-            this.manager = manager;
         }
 
         public override ShaderClassSource CreateShaderSource(int lightCurrentCount)
@@ -63,12 +58,13 @@ public sealed class TerrainDirectionalShadowMapRenderer : LightDirectionalShadow
         {
             base.ApplyViewParameters(context, parameters, currentLights);
 
+            var manager = context.RenderContext.Services.GetService<TerrainShadowManager>();
             // The first light with shadows is the sun
-            if (currentLights.Count > 0)
+            if (manager != null && currentLights.Count > 0)
                 manager.LightDirection = currentLights[0].Light.Direction;
 
-            var (texture, region, terrainParams, bias) = manager.GetReceiverParameters();
-            parameters.Set(textureKey, texture);
+            var (texture, region, terrainParams, bias) = manager?.GetReceiverParameters() ?? default;
+            parameters.Set(textureKey, texture ?? context.GraphicsDevice.GetSharedWhiteTexture());
             parameters.Set(regionKey, region);
             parameters.Set(paramsKey, terrainParams);
             parameters.Set(biasKey, bias);

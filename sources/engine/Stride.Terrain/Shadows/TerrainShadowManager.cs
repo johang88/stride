@@ -2,11 +2,13 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
+using System.Diagnostics;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Stride.Core.Mathematics;
 using Stride.Graphics;
 using Stride.Rendering;
-using Stride.Rendering.Images;
 using Stride.Rendering.Lights;
 using Stride.Rendering.Shadows;
 using Stride.Terrain.Rendering;
@@ -20,27 +22,38 @@ namespace Stride.Terrain.Shadows;
 /// shadow map, so it darkens the terrain and the objects on it.
 /// </summary>
 /// <remarks>
-/// Baked again when the sun turns, the heights change or the settings change.
+/// Baked on the CPU in the background (a parallel ray march over a copy of the heights) and uploaded once complete, again
+/// when the sun turns, the heights change or the settings change. The previous result stays in use meanwhile.
 /// </remarks>
 public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
 {
     /// <summary>
-    /// Minimum number of frames between two bakes caused by height changes (sculpting).
+    /// Minimum time (seconds) between two bakes caused by height changes (sculpting).
     /// </summary>
-    private const int HeightChangeBakeInterval = 10;
+    private const double HeightChangeBakeInterval = 0.5;
 
     private readonly GraphicsDevice device;
-    private ImageEffectShader bakeEffect;
+    private readonly Stopwatch sinceLastBake = Stopwatch.StartNew();
     private Texture texture;
-    private Texture dummyTexture;
-    private TerrainRenderObject bakedTerrain;
-    private TerrainData subscribedData;
-    private Vector3 bakedDirection;
-    private int bakedResolution;
-    private bool heightsChanged;
+    private Texture retiredTexture;
+    private ushort[] heightsCopy;
+    private Task<uint[]> bakeTask;
+    private CancellationTokenSource bakeCancellation;
     private long lastDrawFrame = -1;
-    private long lastBakeFrame;
-    private bool firstBake = true;
+
+    // What the texture holds, and what the bake in progress computes
+    private BakeState baked;
+    private BakeState baking;
+
+    private struct BakeState
+    {
+        public TerrainRenderObject Terrain;
+        public Vector3 Direction;
+        public int Resolution;
+        public int Revision;
+        public float MinHeight;
+        public float HeightRange;
+    }
 
     public TerrainShadowManager(GraphicsDevice device)
     {
@@ -78,20 +91,25 @@ public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
     internal Vector3? LightDirection { get; set; }
 
     /// <summary>
-    /// Whether the shadows of the active terrain are baked for the current light.
+    /// Whether the shadows of the active terrain are baked.
     /// </summary>
-    public bool IsReady => Enabled && texture != null && Active != null && bakedTerrain == Active;
+    public bool IsReady => Enabled && texture != null && Active != null && baked.Terrain == Active;
+
+    /// <summary>
+    /// Whether a bake is in progress (its result replaces the current shadows when complete).
+    /// </summary>
+    public bool IsBaking => bakeTask != null;
 
     public void Dispose()
     {
-        Subscribe(null);
+        // A bake in progress only touches its own copy of the heights: let it stop and drop the result
+        bakeCancellation?.Cancel();
+        bakeTask = null;
         texture?.Dispose();
         texture = null;
-        bakeEffect?.Dispose();
-        bakeEffect = null;
-        dummyTexture?.Dispose();
-        dummyTexture = null;
-        firstBake = true;
+        retiredTexture?.Dispose();
+        retiredTexture = null;
+        baked = default;
     }
 
     /// <summary>
@@ -110,7 +128,7 @@ public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
             {
                 // Exactly the stock renderer: a custom one is left alone
                 if (shadows.Renderers[i] is { } renderer && renderer.GetType() == typeof(LightDirectionalShadowMapRenderer))
-                    shadows.Renderers[i] = new TerrainDirectionalShadowMapRenderer(this) { ShadowCasterRenderStage = renderer.ShadowCasterRenderStage };
+                    shadows.Renderers[i] = new TerrainDirectionalShadowMapRenderer { ShadowCasterRenderStage = renderer.ShadowCasterRenderStage };
             }
         }
     }
@@ -123,21 +141,19 @@ public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
     /// <summary>
     /// Shader parameters of the receivers: region (xy = world XZ of the terrain origin, z = 1 / size, w = ready),
     /// params (min height, height range, max occluder distance, penumbra scale) and bias (height bias, minimum penumbra).
+    /// The texture is null when not ready.
     /// </summary>
     internal (Texture Texture, Vector4 Region, Vector4 Params, Vector2 Bias) GetReceiverParameters()
     {
         var data = Active?.Data;
         if (!IsReady || data == null)
-        {
-            dummyTexture ??= Texture.New2D(device, 1, 1, PixelFormat.R16G16_UNorm, new uint[] { 0 });
-            return (dummyTexture, Vector4.Zero, Vector4.Zero, Vector2.Zero);
-        }
+            return default;
         var position = Active.World.TranslationVector;
         var size = (data.Resolution - 1) * data.CellSize;
         var texelSize = size / texture.Width;
         // A texel of slack for the interpolation between texels
         var bias = new Vector2(0.1f + texelSize, 0.3f);
-        return (texture, new Vector4(position.X, position.Z, 1.0f / size, 1.0f), new Vector4(data.MinHeight + position.Y, data.MaxHeight - data.MinHeight, MaxDistance, PenumbraScale), bias);
+        return (texture, new Vector4(position.X, position.Z, 1.0f / size, 1.0f), new Vector4(baked.MinHeight + position.Y, baked.HeightRange, MaxDistance, PenumbraScale), bias);
     }
 
     void IRenderViewExtension.Collect(RenderContext context)
@@ -151,68 +167,167 @@ public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
             return;
         lastDrawFrame = frame;
 
+        // Replaced last frame: no longer bound
+        retiredTexture?.Dispose();
+        retiredTexture = null;
+
+        if (bakeTask is { IsCompleted: true } finished)
+        {
+            bakeTask = null;
+            bakeCancellation.Dispose();
+            bakeCancellation = null;
+            if (finished.Status == TaskStatus.RanToCompletion)
+                Upload(drawContext.CommandList, finished.Result);
+        }
+
         var terrain = Active;
-        Subscribe(terrain?.Data);
-        if (!Enabled || terrain?.Data is not { Resolution: >= 2 } data || terrain.Gpu == null || LightDirection is not { } direction)
+        if (!Enabled || terrain?.Data is not { Resolution: >= 2 } data || LightDirection is not { } direction)
+        {
+            bakeCancellation?.Cancel();
             return;
+        }
 
+        direction = Vector3.Normalize(direction);
         var resolution = Math.Clamp(Math.Min(Resolution, data.Resolution), 64, 4096);
-        var turned = Vector3.Dot(Vector3.Normalize(direction), bakedDirection) < MathF.Cos(MathUtil.DegreesToRadians(0.05f));
-        var rebuild = bakedTerrain != terrain || bakedResolution != resolution || texture == null;
-        if (!rebuild && !turned && !(heightsChanged && frame - lastBakeFrame >= HeightChangeBakeInterval))
+        if (bakeTask != null)
+        {
+            // Outdated before it completes (the sun turned, the settings changed): stop it, the next one starts once it has
+            if (IsOutdated(baking, terrain, direction, resolution))
+                bakeCancellation.Cancel();
             return;
+        }
 
-        Bake(drawContext, terrain, data, Vector3.Normalize(direction), resolution);
-        lastBakeFrame = frame;
+        var reshaped = baked.Revision != data.Revision && sinceLastBake.Elapsed.TotalSeconds >= HeightChangeBakeInterval;
+        if (IsOutdated(baked, terrain, direction, resolution) || reshaped)
+            StartBake(terrain, data, direction, resolution);
     }
 
-    private void Bake(RenderDrawContext context, TerrainRenderObject terrain, TerrainData data, Vector3 direction, int resolution)
+    private static bool IsOutdated(in BakeState state, TerrainRenderObject terrain, Vector3 direction, int resolution)
     {
-        if (texture == null || texture.Width != resolution)
-        {
-            texture?.Dispose();
-            texture = Texture.New2D(device, resolution, resolution, PixelFormat.R16G16_UNorm, TextureFlags.ShaderResource | TextureFlags.RenderTarget);
-            texture.Name = "TerrainShadows";
-        }
-        bakeEffect ??= new ImageEffectShader("TerrainShadowBakeShader");
+        return state.Terrain != terrain || state.Resolution != resolution
+            || Vector3.Dot(direction, state.Direction) < MathF.Cos(MathUtil.DegreesToRadians(0.05f));
+    }
 
-        // Towards the sun: the opposite of the light direction
+    private void StartBake(TerrainRenderObject terrain, TerrainData data, Vector3 direction, int resolution)
+    {
+        // The heights can change while baking (sculpting): bake a copy
+        if (heightsCopy?.Length != data.Heights.Length)
+            heightsCopy = new ushort[data.Heights.Length];
+        Array.Copy(data.Heights, heightsCopy, heightsCopy.Length);
+        var minHeight = data.Dequantize(0);
+        baking = new BakeState
+        {
+            Terrain = terrain,
+            Direction = direction,
+            Resolution = resolution,
+            Revision = data.Revision,
+            MinHeight = minHeight,
+            HeightRange = data.Dequantize(ushort.MaxValue) - minHeight,
+        };
+
+        // Towards the sun: the opposite of the light direction. Sun at the zenith (or below the horizon): nothing to march.
         var horizontal = new Vector2(-direction.X, -direction.Z);
         var horizontalLength = horizontal.Length();
-        // Sun at the zenith (or below the horizon): nothing to march, every texel is lit
-        var tanElevation = horizontalLength > 1e-4f ? -direction.Y / horizontalLength : 1e4f;
-        var sun = horizontalLength > 1e-4f && tanElevation > 0
-            ? new Vector4(horizontal / horizontalLength, tanElevation, MaxDistance)
-            : new Vector4(1, 0, 1e4f, 0);
-
-        TerrainMaterialParameters.Apply(bakeEffect.Parameters, terrain);
-        bakeEffect.Parameters.Set(TerrainShadowBakeShaderKeys.TerrainShadowSun, sun);
-        bakeEffect.SetOutput(texture);
-        using (context.PushRenderTargetsAndRestore())
-            bakeEffect.Draw(context);
-
-        bakedTerrain = terrain;
-        bakedDirection = direction;
-        bakedResolution = resolution;
-        // The first draw compiles the effect and rebuilds its parameter layout: bake once more with the parameters in place
-        heightsChanged = firstBake;
-        firstBake = false;
+        var tanElevation = horizontalLength > 1e-4f ? -direction.Y / horizontalLength : 0;
+        var maxDistance = horizontalLength > 1e-4f && tanElevation > 0 ? MaxDistance : 0;
+        var sun = horizontal / Math.Max(horizontalLength, 1e-4f);
+        var field = new HeightField(heightsCopy, data.Resolution, data.CellSize, baking.MinHeight, baking.HeightRange);
+        bakeCancellation = new CancellationTokenSource();
+        var cancellation = bakeCancellation.Token;
+        bakeTask = Task.Run(() => Bake(field, resolution, sun, tanElevation, maxDistance, cancellation), cancellation);
+        sinceLastBake.Restart();
     }
 
-    private void Subscribe(TerrainData data)
+    private void Upload(CommandList commandList, uint[] texels)
     {
-        if (subscribedData == data)
-            return;
-        if (subscribedData != null)
-            subscribedData.Changed -= OnDataChanged;
-        subscribedData = data;
-        if (data != null)
-            data.Changed += OnDataChanged;
+        var resolution = baking.Resolution;
+        if (texture == null || texture.Width != resolution)
+        {
+            // The receivers may still have the old one bound this frame
+            retiredTexture = texture;
+            texture = Texture.New2D(device, resolution, resolution, PixelFormat.R16G16_UNorm, TextureFlags.ShaderResource);
+            texture.Name = "TerrainShadows";
+        }
+        texture.SetData(commandList, texels);
+        baked = baking;
     }
 
-    private void OnDataChanged(object sender, TerrainDataChangedEventArgs e)
+    /// <summary>
+    /// Ray marches every texel towards the sun. Texel centers map linearly onto the terrain (local XZ = UV * terrain size).
+    /// Each texel packs (R16) the height above which a point is lit, normalized to the height range, and (G16) the distance
+    /// to that occluder, normalized to the maximum distance.
+    /// </summary>
+    private static uint[] Bake(HeightField field, int resolution, Vector2 sun, float tanElevation, float maxDistance, CancellationToken cancellation)
     {
-        if ((e.Flags & TerrainChangeFlags.Heights) != 0)
-            heightsChanged = true;
+        var texels = new uint[resolution * resolution];
+        var size = field.Size;
+        var maxHeight = field.MinHeight + field.HeightRange;
+        var cell = field.CellSize;
+        Parallel.For(0, resolution, new ParallelOptions { CancellationToken = cancellation }, row =>
+        {
+            var z = (row + 0.5f) / resolution * size;
+            for (int column = 0; column < resolution; column++)
+            {
+                var x = (column + 0.5f) / resolution * size;
+                var originHeight = field.Sample(x, z);
+
+                // Height of the highest ray towards the sun blocked by the terrain
+                var litHeight = float.NegativeInfinity;
+                var occluderDistance = 0.0f;
+                var t = cell;
+                while (t < maxDistance)
+                {
+                    var px = x + sun.X * t;
+                    var pz = z + sun.Y * t;
+                    if (px < 0 || pz < 0 || px > size || pz > size)
+                        break;
+                    // The ray climbs above the highest point of the terrain: nothing further can block it
+                    if (originHeight + t * tanElevation > maxHeight)
+                        break;
+                    var blocking = field.Sample(px, pz) - t * tanElevation;
+                    if (blocking > litHeight)
+                    {
+                        litHeight = blocking;
+                        occluderDistance = t;
+                    }
+                    // Longer steps further away
+                    t += Math.Max(cell, t * 0.02f);
+                }
+
+                var lit = float.IsNegativeInfinity(litHeight) ? 0 : Math.Clamp((litHeight - field.MinHeight) / Math.Max(field.HeightRange, 1e-4f), 0, 1);
+                var distance = maxDistance > 0 ? Math.Clamp(occluderDistance / maxDistance, 0, 1) : 0;
+                texels[row * resolution + column] = (uint)(lit * ushort.MaxValue + 0.5f) | (uint)(distance * ushort.MaxValue + 0.5f) << 16;
+            }
+        });
+        return texels;
+    }
+
+    /// <summary>
+    /// Bilinear sampling of a copy of the quantized heights (local meters).
+    /// </summary>
+    private readonly struct HeightField(ushort[] heights, int resolution, float cellSize, float minHeight, float heightRange)
+    {
+        public float CellSize => cellSize;
+
+        public float MinHeight => minHeight;
+
+        public float HeightRange => heightRange;
+
+        public float Size => (resolution - 1) * cellSize;
+
+        public float Sample(float x, float z)
+        {
+            var fx = x / cellSize;
+            var fz = z / cellSize;
+            var x0 = Math.Clamp((int)fx, 0, resolution - 2);
+            var z0 = Math.Clamp((int)fz, 0, resolution - 2);
+            var tx = Math.Clamp(fx - x0, 0, 1);
+            var tz = Math.Clamp(fz - z0, 0, 1);
+            var index0 = z0 * resolution + x0;
+            var index1 = index0 + resolution;
+            var top = heights[index0] + (heights[index0 + 1] - heights[index0]) * tx;
+            var bottom = heights[index1] + (heights[index1 + 1] - heights[index1]) * tx;
+            return minHeight + (top + (bottom - top) * tz) * (heightRange / ushort.MaxValue);
+        }
     }
 }
