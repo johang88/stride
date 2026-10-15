@@ -33,7 +33,8 @@ namespace Stride.Assets
         public override IEnumerable<Type> GetRuntimeTypes(AssetItem assetItem)
         {
             var runtimeTypesCollector = new RuntimeTypesCollector();
-            return runtimeTypesCollector.GetRuntimeTypes(assetItem.Asset);
+            // Configurations are saved as is into the game settings: the assets they reference (e.g. a UrlReference) are runtime dependencies
+            return runtimeTypesCollector.GetRuntimeTypes(assetItem.Asset).Append(typeof(Stride.Data.Configuration));
         }
 
         private class GameSettingsCompileCommand : AssetCommand<GameSettingsAsset>

@@ -100,7 +100,8 @@ public sealed class TiledNavigationMesh : GameSystemBase
         UpdateOrder = 19000;
         Enabled = true;
         sceneSystem = registry.GetSafeServiceAs<SceneSystem>();
-        shapeCache = registry.GetService<ShapeCacheSystem>();
+        // Shared with the collidable processors, which may not exist yet
+        shapeCache = registry.GetOrCreate<ShapeCacheSystem>();
         registry.AddService(this);
         Reset();
     }
