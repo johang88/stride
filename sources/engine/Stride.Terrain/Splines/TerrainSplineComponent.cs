@@ -7,6 +7,7 @@ using Stride.Core.Annotations;
 using Stride.Engine;
 using Stride.Engine.Design;
 using Stride.Rendering;
+using Stride.Terrain.Decals;
 
 namespace Stride.Terrain.Splines
 {
@@ -30,7 +31,8 @@ namespace Stride.Terrain.Splines
     /// A curve laid over the terrain, used for roads and rivers. The control points are the child entities
     /// (in order; the X scale of a point scales the width there). From the scene editor, the terrain tools
     /// apply the splines to the terrain: they flatten or carve the height field and paint layers along the curve.
-    /// A mesh following the curve is generated when a material is set (water surface, road decal).
+    /// A mesh following the curve is generated when a material is set (water surface), and a decal following the curve
+    /// can be baked into the terrain virtual texture (road surface, tracks).
     /// </summary>
     [DataContract("TerrainSplineComponent")]
     [Display("Terrain spline", Expand = ExpandRule.Once)]
@@ -184,6 +186,45 @@ namespace Stride.Terrain.Splines
         [DataMember(260)]
         [Display("Render group", "Mesh")]
         public RenderGroup RenderGroup { get; set; }
+
+        /// <summary>
+        /// Draws a decal along the curve into the terrain virtual texture (U across the width, V along the curve).
+        /// </summary>
+        [DataMember(300)]
+        [DefaultValue(false)]
+        [Display("Bake into virtual texture", "Decal")]
+        public bool BakeDecal { get; set; }
+
+        [DataMember(310)]
+        [NotNull]
+        [Display("Surface", "Decal", Expand = ExpandRule.Once)]
+        public TerrainDecalSurface Decal { get; set; } = new();
+
+        /// <summary>
+        /// Width of the decal relative to the spline width.
+        /// </summary>
+        [DataMember(320)]
+        [DefaultValue(1.0f)]
+        [DataMemberRange(0.01, 10, 0.05, 0.25, 2)]
+        [Display("Width", "Decal")]
+        public float DecalWidthScale { get; set; } = 1.0f;
+
+        /// <summary>
+        /// Length in meters covered by one repetition of the decal textures along the curve.
+        /// </summary>
+        [DataMember(330)]
+        [DefaultValue(4.0f)]
+        [DataMemberRange(0.01, 1000, 0.1, 1, 2)]
+        [Display("Texture length", "Decal")]
+        public float DecalTextureLength { get; set; } = 4.0f;
+
+        /// <summary>
+        /// Decals with a higher order are drawn over the others.
+        /// </summary>
+        [DataMember(340)]
+        [DefaultValue(0)]
+        [Display("Order", "Decal")]
+        public int DecalOrder { get; set; }
 
         /// <summary>
         /// Samples the curve through the current world positions of the control points.

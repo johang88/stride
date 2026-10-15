@@ -289,6 +289,18 @@ namespace Stride.Assets.Presentation.AssetEditors.TerrainEditor
             });
         }
 
+        /// <summary>
+        /// Gets the decals drawn into the terrain virtual textures of the editor game: world XZ bounds and tint (game thread).
+        /// </summary>
+        public Task<List<(Vector2 Min, Vector2 Max, Color4 Tint)>> GetDecals()
+        {
+            return controller.InvokeAsync(() =>
+            {
+                var registry = game?.Services.GetService<Stride.Terrain.Decals.TerrainDecalRegistry>();
+                return registry?.Decals.Select(x => (x.BoundsMin, x.BoundsMax, x.Surface?.Tint ?? Color4.White)).ToList() ?? new List<(Vector2, Vector2, Color4)>();
+            });
+        }
+
         private TerrainData CloneLocked()
         {
             lock (session.SyncRoot)

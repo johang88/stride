@@ -8,13 +8,14 @@ using Stride.Core.Mathematics;
 using Stride.Graphics;
 using Stride.Rendering;
 using Stride.Rendering.Images;
+using Stride.Terrain.Decals;
 using Stride.Terrain.Rendering;
 
 namespace Stride.Terrain.VirtualTexturing
 {
     /// <summary>
-    /// Runtime virtual texture of a terrain: pages of the blended terrain layers rendered on demand (from GPU feedback)
-    /// into a physical page cache, addressed through a mip-mapped page table.
+    /// Runtime virtual texture of a terrain: pages of the blended terrain layers and the terrain decals rendered on demand
+    /// (from GPU feedback) into a physical page cache, addressed through a mip-mapped page table.
     /// </summary>
     /// <remarks>
     /// Page table entries (R16_UInt): physical page x in bits 0-5, y in bits 6-11 and the mip of the resident page in
@@ -42,6 +43,8 @@ namespace Stride.Terrain.VirtualTexturing
         private readonly List<PageRequest> pendingPages = new();
         private readonly Dictionary<long, int> wantedPages = new();
         private readonly ImageEffectShader composeEffect;
+        private readonly TerrainDecalRegistry decalRegistry;
+        private readonly TerrainVirtualTextureDecals decals;
         private int frame;
         private int topPagesResident;
         private bool layersDirty = true;
@@ -61,7 +64,8 @@ namespace Stride.Terrain.VirtualTexturing
             public int Count;
         }
 
-        public TerrainVirtualTexture(GraphicsDevice device, TerrainRenderObject terrain, TerrainVirtualTextureSettings settings)
+        /// <param name="decalRegistry">The decals drawn over the terrain layers (optional).</param>
+        public TerrainVirtualTexture(GraphicsDevice device, TerrainRenderObject terrain, TerrainVirtualTextureSettings settings, TerrainDecalRegistry decalRegistry = null)
         {
             this.terrain = terrain;
             TexelsPerMeter = (int)settings.Density;
@@ -106,6 +110,10 @@ namespace Stride.Terrain.VirtualTexturing
             NormalAtlas.Name = "TerrainVTNormal";
 
             composeEffect = new ImageEffectShader("TerrainVTComposeShader");
+            this.decalRegistry = decalRegistry;
+            decals = new TerrainVirtualTextureDecals(device, decalRegistry);
+            if (decalRegistry != null)
+                decalRegistry.Changed += OnDecalsChanged;
 
             // The coarsest levels are always resident so every virtual page has a fallback
             for (int mip = Math.Max(0, MipCount - LockedMipCount); mip < MipCount; mip++)
@@ -160,6 +168,9 @@ namespace Stride.Terrain.VirtualTexturing
 
         public void Dispose()
         {
+            if (decalRegistry != null)
+                decalRegistry.Changed -= OnDecalsChanged;
+            decals.Dispose();
             composeEffect.Dispose();
             PageTable.Dispose();
             AlbedoAtlas.Dispose();
@@ -191,6 +202,13 @@ namespace Stride.Terrain.VirtualTexturing
                     }
                 }
             }
+        }
+
+        private void OnDecalsChanged(Vector2 worldMin, Vector2 worldMax)
+        {
+            var position = terrain.World.TranslationVector;
+            var offset = new Vector2(position.X, position.Z);
+            Invalidate(worldMin - offset, worldMax - offset);
         }
 
         /// <summary>
@@ -335,6 +353,11 @@ namespace Stride.Terrain.VirtualTexturing
                 composeEffect.SetViewport(new Viewport(slotX * PhysicalPageSize, slotY * PhysicalPageSize, PhysicalPageSize, PhysicalPageSize));
                 composeEffect.Draw(context);
             }
+
+            var position = terrain.World.TranslationVector;
+            var pageMin = new Vector2(position.X, position.Z) + origin - new Vector2(0.5f * texelSize);
+            var slotRect = new Rectangle(slotX * PhysicalPageSize, slotY * PhysicalPageSize, PhysicalPageSize, PhysicalPageSize);
+            decals.Draw(context, pageMin, PhysicalPageSize * texelSize, texelSize, slotRect, AlbedoAtlas, NormalAtlas);
         }
 
         private int AllocateSlot(bool locked)

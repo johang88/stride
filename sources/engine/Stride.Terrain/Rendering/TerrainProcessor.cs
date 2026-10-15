@@ -197,7 +197,7 @@ namespace Stride.Terrain
 
             renderObject.UsesVirtualTexture = vtConfig.Enabled;
             if (vtConfig.Enabled)
-                renderObject.VirtualTexture = new VirtualTexturing.TerrainVirtualTexture(graphicsDevice, renderObject, component.VirtualTexture);
+                renderObject.VirtualTexture = new VirtualTexturing.TerrainVirtualTexture(graphicsDevice, renderObject, component.VirtualTexture, Services.GetOrCreate<Decals.TerrainDecalRegistry>());
 
             var surfaceShader = vtConfig.Enabled ? "TerrainMaterialSurfaceVirtualTexture" : "TerrainMaterialSurface";
             renderObject.Material = Material.New(graphicsDevice, TerrainMaterialFactory.CreateDescriptor(surfaceShader), Services.GetService<Stride.Core.Serialization.Contents.ContentManager>());

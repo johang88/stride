@@ -1,0 +1,112 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Draws a terrain decal into a physical page of the terrain virtual texture, blended over the page content
+    /// (copied to the base textures before the draw). Same targets as TerrainVTComposeShader.
+    /// </summary>
+    shader TerrainVTDecalShader : ShaderBase
+    {
+        // World XZ
+        stage stream float2 DecalPosition : POSITION;
+        stage stream float2 DecalTexCoord : TEXCOORD0;
+        // x = position across (0-1), y = width (m), z = distance from the start (m), w = distance to the end (m)
+        stage stream float4 DecalEdge : TEXCOORD1;
+        // World XZ directions of increasing U (xy) and V (zw)
+        stage stream float4 DecalFrame : TEXCOORD2;
+
+        cbuffer PerDraw
+        {
+            // xy = world XZ of the page corner (border included), z = 1 / page size (meters)
+            stage float4 DecalPage;
+            // xy = pixel of the page corner in the atlas
+            stage float4 DecalSlot;
+            // rgb = albedo tint, a = opacity
+            stage float4 DecalTint;
+            // x = normal strength, y = normal blend (0 keep, 1 replace, 2 detail), z = roughness, w = height
+            stage float4 DecalParams;
+            // x = affect albedo, y = affect roughness, z = affect height, w = shape (0 rectangle, 1 ellipse)
+            stage float4 DecalFlags;
+            // x = edge fade (m)
+            stage float4 DecalFade;
+        }
+
+        stage Texture2D DecalAlbedo;
+        stage Texture2D DecalNormal;
+        stage Texture2D DecalRoughness;
+        // The page before this decal: albedo + height, and normal XY + roughness + occlusion
+        stage Texture2D DecalBaseAlbedo;
+        stage Texture2D DecalBaseNormal;
+
+        stage SamplerState DecalSampler
+        {
+            Filter = ANISOTROPIC;
+            MaxAnisotropy = 8;
+            AddressU = Wrap;
+            AddressV = Wrap;
+        };
+
+        stage override void VSMain()
+        {
+            float2 page = (streams.DecalPosition - DecalPage.xy) * DecalPage.z;
+            streams.ShadingPosition = float4(page.x * 2.0 - 1.0, 1.0 - page.y * 2.0, 0.0, 1.0);
+        }
+
+        // Distance (m) from the edge of the decal, negative outside
+        stage float EdgeDistance(float4 edge)
+        {
+            float length = edge.z + edge.w;
+            if (DecalFlags.w > 0.5)
+            {
+                float2 p = float2(edge.x, edge.z / max(length, 1e-5)) * 2.0 - 1.0;
+                return (1.0 - sqrt(dot(p, p))) * 0.5 * min(edge.y, length);
+            }
+            return min(min(edge.x, 1.0 - edge.x) * edge.y, min(edge.z, edge.w));
+        }
+
+        stage override void PSMain()
+        {
+            int2 pixel = (int2)streams.ShadingPosition.xy - (int2)DecalSlot.xy;
+            float4 baseAlbedo = DecalBaseAlbedo.Load(int3(pixel, 0));
+            float4 baseNormal = DecalBaseNormal.Load(int3(pixel, 0));
+
+            float2 uv = streams.DecalTexCoord;
+            float4 albedo = DecalAlbedo.Sample(DecalSampler, uv) * DecalTint;
+            float fade = saturate(EdgeDistance(streams.DecalEdge) / max(DecalFade.x, 1e-4));
+            float opacity = saturate(albedo.a * fade);
+
+            float3 color = DecalFlags.x > 0.5 ? lerp(baseAlbedo.rgb, albedo.rgb, opacity) : baseAlbedo.rgb;
+            float height = DecalFlags.z > 0.5 ? lerp(baseAlbedo.a, DecalParams.w, opacity) : baseAlbedo.a;
+
+            // Terrain tangent space: X along +X, Y along +Z
+            float2 normalXY = baseNormal.xy;
+            if (DecalParams.y > 0.5)
+            {
+                float2 frameU = normalize(streams.DecalFrame.xy);
+                float2 frameV = normalize(streams.DecalFrame.zw);
+                float2 n = (DecalNormal.Sample(DecalSampler, uv).xy * 2.0 - 1.0) * DecalParams.x;
+                float2 decalXY = n.x * frameU + n.y * frameV;
+                float2 baseXY = baseNormal.xy * 2.0 - 1.0;
+                float3 terrainNormal = float3(baseXY, sqrt(saturate(1.0 - dot(baseXY, baseXY))));
+                float3 normal;
+                if (DecalParams.y > 1.5)
+                {
+                    normal = normalize(float3(baseXY + decalXY * opacity, terrainNormal.z));
+                }
+                else
+                {
+                    float3 decalNormal = float3(decalXY, sqrt(saturate(1.0 - dot(decalXY, decalXY))));
+                    normal = normalize(lerp(terrainNormal, decalNormal, opacity));
+                }
+                normalXY = normal.xy * 0.5 + 0.5;
+            }
+
+            float roughness = DecalFlags.y > 0.5 ? lerp(baseNormal.z, DecalRoughness.Sample(DecalSampler, uv).r * DecalParams.z, opacity) : baseNormal.z;
+
+            streams.ColorTarget = float4(color, height);
+            streams.ColorTarget1 = float4(normalXY, roughness, baseNormal.w);
+        }
+    };
+}
