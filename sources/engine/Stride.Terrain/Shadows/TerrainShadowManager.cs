@@ -2,13 +2,11 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
-using System.Diagnostics;
 using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using Stride.Core.Mathematics;
 using Stride.Graphics;
 using Stride.Rendering;
+using Stride.Rendering.ComputeEffect;
 using Stride.Rendering.Lights;
 using Stride.Rendering.Shadows;
 using Stride.Terrain.Rendering;
@@ -16,44 +14,43 @@ using Stride.Terrain.Rendering;
 namespace Stride.Terrain.Shadows;
 
 /// <summary>
-/// Shadows cast by the active terrain at any distance, independently of the shadow map cascades: a ray march of the
-/// height field towards the sun stores, per texel, the height above which a point is lit and the distance to its occluder
-/// (for the penumbra). Directional light shadows (<see cref="TerrainDirectionalShadowMapRenderer"/>) combine it with their
-/// shadow map, so it darkens the terrain and the objects on it.
+/// Shadows cast by the active terrain at any distance, independently of the shadow map cascades: a compute line sweep
+/// along the light (TerrainShadowGenerator, from the Ogre Terra sample) stores, per texel, the height above which a point
+/// is lit and the distance to its occluder (for the penumbra). Directional light shadows
+/// (<see cref="TerrainDirectionalShadowMapRenderer"/>) combine it with their shadow map, so it darkens the terrain and the
+/// objects on it.
 /// </summary>
 /// <remarks>
-/// Baked on the CPU in the background (a parallel ray march over a copy of the heights) and uploaded once complete, again
-/// when the sun turns, the heights change or the settings change. The previous result stays in use meanwhile.
+/// Generated again when the light turns, the heights change or the settings change.
 /// </remarks>
 public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
 {
     /// <summary>
-    /// Minimum time (seconds) between two bakes caused by height changes (sculpting).
+    /// Minimum number of frames between two generations caused by height changes (sculpting).
     /// </summary>
-    private const double HeightChangeBakeInterval = 0.5;
+    private const int HeightChangeInterval = 10;
+
+    private const int ThreadsPerGroup = 64;
+
+    /// <summary>
+    /// Entries of the line start and group arrays (cbuffers of 4096 entries; starts past them use zw).
+    /// </summary>
+    private const int MaxEntries = 4096;
 
     private readonly GraphicsDevice device;
-    private readonly Stopwatch sinceLastBake = Stopwatch.StartNew();
+    private readonly Int4[] starts = new Int4[MaxEntries];
+    private readonly TerrainShadowGroupData[] groups = new TerrainShadowGroupData[MaxEntries];
+    private ComputeEffectShader generator;
     private Texture texture;
-    private Texture retiredTexture;
-    private ushort[] heightsCopy;
-    private Task<uint[]> bakeTask;
-    private CancellationTokenSource bakeCancellation;
     private long lastDrawFrame = -1;
+    private long lastGenerationFrame;
 
-    // What the texture holds, and what the bake in progress computes
-    private BakeState baked;
-    private BakeState baking;
-
-    private struct BakeState
-    {
-        public TerrainRenderObject Terrain;
-        public Vector3 Direction;
-        public int Resolution;
-        public int Revision;
-        public float MinHeight;
-        public float HeightRange;
-    }
+    // What the texture holds
+    private TerrainRenderObject bakedTerrain;
+    private Vector3 bakedDirection;
+    private int bakedRevision;
+    private float bakedMinHeight;
+    private float bakedHeightRange;
 
     public TerrainShadowManager(GraphicsDevice device)
     {
@@ -66,7 +63,7 @@ public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
     public bool Enabled { get; set; } = true;
 
     /// <summary>
-    /// Maximum size of the shadow texture (texels per side); never more than the height samples.
+    /// Size of the shadow texture (texels per side), at most 4096 and never more than the height samples.
     /// </summary>
     public int Resolution { get; set; } = 1024;
 
@@ -76,7 +73,7 @@ public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
     public float PenumbraScale { get; set; } = 0.02f;
 
     /// <summary>
-    /// Maximum distance (meters) of the occluders.
+    /// Occluder distance (meters) at which the penumbra stops widening.
     /// </summary>
     public float MaxDistance { get; set; } = 2000.0f;
 
@@ -91,25 +88,17 @@ public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
     internal Vector3? LightDirection { get; set; }
 
     /// <summary>
-    /// Whether the shadows of the active terrain are baked.
+    /// Whether the shadows of the active terrain are generated.
     /// </summary>
-    public bool IsReady => Enabled && texture != null && Active != null && baked.Terrain == Active;
-
-    /// <summary>
-    /// Whether a bake is in progress (its result replaces the current shadows when complete).
-    /// </summary>
-    public bool IsBaking => bakeTask != null;
+    public bool IsReady => Enabled && texture != null && Active != null && bakedTerrain == Active;
 
     public void Dispose()
     {
-        // A bake in progress only touches its own copy of the heights: let it stop and drop the result
-        bakeCancellation?.Cancel();
-        bakeTask = null;
         texture?.Dispose();
         texture = null;
-        retiredTexture?.Dispose();
-        retiredTexture = null;
-        baked = default;
+        generator?.Dispose();
+        generator = null;
+        bakedTerrain = null;
     }
 
     /// <summary>
@@ -153,7 +142,7 @@ public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
         var texelSize = size / texture.Width;
         // A texel of slack for the interpolation between texels
         var bias = new Vector2(0.1f + texelSize, 0.3f);
-        return (texture, new Vector4(position.X, position.Z, 1.0f / size, 1.0f), new Vector4(baked.MinHeight + position.Y, baked.HeightRange, MaxDistance, PenumbraScale), bias);
+        return (texture, new Vector4(position.X, position.Z, 1.0f / size, 1.0f), new Vector4(bakedMinHeight + position.Y, bakedHeightRange, MaxDistance, PenumbraScale), bias);
     }
 
     void IRenderViewExtension.Collect(RenderContext context)
@@ -167,167 +156,208 @@ public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
             return;
         lastDrawFrame = frame;
 
-        // Replaced last frame: no longer bound
-        retiredTexture?.Dispose();
-        retiredTexture = null;
-
-        if (bakeTask is { IsCompleted: true } finished)
-        {
-            bakeTask = null;
-            bakeCancellation.Dispose();
-            bakeCancellation = null;
-            if (finished.Status == TaskStatus.RanToCompletion)
-                Upload(drawContext.CommandList, finished.Result);
-        }
-
         var terrain = Active;
-        if (!Enabled || terrain?.Data is not { Resolution: >= 2 } data || LightDirection is not { } direction)
-        {
-            bakeCancellation?.Cancel();
+        if (!Enabled || terrain?.Data is not { Resolution: >= 2 } data || terrain.Gpu == null || LightDirection is not { } direction)
             return;
-        }
 
         direction = Vector3.Normalize(direction);
-        var resolution = Math.Clamp(Math.Min(Resolution, data.Resolution), 64, 4096);
-        if (bakeTask != null)
-        {
-            // Outdated before it completes (the sun turned, the settings changed): stop it, the next one starts once it has
-            if (IsOutdated(baking, terrain, direction, resolution))
-                bakeCancellation.Cancel();
+        var resolution = Math.Clamp(Math.Min(Resolution, data.Resolution), 64, MaxEntries);
+        var turned = Vector3.Dot(direction, bakedDirection) < MathF.Cos(MathUtil.DegreesToRadians(0.05f));
+        var rebuild = bakedTerrain != terrain || texture == null || texture.Width != resolution;
+        var reshaped = bakedRevision != data.Revision && frame - lastGenerationFrame >= HeightChangeInterval;
+        if (!rebuild && !turned && !reshaped)
             return;
-        }
 
-        var reshaped = baked.Revision != data.Revision && sinceLastBake.Elapsed.TotalSeconds >= HeightChangeBakeInterval;
-        if (IsOutdated(baked, terrain, direction, resolution) || reshaped)
-            StartBake(terrain, data, direction, resolution);
-    }
-
-    private static bool IsOutdated(in BakeState state, TerrainRenderObject terrain, Vector3 direction, int resolution)
-    {
-        return state.Terrain != terrain || state.Resolution != resolution
-            || Vector3.Dot(direction, state.Direction) < MathF.Cos(MathUtil.DegreesToRadians(0.05f));
-    }
-
-    private void StartBake(TerrainRenderObject terrain, TerrainData data, Vector3 direction, int resolution)
-    {
-        // The heights can change while baking (sculpting): bake a copy
-        if (heightsCopy?.Length != data.Heights.Length)
-            heightsCopy = new ushort[data.Heights.Length];
-        Array.Copy(data.Heights, heightsCopy, heightsCopy.Length);
-        var minHeight = data.Dequantize(0);
-        baking = new BakeState
-        {
-            Terrain = terrain,
-            Direction = direction,
-            Resolution = resolution,
-            Revision = data.Revision,
-            MinHeight = minHeight,
-            HeightRange = data.Dequantize(ushort.MaxValue) - minHeight,
-        };
-
-        // Towards the sun: the opposite of the light direction. Sun at the zenith (or below the horizon): nothing to march.
-        var horizontal = new Vector2(-direction.X, -direction.Z);
-        var horizontalLength = horizontal.Length();
-        var tanElevation = horizontalLength > 1e-4f ? -direction.Y / horizontalLength : 0;
-        var maxDistance = horizontalLength > 1e-4f && tanElevation > 0 ? MaxDistance : 0;
-        var sun = horizontal / Math.Max(horizontalLength, 1e-4f);
-        var field = new HeightField(heightsCopy, data.Resolution, data.CellSize, baking.MinHeight, baking.HeightRange);
-        bakeCancellation = new CancellationTokenSource();
-        var cancellation = bakeCancellation.Token;
-        bakeTask = Task.Run(() => Bake(field, resolution, sun, tanElevation, maxDistance, cancellation), cancellation);
-        sinceLastBake.Restart();
-    }
-
-    private void Upload(CommandList commandList, uint[] texels)
-    {
-        var resolution = baking.Resolution;
         if (texture == null || texture.Width != resolution)
         {
-            // The receivers may still have the old one bound this frame
-            retiredTexture = texture;
-            texture = Texture.New2D(device, resolution, resolution, PixelFormat.R16G16_UNorm, TextureFlags.ShaderResource);
+            texture?.Dispose();
+            texture = Texture.New2D(device, resolution, resolution, PixelFormat.R16G16_UNorm, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
             texture.Name = "TerrainShadows";
         }
-        texture.SetData(commandList, texels);
-        baked = baking;
+        Generate(context, drawContext, terrain, data, direction, resolution);
+
+        bakedTerrain = terrain;
+        bakedDirection = direction;
+        bakedRevision = data.Revision;
+        lastGenerationFrame = frame;
     }
 
     /// <summary>
-    /// Ray marches every texel towards the sun. Texel centers map linearly onto the terrain (local XZ = UV * terrain size).
-    /// Each texel packs (R16) the height above which a point is lit, normalized to the height range, and (G16) the distance
-    /// to that occluder, normalized to the maximum distance.
+    /// Sets up the lines of the sweep (Bresenham, as in the Terra sample's TerraShadowMapper) and dispatches one thread per line.
     /// </summary>
-    private static uint[] Bake(HeightField field, int resolution, Vector2 sun, float tanElevation, float maxDistance, CancellationToken cancellation)
+    private void Generate(RenderContext context, RenderDrawContext drawContext, TerrainRenderObject terrain, TerrainData data, Vector3 direction, int resolution)
     {
-        var texels = new uint[resolution * resolution];
-        var size = field.Size;
-        var maxHeight = field.MinHeight + field.HeightRange;
-        var cell = field.CellSize;
-        Parallel.For(0, resolution, new ParallelOptions { CancellationToken = cancellation }, row =>
+        var size = (data.Resolution - 1) * data.CellSize;
+        var texelSize = size / resolution;
+
+        var light2d = new Vector2(direction.X, direction.Z);
+        if (light2d.LengthSquared() < 1e-12f)
+            light2d = Vector2.UnitX; // Light straight down: any direction, nothing is shadowed
+        light2d.Normalize();
+
+        var width = (uint)resolution;
+        var height = (uint)resolution;
+
+        // Line from (x0, y0) to (x1, y1) along the light, with its slope (Bresenham)
+        var x0 = 0.0f;
+        var y0 = 0.0f;
+        var x1 = (float)(width - 1u);
+        var y1 = (float)(height - 1u);
+        uint heightOrWidth;
+        uint widthOrHeight;
+        float majorComponent;
+        if (Math.Abs(light2d.X) > Math.Abs(light2d.Y))
         {
-            var z = (row + 0.5f) / resolution * size;
-            for (int column = 0; column < resolution; column++)
+            y1 *= Math.Abs(light2d.Y) / Math.Abs(light2d.X);
+            heightOrWidth = height;
+            widthOrHeight = width;
+            majorComponent = Math.Abs(direction.X);
+        }
+        else
+        {
+            x1 *= Math.Abs(light2d.X) / Math.Abs(light2d.Y);
+            heightOrWidth = width;
+            widthOrHeight = height;
+            majorComponent = Math.Abs(direction.Z);
+        }
+
+        if (light2d.X < 0)
+            (x0, x1) = (x1, x0);
+        if (light2d.Y < 0)
+            (y0, y1) = (y1, y0);
+
+        var steep = Math.Abs(y1 - y0) > Math.Abs(x1 - x0);
+        if (steep)
+        {
+            (x0, y0) = (y0, x0);
+            (x1, y1) = (y1, x1);
+        }
+
+        float dx;
+        float dy;
+        {
+            var lx0 = x0;
+            var ly0 = y0;
+            var lx1 = x1;
+            var ly1 = y1;
+            if (lx0 > lx1)
             {
-                var x = (column + 0.5f) / resolution * size;
-                var originHeight = field.Sample(x, z);
-
-                // Height of the highest ray towards the sun blocked by the terrain
-                var litHeight = float.NegativeInfinity;
-                var occluderDistance = 0.0f;
-                var t = cell;
-                while (t < maxDistance)
-                {
-                    var px = x + sun.X * t;
-                    var pz = z + sun.Y * t;
-                    if (px < 0 || pz < 0 || px > size || pz > size)
-                        break;
-                    // The ray climbs above the highest point of the terrain: nothing further can block it
-                    if (originHeight + t * tanElevation > maxHeight)
-                        break;
-                    var blocking = field.Sample(px, pz) - t * tanElevation;
-                    if (blocking > litHeight)
-                    {
-                        litHeight = blocking;
-                        occluderDistance = t;
-                    }
-                    // Longer steps further away
-                    t += Math.Max(cell, t * 0.02f);
-                }
-
-                var lit = float.IsNegativeInfinity(litHeight) ? 0 : Math.Clamp((litHeight - field.MinHeight) / Math.Max(field.HeightRange, 1e-4f), 0, 1);
-                var distance = maxDistance > 0 ? Math.Clamp(occluderDistance / maxDistance, 0, 1) : 0;
-                texels[row * resolution + column] = (uint)(lit * ushort.MaxValue + 0.5f) | (uint)(distance * ushort.MaxValue + 0.5f) << 16;
+                (lx0, lx1) = (lx1, lx0);
+                (ly0, ly1) = (ly1, ly0);
             }
-        });
-        return texels;
+            dx = lx1 - lx0 + 1.0f;
+            dy = Math.Abs(ly1 - ly0);
+            if (Math.Abs(light2d.X) > Math.Abs(light2d.Y))
+                dy += Math.Abs(light2d.Y) / Math.Abs(light2d.X);
+            else
+                dy += Math.Abs(light2d.X) / Math.Abs(light2d.Y);
+        }
+
+        var xyStep = new Int2(x0 < x1 ? 1 : -1, y0 < y1 ? 1 : -1);
+
+        // Per step along the major axis: the horizontal distance travelled and the height the light ray drops
+        var horizontalLength = MathF.Sqrt(direction.X * direction.X + direction.Z * direction.Z);
+        var stepLength = horizontalLength > 1e-6f ? texelSize * horizontalLength / Math.Max(majorComponent, 1e-6f) : texelSize;
+        var heightRange = data.Dequantize(ushort.MaxValue) - data.Dequantize(0);
+        var heightDelta = -direction.Y / Math.Max(majorComponent, 1e-6f) * texelSize;
+        // Beyond the height range nothing can be shadowed (or everything, below the horizon): avoid infinities
+        heightDelta = Math.Clamp(heightDelta, -2 * heightRange - 1, 2 * heightRange + 1);
+
+        // y0 must be 0 or heightOrWidth depending on the direction of the y steps
+        if (y0 >= y1)
+            y0 = heightOrWidth;
+
+        var fStep = dx * 0.5f / dy;
+        var extraIterations = (uint)Math.Min(Math.Ceiling(dy), Math.Ceiling(((heightOrWidth - 1u) / fStep - 1u) * 0.5f));
+
+        var firstThreadGroups = AlignToNextMultiple(heightOrWidth, ThreadsPerGroup) / ThreadsPerGroup;
+        var lastThreadGroups = AlignToNextMultiple(extraIterations, ThreadsPerGroup) / ThreadsPerGroup;
+        var totalThreadGroups = firstThreadGroups + lastThreadGroups;
+        var idy = (int)Math.Floor(dy);
+
+        // "First" series of thread groups: lines starting on the edge facing the light
+        var startsIndex = 0;
+        var writeXY = true;
+        for (var h = 0; h < firstThreadGroups; ++h)
+        {
+            var startY = h * ThreadsPerGroup;
+            for (var i = 0; i < ThreadsPerGroup; ++i)
+                SetStart(ref startsIndex, ref writeXY, (int)x0, (int)y0 + (startY + i) * xyStep.Y);
+            groups[h].Iterations = (int)widthOrHeight - Math.Max(0, idy - (int)(heightOrWidth - startY));
+            groups[h].DeltaErrorStart = 0;
+        }
+
+        // "Last" series: lines starting on the other edge, covering the corner the first ones miss
+        for (var h = 0; h < lastThreadGroups; ++h)
+        {
+            var xN = GetXStepsNeededToReachY(ThreadsPerGroup * (uint)h + 1u, fStep);
+            for (var i = 0; i < ThreadsPerGroup; ++i)
+                SetStart(ref startsIndex, ref writeXY, (int)x0 + xN * xyStep.X, (int)y0 - i * xyStep.Y);
+            groups[firstThreadGroups + h].Iterations = (int)widthOrHeight - xN;
+            groups[firstThreadGroups + h].DeltaErrorStart = GetErrorAfterXSteps((uint)xN, dx, dy) - dx * 0.5f;
+        }
+
+        // Heights read from the mip closest to the shadow texel size
+        var heightMip = (int)Math.Floor(Math.Log2(Math.Max(1.0f, texelSize / data.CellSize)));
+        var heightSamples = Math.Max(1, data.Resolution >> heightMip);
+
+        generator ??= new ComputeEffectShader(context) { ShaderSourceName = "TerrainShadowGenerator" };
+        var parameters = generator.Parameters;
+        parameters.Set(TerrainShadowGeneratorKeys.TerrainShadowOutput, texture);
+        parameters.Set(TerrainShadowGeneratorKeys.TerrainShadowHeightmap, terrain.Gpu.Heightmap);
+        parameters.Set(TerrainShadowGeneratorKeys.TerrainShadowStartXY, starts.Length, ref starts[0]);
+        parameters.Set(TerrainShadowGeneratorKeys.TerrainShadowGroup, groups.Length, ref groups[0]);
+        parameters.Set(TerrainShadowGeneratorKeys.TerrainShadowDelta, new Vector2(dx, dy));
+        parameters.Set(TerrainShadowGeneratorKeys.TerrainShadowXyStep, new Vector2(xyStep.X, xyStep.Y));
+        parameters.Set(TerrainShadowGeneratorKeys.TerrainShadowIsSteep, steep ? 1 : 0);
+        parameters.Set(TerrainShadowGeneratorKeys.TerrainShadowHeightDelta, heightDelta);
+        parameters.Set(TerrainShadowGeneratorKeys.TerrainShadowStepLength, stepLength);
+        parameters.Set(TerrainShadowGeneratorKeys.TerrainShadowTexelSize, texelSize);
+        parameters.Set(TerrainShadowGeneratorKeys.TerrainShadowHeightMip, heightMip);
+        parameters.Set(TerrainShadowGeneratorKeys.TerrainShadowHeightSpacing, data.CellSize * (1 << heightMip));
+        parameters.Set(TerrainShadowGeneratorKeys.TerrainShadowHeightSamples, heightSamples);
+        parameters.Set(TerrainShadowGeneratorKeys.TerrainShadowMinHeight, data.Dequantize(0));
+        parameters.Set(TerrainShadowGeneratorKeys.TerrainShadowHeightRange, heightRange);
+        parameters.Set(TerrainShadowGeneratorKeys.TerrainShadowMaxDistance, Math.Max(MaxDistance, 1.0f));
+        generator.ThreadGroupCounts = new Int3((int)totalThreadGroups, 1, 1);
+        generator.ThreadNumbers = new Int3(ThreadsPerGroup, 1, 1);
+        generator.Draw(drawContext, "TerrainShadowGenerator");
+
+        bakedMinHeight = data.Dequantize(0);
+        bakedHeightRange = heightRange;
     }
 
-    /// <summary>
-    /// Bilinear sampling of a copy of the quantized heights (local meters).
-    /// </summary>
-    private readonly struct HeightField(ushort[] heights, int resolution, float cellSize, float minHeight, float heightRange)
+    private void SetStart(ref int index, ref bool writeXY, int x, int y)
     {
-        public float CellSize => cellSize;
-
-        public float MinHeight => minHeight;
-
-        public float HeightRange => heightRange;
-
-        public float Size => (resolution - 1) * cellSize;
-
-        public float Sample(float x, float z)
+        if (writeXY)
         {
-            var fx = x / cellSize;
-            var fz = z / cellSize;
-            var x0 = Math.Clamp((int)fx, 0, resolution - 2);
-            var z0 = Math.Clamp((int)fz, 0, resolution - 2);
-            var tx = Math.Clamp(fx - x0, 0, 1);
-            var tz = Math.Clamp(fz - z0, 0, 1);
-            var index0 = z0 * resolution + x0;
-            var index1 = index0 + resolution;
-            var top = heights[index0] + (heights[index0 + 1] - heights[index0]) * tx;
-            var bottom = heights[index1] + (heights[index1 + 1] - heights[index1]) * tx;
-            return minHeight + (top + (bottom - top) * tz) * (heightRange / ushort.MaxValue);
+            starts[index].X = x;
+            starts[index].Y = y;
+        }
+        else
+        {
+            starts[index].Z = x;
+            starts[index].W = y;
+        }
+        if (++index >= MaxEntries)
+        {
+            index -= MaxEntries;
+            writeXY = false;
         }
     }
+
+    private static int GetXStepsNeededToReachY(uint y, float fStep)
+        => (int)Math.Ceiling(Math.Max(((y << 1) - 1u) * fStep, 0.0f));
+
+    private static float GetErrorAfterXSteps(uint xIterationsToSkip, float dx, float dy)
+    {
+        // Round the accumulated error to the next multiple of dx, minus the accumulated error: the error at (x, y).
+        // Must be done in double precision, or some light angles give artifacts.
+        var accumulatedError = dx * 0.5 + dy * (double)xIterationsToSkip;
+        var newErrorAtX = Math.Ceiling(accumulatedError / dx) * dx - accumulatedError;
+        return (float)newErrorAtX;
+    }
+
+    private static uint AlignToNextMultiple(uint offset, uint alignment)
+        => (offset + alignment - 1u) / alignment * alignment;
 }
