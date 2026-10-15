@@ -74,7 +74,8 @@ public sealed class TerrainRenderFeature : SubRenderFeature
             viewNodes.Clear();
             var lodView = view is ShadowMapRenderView shadowView && shadowView.RenderView != null ? shadowView.RenderView : view;
             var lodOrigin = GetViewPosition(lodView);
-            var frustum = view.Frustum;
+            // Only camera views get their frustum filled in: shadow views would select no node and cast nothing
+            var frustum = view is ShadowMapRenderView ? new BoundingFrustum(ref view.ViewProjection) : view.Frustum;
             terrain.QuadTree.Select(terrain.World.TranslationVector, lodOrigin, ref frustum, view.VisiblityIgnoreDepthPlanes, viewNodes);
             terrain.ViewNodes[view] = new TerrainRenderObject.NodeRange { Offset = nodes.Count, Count = viewNodes.Count };
             nodes.AddRange(viewNodes);
