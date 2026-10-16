@@ -11,6 +11,7 @@ using Stride.Core.Mathematics;
 using Stride.Graphics;
 using Stride.Rendering;
 using Stride.Rendering.Shadows;
+using Stride.Terrain.Shadows;
 using Buffer = Stride.Graphics.Buffer;
 
 namespace Stride.Terrain.Rendering;
@@ -63,6 +64,7 @@ public sealed class TerrainRenderFeature : SubRenderFeature
 
         // Select the nodes of each terrain in each view that draws it
         nodes.Clear();
+        var terrainShadows = Context.Services.GetService<TerrainShadowManager>();
         foreach (var renderNode in rootFeature.RenderNodes)
         {
             if (renderNode.RenderObject is not TerrainRenderObject terrain || terrain.QuadTree == null)
@@ -72,6 +74,13 @@ public sealed class TerrainRenderFeature : SubRenderFeature
                 continue;
 
             viewNodes.Clear();
+            // Its terrain shadows already darken what its directional shadow maps would: casting there too would only add their hard edges
+            if (view is ShadowMapRenderView { ShadowMapTexture.Renderer: TerrainDirectionalShadowMapRenderer } && terrainShadows is { IsReady: true } && terrainShadows.Active == terrain)
+            {
+                terrain.ViewNodes[view] = new TerrainRenderObject.NodeRange { Offset = nodes.Count, Count = 0 };
+                continue;
+            }
+
             var lodView = view is ShadowMapRenderView shadowView && shadowView.RenderView != null ? shadowView.RenderView : view;
             var lodOrigin = GetViewPosition(lodView);
             // Only camera views get their frustum filled in: shadow views would select no node and cast nothing

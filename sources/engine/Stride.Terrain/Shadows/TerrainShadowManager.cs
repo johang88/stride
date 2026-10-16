@@ -16,9 +16,9 @@ namespace Stride.Terrain.Shadows;
 /// <summary>
 /// Shadows cast by the active terrain at any distance, independently of the shadow map cascades: a compute line sweep
 /// along the light (TerrainShadowGenerator, from the Ogre Terra sample) stores, per texel, the height above which a point
-/// is lit and the distance to its occluder (for the penumbra). Directional light shadows
+/// is lit, the distance to its occluder and the ground height. Directional light shadows
 /// (<see cref="TerrainDirectionalShadowMapRenderer"/>) combine it with their shadow map, so it darkens the terrain and the
-/// objects on it.
+/// objects on it; they filter it like soft shadow maps: the occluders found around a receiver set the penumbra width.
 /// </summary>
 /// <remarks>
 /// Generated again when the light turns, the heights change or the settings change.
@@ -70,7 +70,12 @@ public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
     /// <summary>
     /// Penumbra width per meter between a receiver and its occluder (the sun is about 0.01; wider looks softer).
     /// </summary>
-    public float PenumbraScale { get; set; } = 0.02f;
+    public float PenumbraScale { get; set; } = 0.04f;
+
+    /// <summary>
+    /// Widest penumbra across the light (meters): the receivers look this far around them for occluders.
+    /// </summary>
+    public float MaxPenumbra { get; set; } = 16.0f;
 
     /// <summary>
     /// Occluder distance (meters) at which the penumbra stops widening.
@@ -129,10 +134,10 @@ public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
 
     /// <summary>
     /// Shader parameters of the receivers: region (xy = world XZ of the terrain origin, z = 1 / size, w = ready),
-    /// params (min height, height range, max occluder distance, penumbra scale) and bias (height bias, minimum penumbra).
-    /// The texture is null when not ready.
+    /// params (min height, height range, max occluder distance, penumbra scale) and filter (height bias, minimum vertical
+    /// penumbra, minimum and maximum filter radius). The texture is null when not ready.
     /// </summary>
-    internal (Texture Texture, Vector4 Region, Vector4 Params, Vector2 Bias) GetReceiverParameters()
+    internal (Texture Texture, Vector4 Region, Vector4 Params, Vector4 Filter) GetReceiverParameters()
     {
         var data = Active?.Data;
         if (!IsReady || data == null)
@@ -140,9 +145,10 @@ public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
         var position = Active.World.TranslationVector;
         var size = (data.Resolution - 1) * data.CellSize;
         var texelSize = size / texture.Width;
-        // A texel of slack for the interpolation between texels
-        var bias = new Vector2(0.1f + texelSize, 0.3f);
-        return (texture, new Vector4(position.X, position.Z, 1.0f / size, 1.0f), new Vector4(bakedMinHeight + position.Y, bakedHeightRange, MaxDistance, PenumbraScale), bias);
+        // A texel of slack for the interpolation between texels, and at least a texel of filtering to hide them
+        var maxRadius = Math.Max(texelSize, MaxPenumbra * 0.5f);
+        var filter = new Vector4(0.1f + texelSize, 0.3f, Math.Min(texelSize, maxRadius), maxRadius);
+        return (texture, new Vector4(position.X, position.Z, 1.0f / size, 1.0f), new Vector4(bakedMinHeight + position.Y, bakedHeightRange, MaxDistance, PenumbraScale), filter);
     }
 
     void IRenderViewExtension.Collect(RenderContext context)
@@ -171,7 +177,7 @@ public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
         if (texture == null || texture.Width != resolution)
         {
             texture?.Dispose();
-            texture = Texture.New2D(device, resolution, resolution, PixelFormat.R16G16_UNorm, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
+            texture = Texture.New2D(device, resolution, resolution, PixelFormat.R16G16B16A16_UNorm, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
             texture.Name = "TerrainShadows";
         }
         Generate(context, drawContext, terrain, data, direction, resolution);

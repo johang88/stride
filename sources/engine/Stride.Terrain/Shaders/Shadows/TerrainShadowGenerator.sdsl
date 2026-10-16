@@ -18,13 +18,14 @@ namespace Stride.Terrain
     /// <summary>
     /// Generates the terrain shadows for one light direction: each thread walks one line of shadow texels along the light
     /// (Bresenham), carrying the height of the highest ray blocked so far (dropping by HeightDelta per step) and the distance
-    /// to its occluder. Each texel gets (x) that height, normalized like the heightmap, and (y) the occluder distance,
-    /// normalized to TerrainShadowMaxDistance: a point is lit above that height (see TerrainShadowMapReceiverDirectional).
+    /// to its occluder. Each texel gets (x) that height, normalized like the heightmap: a point is lit above it, (y) the
+    /// occluder distance, normalized to TerrainShadowMaxDistance, and (z) the terrain height there, normalized like x
+    /// (see TerrainShadowMapReceiverDirectional).
     /// Texel centers map linearly onto the terrain: local XZ = (texel + 0.5) / size * terrain size.
     /// </summary>
     shader TerrainShadowGenerator : ComputeShaderBase
     {
-        stage RWTexture2D<float2> TerrainShadowOutput;
+        stage RWTexture2D<float4> TerrainShadowOutput;
 
         // R16_UNorm heights, one texel per sample, with mip maps
         stage Texture2D<float> TerrainShadowHeightmap;
@@ -82,10 +83,12 @@ namespace Stride.Terrain
             state.y += TerrainShadowStepLength;
 
             // Lit above the rays blocked by the texels before this one
-            float lit = saturate((state.x - TerrainShadowMinHeight) / max(TerrainShadowHeightRange, 1e-4));
-            TerrainShadowOutput[texel] = float2(lit, saturate(state.y / TerrainShadowMaxDistance));
-
             float height = LoadTerrainHeight(texel);
+            float invRange = 1.0 / max(TerrainShadowHeightRange, 1e-4);
+            float lit = saturate((state.x - TerrainShadowMinHeight) * invRange);
+            float ground = saturate((height - TerrainShadowMinHeight) * invRange);
+            TerrainShadowOutput[texel] = float4(lit, saturate(state.y / TerrainShadowMaxDistance), ground, 0.0);
+
             if (height >= state.x)
                 state = float2(height, 0.0);
             return state;

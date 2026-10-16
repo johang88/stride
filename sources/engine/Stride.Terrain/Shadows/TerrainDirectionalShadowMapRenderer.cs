@@ -33,7 +33,7 @@ public sealed class TerrainDirectionalShadowMapRenderer : LightDirectionalShadow
         private ObjectParameterKey<Texture> textureKey;
         private ValueParameterKey<Vector4> regionKey;
         private ValueParameterKey<Vector4> paramsKey;
-        private ValueParameterKey<Vector2> biasKey;
+        private ValueParameterKey<Vector4> filterKey;
 
         public TerrainShaderGroupData(LightShadowType shadowType) : base(shadowType)
         {
@@ -51,7 +51,7 @@ public sealed class TerrainDirectionalShadowMapRenderer : LightDirectionalShadow
             textureKey = TerrainShadowMapReceiverDirectionalKeys.TerrainShadowTexture.ComposeWith(compositionKey);
             regionKey = TerrainShadowMapReceiverDirectionalKeys.TerrainShadowRegion.ComposeWith(compositionKey);
             paramsKey = TerrainShadowMapReceiverDirectionalKeys.TerrainShadowParams.ComposeWith(compositionKey);
-            biasKey = TerrainShadowMapReceiverDirectionalKeys.TerrainShadowBias.ComposeWith(compositionKey);
+            filterKey = TerrainShadowMapReceiverDirectionalKeys.TerrainShadowFilter.ComposeWith(compositionKey);
         }
 
         public override void ApplyViewParameters(RenderDrawContext context, ParameterCollection parameters, FastListStruct<LightDynamicEntry> currentLights)
@@ -63,11 +63,11 @@ public sealed class TerrainDirectionalShadowMapRenderer : LightDirectionalShadow
             if (manager != null && currentLights.Count > 0)
                 manager.LightDirection = currentLights[0].Light.Direction;
 
-            var (texture, region, terrainParams, bias) = manager?.GetReceiverParameters() ?? default;
+            var (texture, region, terrainParams, filter) = manager?.GetReceiverParameters() ?? default;
             parameters.Set(textureKey, texture ?? context.GraphicsDevice.GetSharedWhiteTexture());
             parameters.Set(regionKey, region);
             parameters.Set(paramsKey, terrainParams);
-            parameters.Set(biasKey, bias);
+            parameters.Set(filterKey, filter);
         }
     }
 }
