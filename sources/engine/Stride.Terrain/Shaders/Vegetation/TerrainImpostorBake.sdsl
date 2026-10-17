@@ -1,0 +1,73 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Renders one mesh of the source model into a single impostor atlas frame.
+    ///
+    /// This deliberately does not go through the material system: we only need albedo, coverage
+    /// and a normal, and every foliage material in the set is diffuse map + alpha cutoff. Sampling
+    /// the diffuse map directly keeps the baker self contained - no extra render stage, no
+    /// temporary entities in the scene - at the cost of ignoring exotic material graphs.
+    ///
+    /// Output is unlit on purpose. The impostor billboard is relit at runtime like any other
+    /// surface, so baking lighting in would double it up.
+    ///
+    /// The geometric normal is used rather than the mesh's normal map. Foliage is modelled as
+    /// cards whose face normal already points the way the leaves face, and at frame resolutions
+    /// this low the normal map detail is averaged away regardless - dropping it also removes any
+    /// dependence on the source mesh carrying tangents.
+    /// </summary>
+    shader TerrainImpostorBake : ShaderBase, Texturing, PositionStream4
+    {
+        cbuffer PerDraw
+        {
+            stage float4x4 ImpostorWorldViewProjection;
+            stage float4x4 ImpostorWorldView;
+            stage float ImpostorAlphaCutoff;
+
+        }
+
+        rgroup PerDraw
+        {
+            stage Texture2D ImpostorDiffuseMap;
+        }
+
+        stage stream float3 meshNormal : NORMAL;
+        stage stream float2 texCoord : TEXCOORD0;
+
+        // Normal in the capture frame's view space, so the runtime billboard can rotate it back
+        // into world space using the same basis it used to pick the frame.
+        stage stream float3 normalVS;
+
+        stage override void VSMain()
+        {
+            streams.ShadingPosition = mul(streams.Position, ImpostorWorldViewProjection);
+            streams.normalVS = mul(float4(streams.meshNormal, 0), ImpostorWorldView).xyz;
+        }
+
+        stage override void PSMain()
+        {
+            float4 albedo = ImpostorDiffuseMap.Sample(LinearSampler, streams.texCoord);
+
+            // Cut out before anything else so the atlas never contains half transparent leaf
+            // fringes - those turn into grey halos once the billboard is alpha tested again.
+            if (albedo.a < ImpostorAlphaCutoff)
+            {
+                discard;
+            }
+
+            // Two sided: foliage cards are single sided geometry lit from both faces, so flip
+            // any normal pointing away from the capture camera.
+            float3 n = normalize(streams.normalVS);
+            if (n.z < 0)
+            {
+                n = -n;
+            }
+
+            streams.ColorTarget = float4(albedo.rgb, 1);
+            streams.ColorTarget1 = float4(n * 0.5 + 0.5, 1);
+        }
+    };
+}

@@ -1,0 +1,133 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Scatters the instances of one model of a grass layer around the camera: one thread per cell of a grid anchored to the
+    /// world (so plants stay put as the camera moves), jittered, kept with the probability of the painted density.
+    /// The cells pick one of the layer's models at random; this pass appends those of model GrassVariant.
+    /// </summary>
+    shader TerrainGrassPopulate : ComputeShaderBase, TerrainBase
+    {
+        struct TerrainGrassInstance
+        {
+            // xyz = world position, w = scale
+            float4 PositionScale;
+            // Rotation quaternion
+            float4 Rotation;
+        };
+
+        stage RWStructuredBuffer<TerrainGrassInstance> GrassInstances;
+        stage RWByteAddressBuffer GrassInstanceCounter;
+
+        // Grass density, one slice per layer, one texel every two terrain samples
+        stage Texture2DArray<float> GrassDensity;
+
+        // Camera position in terrain local space
+        stage float3 GrassCameraLocal;
+        // Terrain origin in world space
+        stage float3 GrassTerrainOrigin;
+        // Cells along each side of the grid
+        stage uint GrassGridSize;
+        stage float GrassSpacing;
+        stage float GrassDrawDistance;
+        stage float GrassFadeStart;
+        stage float GrassMinScale;
+        stage float GrassMaxScale;
+        stage float GrassLayer;
+        stage uint GrassVariant;
+        stage uint GrassVariantCount;
+        stage float GrassAlignToTerrain;
+        stage uint GrassMaxInstances;
+
+        stage SamplerState GrassDensitySampler
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        override void Compute()
+        {
+            uint2 tid = streams.DispatchThreadId.xy;
+            if (tid.x >= GrassGridSize || tid.y >= GrassGridSize)
+                return;
+
+            // This thread's cell in a grid anchored to the terrain
+            int2 cameraCell = (int2)floor(GrassCameraLocal.xz / GrassSpacing);
+            int2 cell = cameraCell + (int2)tid - (int)(GrassGridSize / 2);
+            float2 cellSeed = (float2)cell + GrassLayer * 131.7;
+
+            float2 jitter = float2(GrassHash(cellSeed), GrassHash(cellSeed.yx + 19.19)) - 0.5;
+            float2 localXZ = ((float2)cell + 0.5 + jitter * 0.9) * GrassSpacing;
+
+            // The model of this cell
+            if ((uint)(GrassHash(cellSeed * 1.37 + 7.1) * GrassVariantCount) != GrassVariant)
+                return;
+
+            float terrainSize = (TerrainResolution - 1.0) * TerrainCellSize;
+            if (any(localXZ < 0.0) || any(localXZ > terrainSize))
+                return;
+
+            // Shrink away towards the draw distance
+            float distanceToCamera = distance(localXZ, GrassCameraLocal.xz);
+            float fade = 1.0 - smoothstep(GrassDrawDistance * GrassFadeStart, GrassDrawDistance, distanceToCamera);
+            if (fade <= 0.01)
+                return;
+
+            // Kept with the probability of the density (bilinear: smooth borders)
+            float2 densityUV = (localXZ / (TerrainCellSize * 2.0) + 0.5) / ((TerrainResolution - 1.0) * 0.5 + 1.0);
+            float density = GrassDensity.SampleLevel(GrassDensitySampler, float3(densityUV, GrassLayer), 0);
+            if (GrassHash(cellSeed * 3.17 + 41.3) >= density)
+                return;
+
+            // Not in holes
+            int2 samplePos = (int2)round(localXZ / TerrainCellSize);
+            if (TerrainHoleWeight(TerrainLoadSplat(samplePos)) > 0.5)
+                return;
+
+            float scale = fade * lerp(GrassMinScale, GrassMaxScale, GrassHash(cellSeed * 31.0));
+            float3 position = float3(localXZ.x, TerrainSampleHeight(localXZ), localXZ.y) + GrassTerrainOrigin;
+
+            float3 up = normalize(lerp(float3(0, 1, 0), TerrainSampleNormalLevel(localXZ, 0), GrassAlignToTerrain));
+            float angle = (GrassHash(cellSeed * 73.0) * 2.0 - 1.0) * 3.14159265;
+            float4 rotation = GrassQuaternionMultiply(float4(0, sin(angle * 0.5), 0, cos(angle * 0.5)), GrassQuaternionFromUp(up));
+
+            uint index;
+            GrassInstanceCounter.InterlockedAdd(0, 1, index);
+            if (index >= GrassMaxInstances)
+                return;
+            TerrainGrassInstance instance;
+            instance.PositionScale = float4(position, scale);
+            instance.Rotation = rotation;
+            GrassInstances[index] = instance;
+        }
+
+        float GrassHash(float2 p)
+        {
+            p = frac(p * 0.1031);
+            p += dot(p, p.yx + 33.33);
+            return frac((p.x + p.y) * p.x * p.y);
+        }
+
+        float4 GrassQuaternionMultiply(float4 left, float4 right)
+        {
+            float4 result;
+            result.x = (right.x * left.w + left.x * right.w + right.y * left.z) - (right.z * left.y);
+            result.y = (right.y * left.w + left.y * right.w + right.z * left.x) - (right.x * left.z);
+            result.z = (right.z * left.w + left.z * right.w + right.x * left.y) - (right.y * left.x);
+            result.w = (right.w * left.w) - (right.x * left.x + right.y * left.y + right.z * left.z);
+            return result;
+        }
+
+        // Rotation from +Y to a direction
+        float4 GrassQuaternionFromUp(float3 target)
+        {
+            float real = 1.0 + target.y;
+            if (real < 1e-6)
+                return float4(0, 0, 1, 0);
+            return normalize(float4(target.z, 0, -target.x, real));
+        }
+    };
+}

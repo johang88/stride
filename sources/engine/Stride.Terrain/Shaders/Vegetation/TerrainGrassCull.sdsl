@@ -1,0 +1,95 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Keeps the grass instances inside a view's frustum and writes their world matrices (and the matrices transforming
+    /// their normals) for the instanced draw. Dispatched indirectly with one thread per scattered instance.
+    /// </summary>
+    shader TerrainGrassCull : ComputeShaderBase
+    {
+        struct TerrainGrassInstance
+        {
+            float4 PositionScale;
+            float4 Rotation;
+        };
+
+        struct TerrainGrassMatrix
+        {
+            float4x4 Matrix;
+        };
+
+        stage float GrassBoundingRadius;
+        stage float4 GrassFrustumPlanes[6];
+
+        stage StructuredBuffer<TerrainGrassInstance> GrassInstances;
+        stage ByteAddressBuffer GrassInstanceCounter;
+        stage uint GrassMaxInstances;
+        stage RWStructuredBuffer<TerrainGrassMatrix> GrassWorld;
+        stage RWStructuredBuffer<TerrainGrassMatrix> GrassWorldInverse;
+        stage RWByteAddressBuffer GrassVisibleCounter;
+
+        override void Compute()
+        {
+            uint index = streams.DispatchThreadId.x;
+            if (index >= min(GrassInstanceCounter.Load(0), GrassMaxInstances))
+                return;
+
+            float4 positionScale = GrassInstances[index].PositionScale;
+            float4 rotation = GrassInstances[index].Rotation;
+
+            [unroll]
+            for (int i = 0; i < 6; i++)
+            {
+                if (dot(GrassFrustumPlanes[i].xyz, positionScale.xyz) + GrassFrustumPlanes[i].w + GrassBoundingRadius * positionScale.w <= 0.0)
+                    return;
+            }
+
+            float4x4 world = GrassTransformation(positionScale.w, rotation, positionScale.xyz);
+
+            uint visibleIndex;
+            GrassVisibleCounter.InterlockedAdd(0, 1, visibleIndex);
+
+            TerrainGrassMatrix m;
+            m.Matrix = world;
+            GrassWorld[visibleIndex] = m;
+            // Rotation and uniform scale: the normal transform is the matrix itself, up to the scale (normals are renormalized)
+            m.Matrix = transpose(world);
+            GrassWorldInverse[visibleIndex] = m;
+        }
+
+        // Same layout as Matrix.Transformation (row vectors, translation in the last row)
+        float4x4 GrassTransformation(float scale, float4 q, float3 translation)
+        {
+            float xx = q.x * q.x;
+            float yy = q.y * q.y;
+            float zz = q.z * q.z;
+            float xy = q.x * q.y;
+            float zw = q.z * q.w;
+            float zx = q.z * q.x;
+            float yw = q.y * q.w;
+            float yz = q.y * q.z;
+            float xw = q.x * q.w;
+
+            float4x4 result;
+            result._11 = (1.0 - 2.0 * (yy + zz)) * scale;
+            result._12 = 2.0 * (xy + zw) * scale;
+            result._13 = 2.0 * (zx - yw) * scale;
+            result._14 = 0.0;
+            result._21 = 2.0 * (xy - zw) * scale;
+            result._22 = (1.0 - 2.0 * (zz + xx)) * scale;
+            result._23 = 2.0 * (yz + xw) * scale;
+            result._24 = 0.0;
+            result._31 = 2.0 * (zx + yw) * scale;
+            result._32 = 2.0 * (yz - xw) * scale;
+            result._33 = (1.0 - 2.0 * (yy + xx)) * scale;
+            result._34 = 0.0;
+            result._41 = translation.x;
+            result._42 = translation.y;
+            result._43 = translation.z;
+            result._44 = 1.0;
+            return result;
+        }
+    };
+}

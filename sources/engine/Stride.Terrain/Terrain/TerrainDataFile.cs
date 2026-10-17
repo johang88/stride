@@ -12,15 +12,16 @@ namespace Stride.Terrain;
 /// Reads and writes the editable samples of a terrain (the source file of a terrain asset).
 /// </summary>
 /// <remarks>
-/// Layout: "SDTD" magic, version, resolution, cell size, min/max height, then the heights (row-delta encoded)
-/// and the packed splat samples, each block Brotli-compressed with a length prefix.
+/// Layout: "SDTD" magic, version, resolution, cell size, min/max height, then the heights (row-delta encoded),
+/// the packed splat samples, a mask of the grass layers that have density followed by their density samples,
+/// and the vegetation instances; each block Brotli-compressed with a length prefix.
 /// </remarks>
 public static class TerrainDataFile
 {
     public const string Extension = ".sdterraindata";
 
     private const uint Magic = 0x44544453; // "SDTD"
-    private const int Version = 1;
+    private const int Version = 2;
 
     public static void Write(string path, TerrainData data)
     {
@@ -62,6 +63,22 @@ public static class TerrainDataFile
 
         WriteBlock(writer, MemoryMarshal.AsBytes(deltas.AsSpan()));
         WriteBlock(writer, MemoryMarshal.AsBytes(data.Splat.AsSpan()));
+
+        var grassLayers = 0;
+        for (int layer = 0; layer < TerrainData.MaxGrassLayers; layer++)
+        {
+            if (data.GetGrassDensity(layer) != null)
+                grassLayers |= 1 << layer;
+        }
+        writer.Write(grassLayers);
+        for (int layer = 0; layer < TerrainData.MaxGrassLayers; layer++)
+        {
+            if (data.GetGrassDensity(layer) is { } density)
+                WriteBlock(writer, density);
+        }
+
+        writer.Write(data.Vegetation.Count);
+        WriteBlock(writer, MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(data.Vegetation)));
     }
 
     public static TerrainData Read(string path)
@@ -98,6 +115,17 @@ public static class TerrainDataFile
         }
 
         ReadBlock(reader, MemoryMarshal.AsBytes(data.Splat.AsSpan()));
+
+        var grassLayers = reader.ReadInt32();
+        for (int layer = 0; layer < TerrainData.MaxGrassLayers; layer++)
+        {
+            if ((grassLayers & (1 << layer)) != 0)
+                ReadBlock(reader, data.GetOrCreateGrassDensity(layer));
+        }
+
+        var instanceCount = reader.ReadInt32();
+        data.Vegetation.AddRange(new TerrainVegetationInstance[instanceCount]);
+        ReadBlock(reader, MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(data.Vegetation)));
         return data;
     }
 
@@ -130,6 +158,26 @@ public static class TerrainDataFile
                 result.Splat[index] = source.Splat[nz * source.Resolution + nx];
             }
         }
+
+        // Grass density by its position (nearest sample), vegetation as is (positions are in meters)
+        var grassSize = result.GrassResolution;
+        for (int layer = 0; layer < TerrainData.MaxGrassLayers; layer++)
+        {
+            if (source.GetGrassDensity(layer) is not { } density)
+                continue;
+            var target = result.GetOrCreateGrassDensity(layer);
+            var sourceSize = source.GrassResolution;
+            for (int z = 0; z < grassSize; z++)
+            {
+                for (int x = 0; x < grassSize; x++)
+                {
+                    var sx = Math.Clamp((int)MathF.Round(x * result.GrassCellSize / source.GrassCellSize), 0, sourceSize - 1);
+                    var sz = Math.Clamp((int)MathF.Round(z * result.GrassCellSize / source.GrassCellSize), 0, sourceSize - 1);
+                    target[z * grassSize + x] = density[sz * sourceSize + sx];
+                }
+            }
+        }
+        result.Vegetation.AddRange(source.Vegetation);
         return result;
     }
 

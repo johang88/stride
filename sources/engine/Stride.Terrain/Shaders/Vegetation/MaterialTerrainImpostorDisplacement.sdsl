@@ -1,0 +1,222 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Expands a structured buffer of instance positions into camera facing impostor billboards
+    /// and picks the three hemi-octahedral atlas frames that bracket the current view direction.
+    ///
+    /// The three frames and their barycentric weights are handed to the pixel stage rather than
+    /// resolved here, so that ComputeColorTerrainImpostorDiffuse can blend them per pixel - blending is
+    /// what removes the angular popping the old sixteen frame azimuth ring suffered from.
+    /// </summary>
+    shader MaterialTerrainImpostorDisplacement
+        : IMaterialSurface, PositionStream4, Transformation, Texturing, NormalStream, TerrainImpostorOctahedral, TerrainImpostorStream
+    {
+        stage stream uint VertexId : SV_VERTEXID;
+
+        rgroup PerMaterial
+        {
+            // Per instance: xyz = position of the model origin, w = scale (low half) and rotation around Y (high half) as halves
+            stage StructuredBuffer<float4> ImpostorInstances;
+        }
+
+        cbuffer PerMaterial
+        {
+            // World size of the baked quad (at scale 1), and the offset from instance origin to bounds centre (model space).
+            stage float2 ImpostorWorldSize;
+            stage float3 ImpostorCenterOffset;
+
+            stage float ImpostorGridSize;
+
+            // Billboards are suppressed inside FadeEnd and fully opaque beyond FadeStart; between
+            // the two they dither out as the real mesh dithers in.
+            stage float ImpostorFadeStart;
+            stage float ImpostorFadeEnd;
+
+            // The player camera, uploaded per frame. Distinct from Eye, which is per view and
+            // becomes the light's virtual position while rendering a shadow cascade.
+            stage float3 ImpostorCameraPosition;
+        }
+
+        // Projects a vertex offset onto one frame's capture basis. Because the bake used an
+        // orthographic camera this is exact, which is what lets the three frames blend without
+        // ghosting rather than merely cross fading two flat images.
+        float2 GetFrameUv(float2 frame, float3 offset, float scaleX, float scaleY)
+        {
+            float2 gridUv = frame / (ImpostorGridSize - 1.0);
+            float3 dir = HemiOctDecode(gridUv);
+
+            float3 frameRight;
+            float3 frameUp;
+            GetFrameBasis(dir, frameRight, frameUp);
+
+            float2 local = float2(dot(offset, frameRight) / max(scaleX, 0.0001), dot(offset, frameUp) / max(scaleY, 0.0001));
+
+            // frameUp is +y in view space, i.e. up on screen, but texture V runs downwards - so V
+            // is flipped while U passes through.
+            float2 frameUv = clamp(float2(0.5 + local.x, 0.5 - local.y), 0.001, 0.999);
+
+            return (frame + frameUv) / ImpostorGridSize;
+        }
+
+        // Rotation around Y matching Matrix.RotationY (row vectors)
+        float3 RotateY(float3 v, float angle)
+        {
+            float c = cos(angle);
+            float s = sin(angle);
+            return float3(v.x * c + v.z * s, v.y, -v.x * s + v.z * c);
+        }
+
+        override void Compute()
+        {
+            const float2 baseVerts[6] = {
+                float2(0.5, 0), float2(0.5, 1), float2(-0.5, 1),
+                float2(0.5, 0), float2(-0.5, 1), float2(-0.5, 0)
+            };
+
+            uint triangleVertex = streams.VertexId % (uint)6;
+            uint itemIndex = streams.VertexId / (uint)6;
+
+            float2 quadPos = baseVerts[triangleVertex];
+
+            float4 itemData = ImpostorInstances[itemIndex];
+            float3 origin = itemData.xyz;
+
+            uint packed = asuint(itemData.w);
+            float instanceScale = f16tof32(packed & 0xFFFF);
+            float yaw = f16tof32((packed >> 16) & 0xFFFF);
+            float scaleX = ImpostorWorldSize.x * instanceScale;
+            float scaleY = ImpostorWorldSize.y * instanceScale;
+
+            // The bake captured a square centred on the model's bounds, so the billboard has to be
+            // centred there too - trees pivot at the base, the impostor does not.
+            float3 center = origin + RotateY(ImpostorCenterOffset * instanceScale, yaw);
+
+            // Orthographic projections have M44 == 1, perspective ones 0, and the only orthographic
+            // views in this pipeline are the directional shadow cascades - so this doubles as "am I
+            // rendering into a shadow map" without a flag having to be plumbed per view. Stride's
+            // own LightDirectionalShadowMapRenderer keys off the same test. A view that somehow
+            // arrived with an unset projection reads as orthographic, which is the harmless side.
+            bool isOrthographic = Projection._m33 != 0.0;
+
+            // Perspective views face the eye point. Orthographic ones face along the view axis,
+            // which for a shadow cascade points back at the light: the card then presents the sun
+            // the same silhouette a camera standing at the sun would see, so what lands in the
+            // shadow map is the tree's outline rather than the edge on sliver a camera facing
+            // billboard would have given.
+            //
+            // Row 2 of ViewInverse is the view's local +Z, and LookAtRH builds that as
+            // normalize(eye - target), so it already points from the scene back towards the viewer -
+            // same sense as Eye - center, no negation.
+            float3 toCamera = isOrthographic
+                ? normalize(ViewInverse._m20_m21_m22)
+                : normalize(Eye.xyz - center);
+
+            // Full spherical billboard rather than the old Y axis only one: hemi-octahedral frames
+            // cover elevation, so the quad has to tilt to face the camera or the upper frames are
+            // never seen square on.
+            float3 worldUp = float3(0, 1, 0);
+            if (abs(toCamera.y) > 0.999)
+            {
+                worldUp = float3(0, 0, 1);
+            }
+
+            // Order matters: cross(toCamera, worldUp) - not cross(worldUp, toCamera) - so that the
+            // quad keeps the winding baseVerts was authored for. Swapping the operands negates
+            // right, reverses every triangle and gets the whole billboard backface culled.
+            float3 right = normalize(cross(toCamera, worldUp));
+            float3 up = cross(right, toCamera);
+
+            float3 offset = right * (quadPos.x * scaleX) + up * ((quadPos.y - 0.5) * scaleY);
+            float3 vertexWorldPos = center + offset;
+
+            streams.Position = float4(vertexWorldPos, 1);
+
+            // Frame selection. Clamp the view direction into the upper hemisphere - looking up at
+            // a tree from below just reuses the horizon ring, which is far less wrong than
+            // wrapping round to the top of the tree.
+            // The atlas was captured in model space: look it up with the view direction turned back by the instance's yaw
+            float3 toCameraModel = RotateY(toCamera, -yaw);
+            float3 lookup = normalize(float3(toCameraModel.x, max(toCameraModel.y, 0.0), toCameraModel.z));
+
+            float grid = ImpostorGridSize - 1.0;
+            float2 g = HemiOctEncode(lookup) * grid;
+            float2 gf = clamp(floor(g), 0.0, grid - 1.0);
+            float2 t = g - gf;
+
+            float2 f0;
+            float2 f1;
+            float2 f2;
+            float3 weights;
+
+            if (t.x + t.y < 1.0)
+            {
+                f0 = gf;
+                f1 = gf + float2(1, 0);
+                f2 = gf + float2(0, 1);
+                weights = float3(1.0 - t.x - t.y, t.x, t.y);
+            }
+            else
+            {
+                f0 = gf + float2(1, 1);
+                f1 = gf + float2(1, 0);
+                f2 = gf + float2(0, 1);
+                weights = float3(t.x + t.y - 1.0, 1.0 - t.y, 1.0 - t.x);
+            }
+
+            float3 offsetModel = RotateY(offset, -yaw);
+            streams.ImpostorWeights = weights;
+            streams.ImpostorUV0 = GetFrameUv(f0, offsetModel, scaleX, scaleY);
+            streams.ImpostorUV1 = GetFrameUv(f1, offsetModel, scaleX, scaleY);
+            streams.ImpostorUV2 = GetFrameUv(f2, offsetModel, scaleX, scaleY);
+
+            // Hand the billboard basis to the pixel stage so it can rotate the baked frame-space
+            // normal back into world space.
+            streams.ImpostorRight = right;
+            streams.ImpostorUp = up;
+            streams.ImpostorForward = toCamera;
+
+            streams.meshNormal = streams.normalWS = toCamera;
+            streams.meshTangent = float4(right, 1);
+
+            // Measured from the player camera in every view, never from Eye. Which LOD an instance
+            // is drawn at is decided once per frame against the camera, so the shadow pass has to
+            // agree with that decision - measuring against the light instead would put every
+            // impostor past the handover distance and let near trees drop a blocky card shadow on
+            // top of the mesh shadow they already cast.
+            float viewDistance = length(ImpostorCameraPosition - center);
+
+            if (isOrthographic)
+            {
+                // A shadow map is depth only, so there is nothing to cross fade against and a
+                // dithered card would just punch holes in the shadow. Hand over hard at the
+                // distance where UpdateMeshInstances stops submitting mesh instances instead.
+                //
+                // That test is on XZ distance while this is a 3D distance, and 3D >= XZ always, so
+                // the two ranges overlap by a little rather than leaving a gap. Overlap costs
+                // nothing here: two casters writing the same depth produce one shadow.
+                streams.ImpostorFade = 1.0;
+
+                if (viewDistance < ImpostorFadeStart)
+                {
+                    streams.Position = float4(0, 0, 0, 0);
+                }
+            }
+            else
+            {
+                float fadeRange = max(ImpostorFadeStart - ImpostorFadeEnd, 0.0001);
+                streams.ImpostorFade = saturate((viewDistance - ImpostorFadeEnd) / fadeRange);
+
+                // Fully inside the mesh range - collapse the triangle so it is never rasterised at
+                // all rather than paying for a fully discarded quad.
+                if (viewDistance < ImpostorFadeEnd)
+                {
+                    streams.Position = float4(0, 0, 0, 0);
+                }
+            }
+        }
+
+    };
+}

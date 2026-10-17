@@ -20,15 +20,24 @@ internal static class TerrainMaterialParameters
     public static void Apply(ParameterCollection parameters, TerrainRenderObject renderObject)
     {
         var data = renderObject.Data;
+        ApplyBase(parameters, renderObject);
+        parameters.Set(TerrainMaterialVertexKeys.TerrainPatchQuads, (float)renderObject.QuadTree.PatchQuads);
+        ApplyMorph(parameters, renderObject.QuadTree);
+        ApplyLayers(parameters, renderObject.Gpu.Heightmap.GraphicsDevice, data.Material);
+    }
+
+    /// <summary>
+    /// The height field parameters of TerrainBase (e.g. for compute shaders sampling the terrain).
+    /// </summary>
+    public static void ApplyBase(ParameterCollection parameters, TerrainRenderObject renderObject)
+    {
+        var data = renderObject.Data;
         parameters.Set(TerrainBaseKeys.TerrainHeightmap, renderObject.Gpu.Heightmap);
         parameters.Set(TerrainBaseKeys.TerrainSplatMap, renderObject.Gpu.SplatMap);
         parameters.Set(TerrainBaseKeys.TerrainCellSize, data.CellSize);
         parameters.Set(TerrainBaseKeys.TerrainResolution, (float)data.Resolution);
         parameters.Set(TerrainBaseKeys.TerrainMinHeight, data.MinHeight);
         parameters.Set(TerrainBaseKeys.TerrainHeightRange, data.MaxHeight - data.MinHeight);
-        parameters.Set(TerrainMaterialVertexKeys.TerrainPatchQuads, (float)renderObject.QuadTree.PatchQuads);
-        ApplyMorph(parameters, renderObject.QuadTree);
-        ApplyLayers(parameters, renderObject.Gpu.Heightmap.GraphicsDevice, data.Material);
     }
 
     public static void ApplyMorph(ParameterCollection parameters, TerrainQuadTree quadTree)

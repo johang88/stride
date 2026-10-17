@@ -2,6 +2,7 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
+using System.Collections.Generic;
 using Stride.Core;
 using Stride.Core.Mathematics;
 
@@ -15,6 +16,8 @@ public enum TerrainBrushTool
     Noise,
     [Display("Paint layer")] Paint,
     [Display("Holes")] Hole,
+    [Display("Paint grass")] Grass,
+    [Display("Place trees")] Vegetation,
 }
 
 /// <summary>
@@ -70,6 +73,43 @@ public struct TerrainBrushSettings
     public float Rotation;
 
     /// <summary>
+    /// Grass layer painted by the grass tool.
+    /// </summary>
+    public int GrassLayer;
+
+    /// <summary>
+    /// Density (0-1) the grass tool paints towards.
+    /// </summary>
+    public float GrassDensity;
+
+    /// <summary>
+    /// Vegetation type placed by the vegetation tool.
+    /// </summary>
+    public int VegetationType;
+
+    /// <summary>
+    /// Number of instances per 100 m² the vegetation tool fills the brush up to (where the brush is fully on).
+    /// </summary>
+    public float VegetationDensity;
+
+    /// <summary>
+    /// Smallest distance between two placed instances (meters, any type).
+    /// </summary>
+    public float VegetationSpacing;
+
+    /// <summary>
+    /// Scale range of placed instances.
+    /// </summary>
+    public float VegetationMinScale;
+
+    public float VegetationMaxScale;
+
+    /// <summary>
+    /// Steepest slope (degrees) instances are placed on.
+    /// </summary>
+    public float VegetationMaxSlope;
+
+    /// <summary>
     /// Distance from the center to the farthest point the brush can touch: the corners of a rotated mask reach beyond the radius.
     /// </summary>
     public readonly float Reach => Mask != null ? Radius * MathF.Sqrt(2) : Radius;
@@ -81,6 +121,12 @@ public struct TerrainBrushSettings
         Strength = 0.5f,
         Falloff = 0.6f,
         NoiseScale = 8.0f,
+        GrassDensity = 1.0f,
+        VegetationDensity = 2.0f,
+        VegetationSpacing = 3.0f,
+        VegetationMinScale = 0.8f,
+        VegetationMaxScale = 1.2f,
+        VegetationMaxSlope = 35.0f,
     };
 }
 
@@ -141,8 +187,9 @@ public static class TerrainBrush
     /// <param name="settings">The brush.</param>
     /// <param name="deltaTime">Time the brush is applied for (seconds).</param>
     /// <param name="beforeModify">Called with the region about to be modified (e.g. to record undo data).</param>
+    /// <param name="beforeVegetationModify">Called before the vegetation instances are modified (e.g. to record undo data).</param>
     /// <returns>False if the brush doesn't touch the terrain.</returns>
-    public static bool Apply(TerrainData data, Vector2 center, in TerrainBrushSettings settings, float deltaTime, Action<Int2, Int2> beforeModify = null)
+    public static bool Apply(TerrainData data, Vector2 center, in TerrainBrushSettings settings, float deltaTime, Action<Int2, Int2> beforeModify = null, Action beforeVegetationModify = null)
     {
         if (settings.Radius <= 0)
             return false;
@@ -150,6 +197,26 @@ public static class TerrainBrush
         GetRegion(data, center, settings.Reach, out var min, out var max);
         if (min.X > max.X || min.Y > max.Y)
             return false;
+
+        if (settings.Tool == TerrainBrushTool.Vegetation)
+        {
+            if (ApplyVegetation(data, center, settings, deltaTime, beforeVegetationModify))
+                data.NotifyChanged(Int2.Zero, new Int2(data.Resolution - 1), TerrainChangeFlags.Vegetation);
+            return true;
+        }
+
+        if (settings.Tool == TerrainBrushTool.Grass)
+        {
+            if ((uint)settings.GrassLayer >= TerrainData.MaxGrassLayers)
+                return false;
+            // Whole grass samples (one every two terrain samples), in terrain samples for the undo tiles
+            var grassMin = new Int2(min.X / 2, min.Y / 2);
+            var grassMax = Int2.Min(new Int2((max.X + 1) / 2, (max.Y + 1) / 2), new Int2(data.GrassResolution - 1));
+            beforeModify?.Invoke(new Int2(grassMin.X * 2, grassMin.Y * 2), new Int2(grassMax.X * 2, grassMax.Y * 2));
+            ApplyGrass(data, center, settings, deltaTime, grassMin, grassMax);
+            data.NotifyChanged(new Int2(grassMin.X * 2, grassMin.Y * 2), new Int2(grassMax.X * 2, grassMax.Y * 2), TerrainChangeFlags.Grass);
+            return true;
+        }
 
         beforeModify?.Invoke(min, max);
 
@@ -288,6 +355,146 @@ public static class TerrainBrush
                 splat = TerrainSplat.Paint(splat, layer, sign * w);
             }
         }
+    }
+
+    private static void ApplyGrass(TerrainData data, Vector2 center, in TerrainBrushSettings s, float dt, Int2 min, Int2 max)
+    {
+        var rate = 1 - MathF.Exp(-PaintRate * s.Strength * dt);
+        var target = s.Invert ? 0 : Math.Clamp(s.GrassDensity, 0, 1) * 255;
+        var density = data.GetOrCreateGrassDensity(s.GrassLayer);
+        var size = data.GrassResolution;
+        for (int z = min.Y; z <= max.Y; z++)
+        {
+            for (int x = min.X; x <= max.X; x++)
+            {
+                // Grass sample (x, z) is terrain sample (2x, 2z)
+                var w = Weight(data, center, x * 2, z * 2, s) * rate;
+                if (w <= 1e-4f)
+                    continue;
+                ref var value = ref density[z * size + x];
+                var blended = value + (target - value) * w;
+                // Always move by at least one step, or slow strokes would stall short of the target
+                if (MathF.Abs(blended - value) < 1 && value != target)
+                    blended = value + MathF.Sign(target - value);
+                value = (byte)Math.Clamp(MathF.Round(blended), 0, 255);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Adds instances of the vegetation type until the brush holds its density (or removes them, inverted).
+    /// </summary>
+    private static bool ApplyVegetation(TerrainData data, Vector2 center, in TerrainBrushSettings s, float dt, Action beforeModify)
+    {
+        var reach = s.Reach;
+        var instances = data.Vegetation;
+
+        if (s.Invert)
+        {
+            // Erase the type where the brush is at least half on
+            var removed = false;
+            for (int i = instances.Count - 1; i >= 0; i--)
+            {
+                var instance = instances[i];
+                if (instance.Type != s.VegetationType || Vector2.DistanceSquared(instance.Position, center) > reach * reach)
+                    continue;
+                if (BrushWeight(instance.Position - center, s) < 0.5f)
+                    continue;
+                if (!removed)
+                    beforeModify?.Invoke();
+                removed = true;
+                instances.RemoveAt(i);
+            }
+            return removed;
+        }
+
+        // The instances near the brush, to keep the spacing and count the type's density
+        var spacing = Math.Max(s.VegetationSpacing, 0.1f);
+        var nearby = new List<Vector2>();
+        var existing = 0f;
+        foreach (var instance in instances)
+        {
+            var offset = instance.Position - center;
+            if (offset.LengthSquared() > (reach + spacing) * (reach + spacing))
+                continue;
+            nearby.Add(instance.Position);
+            if (instance.Type == s.VegetationType)
+                existing += BrushWeight(offset, s);
+        }
+
+        // How many the brush should hold: its area weighted by the brush shape (sampled), at the density
+        const int areaSamples = 16;
+        var coverage = 0f;
+        for (int z = 0; z < areaSamples; z++)
+        {
+            for (int x = 0; x < areaSamples; x++)
+            {
+                var offset = new Vector2((x + 0.5f) / areaSamples * 2 - 1, (z + 0.5f) / areaSamples * 2 - 1) * reach;
+                coverage += BrushWeight(offset, s);
+            }
+        }
+        var area = coverage / (areaSamples * areaSamples) * (2 * reach) * (2 * reach);
+        var wanted = area * Math.Max(s.VegetationDensity, 0) / 100.0f;
+        var missing = wanted - existing;
+        if (missing <= 0)
+            return false;
+
+        // Fill part of what's missing per application (strength sets how fast), at least one try
+        var tries = Math.Max(1, (int)MathF.Ceiling(missing * Math.Clamp(s.Strength * dt * 8, 0.05f, 1)));
+        var maxSlope = MathF.Cos(MathUtil.DegreesToRadians(Math.Clamp(s.VegetationMaxSlope, 0, 90)));
+        var random = Random.Shared;
+        var added = false;
+        for (int attempt = 0; attempt < tries * 4 && tries > 0; attempt++)
+        {
+            var candidate = center + new Vector2(random.NextSingle() * 2 - 1, random.NextSingle() * 2 - 1) * reach;
+            if (!data.Contains(candidate.X, candidate.Y))
+                continue;
+            // The brush shape sets the chance to place
+            if (random.NextSingle() >= BrushWeight(candidate - center, s))
+                continue;
+            if (data.SampleNormal(candidate.X, candidate.Y).Y < maxSlope)
+                continue;
+            if (data.Splat.Length > 0 && IsHole(data, candidate))
+                continue;
+            var tooClose = false;
+            foreach (var position in nearby)
+            {
+                if (Vector2.DistanceSquared(position, candidate) < spacing * spacing)
+                {
+                    tooClose = true;
+                    break;
+                }
+            }
+            if (tooClose)
+                continue;
+
+            if (!added)
+                beforeModify?.Invoke();
+            added = true;
+            instances.Add(new TerrainVegetationInstance
+            {
+                Type = s.VegetationType,
+                Position = candidate,
+                Rotation = random.NextSingle() * MathF.Tau,
+                Scale = MathUtil.Lerp(s.VegetationMinScale, Math.Max(s.VegetationMinScale, s.VegetationMaxScale), random.NextSingle()),
+            });
+            nearby.Add(candidate);
+            tries--;
+        }
+        return added;
+    }
+
+    private static bool IsHole(TerrainData data, Vector2 position)
+    {
+        var x = Math.Clamp((int)MathF.Round(position.X / data.CellSize), 0, data.Resolution - 1);
+        var z = Math.Clamp((int)MathF.Round(position.Y / data.CellSize), 0, data.Resolution - 1);
+        return TerrainSplat.GetDominantLayer(data.Splat[z * data.Resolution + x]) == TerrainSplat.HoleLayer;
+    }
+
+    // Brush weight at an offset from its center (meters)
+    private static float BrushWeight(Vector2 offset, in TerrainBrushSettings s)
+    {
+        return s.Mask != null ? s.Mask.Weight(offset, s.Radius, s.Rotation) : Weight(offset.Length(), s.Radius, s.Falloff);
     }
 
     private static void ApplyHole(TerrainData data, Vector2 center, in TerrainBrushSettings s, Int2 min, Int2 max)

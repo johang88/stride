@@ -1,0 +1,24 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Turns the number of scattered grass instances into the thread group counts of the indirect cull dispatch.
+    /// </summary>
+    shader TerrainGrassDispatchArgs : ComputeShaderBase
+    {
+        stage ByteAddressBuffer GrassInstanceCounter;
+        stage RWByteAddressBuffer GrassDispatchArgs;
+        stage uint GrassThreadsPerGroup;
+        stage uint GrassMaxInstances;
+
+        override void Compute()
+        {
+            uint count = min(GrassInstanceCounter.Load(0), GrassMaxInstances);
+            GrassDispatchArgs.Store(0, (count + GrassThreadsPerGroup - 1) / GrassThreadsPerGroup);
+            GrassDispatchArgs.Store(4, 1);
+            GrassDispatchArgs.Store(8, 1);
+        }
+    };
+}

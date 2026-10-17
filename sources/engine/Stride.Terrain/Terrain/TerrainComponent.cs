@@ -1,6 +1,7 @@
 // Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
+using System.Collections.Generic;
 using System.ComponentModel;
 using Stride.Core;
 using Stride.Core.Annotations;
@@ -9,6 +10,7 @@ using Stride.Engine;
 using Stride.Engine.Design;
 using Stride.Rendering;
 using Stride.Terrain.Rendering;
+using Stride.Terrain.Vegetation;
 
 namespace Stride.Terrain;
 
@@ -35,6 +37,7 @@ public enum TerrainShadingMode
 [DataContract("TerrainComponent")]
 [Display("Terrain", Expand = ExpandRule.Once)]
 [DefaultEntityComponentRenderer(typeof(TerrainProcessor))]
+[DefaultEntityComponentProcessor(typeof(TerrainVegetationProcessor))]
 [ComponentCategory("Terrain")]
 [ComponentOrder(11005)]
 public sealed class TerrainComponent : ActivableEntityComponent
@@ -70,6 +73,27 @@ public sealed class TerrainComponent : ActivableEntityComponent
     [DataMember(60)]
     [Display("Virtual texture", Expand = ExpandRule.Once)]
     public VirtualTexturing.TerrainVirtualTextureSettings VirtualTexture { get; set; } = new();
+
+    /// <summary>
+    /// The ground cover scattered where its density is painted. A layer's position is its density channel in the terrain data
+    /// (at most <see cref="TerrainData.MaxGrassLayers"/>).
+    /// </summary>
+    [DataMember(70)]
+    [MemberCollection(NotNullItems = true)]
+    public List<TerrainGrassLayer> Grass { get; } = new();
+
+    /// <summary>
+    /// The trees and other large plants placed on the terrain. A type's position is the type of its instances in the terrain data.
+    /// </summary>
+    [DataMember(80)]
+    [MemberCollection(NotNullItems = true)]
+    public List<TerrainVegetationType> Vegetation { get; } = new();
+
+    /// <summary>
+    /// Draws the vegetation as impostors at any distance (to check them in the editor).
+    /// </summary>
+    [DataMemberIgnore]
+    public bool ImpostorPreview { get; set; }
 
     /// <summary>
     /// Gets the terrain origin in world space.

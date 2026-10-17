@@ -9,11 +9,13 @@ using Stride.Graphics;
 namespace Stride.Terrain.Rendering;
 
 /// <summary>
-/// GPU copies of a <see cref="TerrainData"/>: a mip-mapped R16 height map and an R32 splat map, kept in sync with region updates.
+/// GPU copies of a <see cref="TerrainData"/>: a mip-mapped R16 height map, an R32 splat map and (once the terrain has grass) an
+/// R8 grass density array with a slice per grass layer, kept in sync with region updates.
 /// </summary>
 public sealed class TerrainGpuResources : IDisposable
 {
     private readonly object dirtyLock = new();
+    private readonly GraphicsDevice device;
     private readonly ushort[][] heightMips;
     private readonly int[] mipSizes;
     private Int2 dirtyMin;
@@ -22,6 +24,7 @@ public sealed class TerrainGpuResources : IDisposable
 
     public TerrainGpuResources(GraphicsDevice device, TerrainData data)
     {
+        this.device = device;
         Data = data;
         var resolution = data.Resolution;
 
@@ -53,11 +56,18 @@ public sealed class TerrainGpuResources : IDisposable
 
     public Texture SplatMap { get; }
 
+    /// <summary>
+    /// Grass density (R8, one slice per grass layer, <see cref="TerrainData.GrassResolution"/> texels a side), null until the
+    /// terrain has grass.
+    /// </summary>
+    public Texture GrassDensity { get; private set; }
+
     public void Dispose()
     {
         Data.Changed -= OnDataChanged;
         Heightmap.Dispose();
         SplatMap.Dispose();
+        GrassDensity?.Dispose();
     }
 
     private void OnDataChanged(object sender, TerrainDataChangedEventArgs e) => MarkDirty(e.Min, e.Max, e.Flags);
@@ -118,9 +128,41 @@ public sealed class TerrainGpuResources : IDisposable
         {
             UploadRegion(commandList, SplatMap, Data.Splat, resolution, 0, min, max);
         }
+
+        if ((flags & TerrainChangeFlags.Grass) != 0)
+            UploadGrass(commandList, min, max);
     }
 
-    private static unsafe void UploadRegion<T>(CommandList commandList, Texture texture, T[] source, int width, int mip, Int2 min, Int2 max) where T : unmanaged
+    private void UploadGrass(CommandList commandList, Int2 min, Int2 max)
+    {
+        var size = Data.GrassResolution;
+        var hasGrass = false;
+        for (int layer = 0; layer < TerrainData.MaxGrassLayers; layer++)
+            hasGrass |= Data.GetGrassDensity(layer) != null;
+        if (!hasGrass)
+            return;
+
+        // The whole array on creation (its content is undefined), the modified region afterwards
+        if (GrassDensity == null)
+        {
+            GrassDensity = Texture.New2D(device, size, size, 1, PixelFormat.R8_UNorm, TextureFlags.ShaderResource, TerrainData.MaxGrassLayers);
+            GrassDensity.Name = "TerrainGrassDensity";
+            min = Int2.Zero;
+            max = new Int2(Data.Resolution - 1);
+        }
+
+        // Terrain samples to grass samples (one every two)
+        var grassMin = new Int2(min.X / 2, min.Y / 2);
+        var grassMax = Int2.Min(new Int2((max.X + 1) / 2, (max.Y + 1) / 2), new Int2(size - 1));
+        var empty = default(byte[]);
+        for (int layer = 0; layer < TerrainData.MaxGrassLayers; layer++)
+        {
+            var density = Data.GetGrassDensity(layer) ?? (empty ??= new byte[size * size]);
+            UploadRegion(commandList, GrassDensity, density, size, 0, grassMin, grassMax, layer);
+        }
+    }
+
+    private static unsafe void UploadRegion<T>(CommandList commandList, Texture texture, T[] source, int width, int mip, Int2 min, Int2 max, int arraySlice = 0) where T : unmanaged
     {
         var regionWidth = max.X - min.X + 1;
         var regionHeight = max.Y - min.Y + 1;
@@ -129,14 +171,14 @@ public sealed class TerrainGpuResources : IDisposable
 
         if (regionWidth == width && regionHeight == width)
         {
-            texture.SetData(commandList, (ReadOnlySpan<T>)source, 0, mip);
+            texture.SetData(commandList, (ReadOnlySpan<T>)source, arraySlice, mip);
             return;
         }
 
         var region = new T[regionWidth * regionHeight];
         for (int z = 0; z < regionHeight; z++)
             Array.Copy(source, (min.Y + z) * width + min.X, region, z * regionWidth, regionWidth);
-        texture.SetData(commandList, (ReadOnlySpan<T>)region, 0, mip, new ResourceRegion(min.X, min.Y, 0, max.X + 1, max.Y + 1, 1));
+        texture.SetData(commandList, (ReadOnlySpan<T>)region, arraySlice, mip, new ResourceRegion(min.X, min.Y, 0, max.X + 1, max.Y + 1, 1));
     }
 
     private void Downsample(int mip, Int2 min, Int2 max)

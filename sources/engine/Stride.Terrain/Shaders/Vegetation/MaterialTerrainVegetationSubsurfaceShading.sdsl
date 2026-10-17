@@ -1,0 +1,102 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Foliage shading: light reaches leaves through both faces (wrapped and back lit), dimmed by the transmission through the
+    /// leaf; the ambient back light is added by the skybox light from subsurfaceLightingAmount.
+    /// </summary>
+    shader MaterialTerrainVegetationSubsurfaceShading : IMaterialSurfaceShading, Math, ShaderBaseStream, ShadowStream
+    {
+        compose ComputeColor SubsurfaceLightingAmount;
+        compose ComputeColor Extinction;
+
+        stream float3 extinction;
+
+        // Wrap factor for the direct path. Separate from subsurfaceLightingAmount because the two
+        // pull in opposite directions: here a lower value means MORE wrap, so flatter and
+        // brighter, while in the ambient path a lower value means darker. Driving both from one
+        // number makes dimming the ambient wash out the direct lighting.
+        stream float subsurfaceWrap;
+
+        float3 CalculateSubSurfaceColor(float3 L, float3 V, float3 N, float subsurfaceLightingAmount, float3 diffuse, float3 extinction, float thickness)
+        {
+            float3 H = normalize(L + V);
+
+            // Backlight factor: only grazing/backlit surfaces get in-scatter
+            float backlight = saturate(dot(N, -L)); // 1 = backlit, 0 = front-lit
+            float inScatter = pow(backlight, 6) * 0.25;
+
+            float normalContribution = saturate(dot(N, H) * subsurfaceLightingAmount + 1 - subsurfaceLightingAmount);
+            float backScatter = normalContribution / (PI * 2);
+
+            float3 transmittance = exp(-extinction * thickness);
+            float3 scattered = diffuse * lerp(backScatter, 1.0, inScatter);
+
+            // Apply extinction/transmittance
+            return scattered * transmittance;
+        }
+
+        override void PrepareForLightingAndShading()
+        {
+            base.PrepareForLightingAndShading();
+
+            streams.extinction = Extinction.Compute().xyz;
+
+            // Use the amount authored on the material. This previously read
+            // matDiffuse.a * 2.5, which for alpha cutout foliage is ~2.5 everywhere - the alpha
+            // is 1 wherever the texel survives the cutoff, so it varied nothing and only scaled
+            // up. That 2.5 then multiplied the ambient subsurface term in LightSkyboxShader and
+            // was the main reason all vegetation read as washed out.
+            //
+            // Fold how much light actually gets through the leaf into the amount handed to
+            // LightSkyboxShader, which weights the back hemisphere by it.
+            //
+            // The Extinction map is read as a transmission colour rather than pushed through
+            // exp(-e * thickness): its contents already are one - the fir map averages a dark
+            // green (0.12, 0.23, 0.12), which is what daylight looks like after passing through a
+            // leaf. Through exp() those values come out at 0.89-0.94, i.e. near white, which is
+            // why ambient translucency was strong enough to make foliage glow in terrain shadow.
+            //
+            // Reduced to luminance because carrying it per channel needs a new light stream, and
+            // adding one shifts SPIR-V type emission order enough to trip a backend bug in the
+            // atmosphere shaders. The tint is cosmetic; the magnitude is what was wrong.
+            float3 luminanceWeights = float3(0.2126, 0.7152, 0.0722);
+            float transmittance = dot(streams.extinction, luminanceWeights);
+
+            float authoredAmount = SubsurfaceLightingAmount.Compute().x;
+
+            streams.subsurfaceWrap = authoredAmount;
+            streams.subsurfaceLightingAmount = authoredAmount * transmittance;
+        }
+
+        override float3 ComputeDirectLightContribution()
+        {
+            // lightColor is the raw light, before occlusion - DirectLightGroup folds shadowColor
+            // and attenuation into lightColorNdotL, not into lightColor. Using lightColor on its
+            // own lit foliage at full sun intensity inside terrain and cascade shadow, which is
+            // why undergrowth glowed against near black ground. NdotL is still deliberately left
+            // out: light reaches a leaf through both faces.
+            float3 incomingLight = streams.lightColor * streams.lightAttenuation * streams.shadowColor * streams.lightDirectAmbientOcclusion;
+
+            float3 result = CalculateSubSurfaceColor(
+                streams.lightDirectionWS,
+                streams.viewWS,
+                streams.normalWS,
+                streams.subsurfaceWrap,
+                incomingLight * streams.matDiffuseVisible,
+                streams.extinction,
+                lerp(0.2f, 0.5f, streams.matDiffuse.a)
+            );
+
+            return result;
+        }
+
+        override float3 ComputeEnvironmentLightContribution()
+        {
+            // Patched in Stride skybox light shader
+            return float3(0, 0, 0);
+        }
+    };
+}

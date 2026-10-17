@@ -65,6 +65,19 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
     private TerrainLayerItemViewModel selectedLayer;
     private readonly ObservableList<TerrainLayerItemViewModel> layers = new();
     private readonly ObservableList<TerrainBrushItemViewModel> brushes = new();
+    private readonly ObservableList<TerrainLayerItemViewModel> grassLayers = new();
+    private readonly ObservableList<TerrainLayerItemViewModel> vegetationTypes = new();
+    private readonly ObservableList<string> vegetationInfo = new();
+    private TerrainLayerItemViewModel selectedGrassLayer;
+    private TerrainLayerItemViewModel selectedVegetationType;
+    private float grassDensity = 1.0f;
+    private float vegetationDensity = 2.0f;
+    private float vegetationSpacing = 3.0f;
+    private float vegetationMinScale = 0.8f;
+    private float vegetationMaxScale = 1.2f;
+    private float vegetationMaxSlope = 35.0f;
+    private bool impostorPreview;
+    private bool refreshingInfo;
     private TerrainBrushItemViewModel selectedBrush;
     private float rotation;
 
@@ -81,6 +94,7 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         ImportHeightmapCommand = new AnonymousTaskCommand(ServiceProvider, ImportHeightmap);
         ExportHeightmapCommand = new AnonymousTaskCommand(ServiceProvider, ExportHeightmap);
         ImportBrushCommand = new AnonymousTaskCommand(ServiceProvider, ImportBrush);
+        FillGrassFromLayerCommand = new AnonymousCommand(ServiceProvider, () => service?.FillGrassFromLayer(selectedGrassLayer?.Index ?? -1, selectedLayer?.Index ?? 0, grassDensity));
         OpenBrushFolderCommand = new AnonymousCommand(ServiceProvider, OpenBrushFolder);
         RefreshBrushes();
 
@@ -118,6 +132,8 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         if (IsActive)
             RefreshBrushes();
         PushSettings();
+        if (IsActive && IsVegetationTool)
+            RefreshVegetationInfo();
     }
 
     public string TargetName { get => targetName; private set => SetValue(ref targetName, value, nameof(TargetName), nameof(HasTarget)); }
@@ -126,13 +142,72 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
 
     public IReadOnlyList<TerrainBrushTool> Tools { get; } = Enum.GetValues<TerrainBrushTool>();
 
-    public TerrainBrushTool Tool { get => tool; set => SetValue(ref tool, value, PushSettings, nameof(Tool), nameof(IsPaintTool), nameof(IsFlattenTool), nameof(IsNoiseTool), nameof(Hint)); }
+    public TerrainBrushTool Tool { get => tool; set => SetValue(ref tool, value, OnToolChanged, nameof(Tool), nameof(IsPaintTool), nameof(IsFlattenTool), nameof(IsNoiseTool), nameof(IsGrassTool), nameof(IsVegetationTool), nameof(ShowsTerrainLayers), nameof(Hint)); }
 
     public bool IsPaintTool => tool == TerrainBrushTool.Paint;
 
     public bool IsFlattenTool => tool == TerrainBrushTool.Flatten;
 
     public bool IsNoiseTool => tool == TerrainBrushTool.Noise;
+
+    public bool IsGrassTool => tool == TerrainBrushTool.Grass;
+
+    public bool IsVegetationTool => tool == TerrainBrushTool.Vegetation;
+
+    /// <summary>
+    /// Whether the terrain material layers are listed (painting, and filling grass from a layer).
+    /// </summary>
+    public bool ShowsTerrainLayers => IsPaintTool || IsGrassTool;
+
+    /// <summary>
+    /// The grass layers of the target terrain (its density channels).
+    /// </summary>
+    public IReadOnlyObservableList<TerrainLayerItemViewModel> GrassLayers => grassLayers;
+
+    public TerrainLayerItemViewModel SelectedGrassLayer { get => selectedGrassLayer; set => SetValue(ref selectedGrassLayer, value, PushSettings); }
+
+    /// <summary>
+    /// Density (0-1) the grass tool paints towards (and fills with).
+    /// </summary>
+    public float GrassDensity { get => grassDensity; set => SetValue(ref grassDensity, Math.Clamp(value, 0.0f, 1.0f), PushSettings); }
+
+    /// <summary>
+    /// The vegetation types of the target terrain.
+    /// </summary>
+    public IReadOnlyObservableList<TerrainLayerItemViewModel> VegetationTypes => vegetationTypes;
+
+    public TerrainLayerItemViewModel SelectedVegetationType { get => selectedVegetationType; set => SetValue(ref selectedVegetationType, value, PushSettings); }
+
+    /// <summary>
+    /// Instances per 100 m² the vegetation tool fills up to.
+    /// </summary>
+    public float VegetationDensity { get => vegetationDensity; set => SetValue(ref vegetationDensity, Math.Clamp(value, 0.01f, 1000.0f), PushSettings); }
+
+    /// <summary>
+    /// Smallest distance between placed instances (meters).
+    /// </summary>
+    public float VegetationSpacing { get => vegetationSpacing; set => SetValue(ref vegetationSpacing, Math.Clamp(value, 0.1f, 100.0f), PushSettings); }
+
+    public float VegetationMinScale { get => vegetationMinScale; set => SetValue(ref vegetationMinScale, Math.Clamp(value, 0.01f, 100.0f), PushSettings); }
+
+    public float VegetationMaxScale { get => vegetationMaxScale; set => SetValue(ref vegetationMaxScale, Math.Clamp(value, 0.01f, 100.0f), PushSettings); }
+
+    /// <summary>
+    /// Steepest slope instances are placed on (degrees).
+    /// </summary>
+    public float VegetationMaxSlope { get => vegetationMaxSlope; set => SetValue(ref vegetationMaxSlope, Math.Clamp(value, 0.0f, 90.0f), PushSettings); }
+
+    /// <summary>
+    /// Draws the vegetation as impostors at any distance (to check them).
+    /// </summary>
+    public bool ImpostorPreview { get => impostorPreview; set => SetValue(ref impostorPreview, value, () => service?.SetImpostorPreview(value)); }
+
+    /// <summary>
+    /// One line per vegetation type: levels of detail (triangles, instances drawn), instances placed, impostor.
+    /// </summary>
+    public IReadOnlyObservableList<string> VegetationInfo => vegetationInfo;
+
+    public ICommandBase FillGrassFromLayerCommand { get; }
 
     public float Radius { get => radius; set => SetValue(ref radius, Math.Clamp(value, 0.5f, 500.0f), PushSettings); }
 
@@ -178,6 +253,8 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         TerrainBrushTool.Noise => "Drag to add noise.",
         TerrainBrushTool.Paint => "Drag to paint the layer, Shift to erase it. Ctrl+click picks the layer.",
         TerrainBrushTool.Hole => "Drag to cut holes, Shift to fill them.",
+        TerrainBrushTool.Grass => "Drag to paint the grass layer towards the density, Shift to erase it.",
+        TerrainBrushTool.Vegetation => "Drag to place the type up to the density, Shift to remove it.",
         _ => "",
     } + " [ and ] change the radius" + (IsCustomBrush ? ", Ctrl+[ and Ctrl+] rotate the brush." : ".");
 
@@ -209,14 +286,59 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         base.Destroy();
     }
 
-    internal void OnTargetChanged(string name, List<string> layerNames)
+    internal void OnTargetChanged(string name, List<string> layerNames, List<string> grassNames, List<string> vegetationNames)
     {
         TargetName = name;
-        var selectedIndex = selectedLayer?.Index ?? 0;
-        layers.Clear();
-        for (int i = 0; i < layerNames.Count; i++)
-            layers.Add(new TerrainLayerItemViewModel(i, layerNames[i]));
-        SelectedLayer = layers.FirstOrDefault(x => x.Index == selectedIndex) ?? layers.FirstOrDefault();
+        SelectedLayer = Refill(layers, layerNames, selectedLayer);
+        SelectedGrassLayer = Refill(grassLayers, grassNames, selectedGrassLayer);
+        SelectedVegetationType = Refill(vegetationTypes, vegetationNames, selectedVegetationType);
+    }
+
+    // Refills a list of named items, keeping the selected index when it's still there
+    private static TerrainLayerItemViewModel Refill(ObservableList<TerrainLayerItemViewModel> items, List<string> names, TerrainLayerItemViewModel selected)
+    {
+        var selectedIndex = selected?.Index ?? 0;
+        items.Clear();
+        for (int i = 0; i < names.Count; i++)
+            items.Add(new TerrainLayerItemViewModel(i, names[i]));
+        return items.FirstOrDefault(x => x.Index == selectedIndex) ?? items.FirstOrDefault();
+    }
+
+    private void OnToolChanged()
+    {
+        PushSettings();
+        if (IsVegetationTool)
+            RefreshVegetationInfo();
+    }
+
+    // While the vegetation tool is open, the counts are refreshed every second
+    private void RefreshVegetationInfo()
+    {
+        if (refreshingInfo)
+            return;
+        refreshingInfo = true;
+        Dispatcher.InvokeTask(async () =>
+        {
+            try
+            {
+                while (IsActive && IsVegetationTool && service != null && !IsDestroyed)
+                {
+                    var infos = await service.GetVegetationInfo();
+                    vegetationInfo.Clear();
+                    foreach (var info in infos)
+                    {
+                        var lods = string.Join(", ", info.LodTriangles.Select((triangles, lod) => $"{triangles:N0} ({(lod < info.LodInstances.Length ? info.LodInstances[lod] : 0)})"));
+                        var impostor = info.HasImpostor ? $"impostor {info.ImpostorViews}x{info.ImpostorViews} x {info.ImpostorResolution}px" : "no impostor";
+                        vegetationInfo.Add($"{info.Name}: {info.Instances:N0} placed, LODs (triangles, drawn): {lods}, {impostor}");
+                    }
+                    await Task.Delay(1000);
+                }
+            }
+            finally
+            {
+                refreshingInfo = false;
+            }
+        });
     }
 
     internal void OnRadiusChangedFromViewport(float value)
@@ -255,6 +377,14 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
             NoiseScale = noiseScale,
             Mask = selectedBrush?.Mask,
             Rotation = MathUtil.DegreesToRadians(rotation),
+            GrassLayer = selectedGrassLayer?.Index ?? -1,
+            GrassDensity = grassDensity,
+            VegetationType = selectedVegetationType?.Index ?? -1,
+            VegetationDensity = vegetationDensity,
+            VegetationSpacing = vegetationSpacing,
+            VegetationMinScale = vegetationMinScale,
+            VegetationMaxScale = Math.Max(vegetationMinScale, vegetationMaxScale),
+            VegetationMaxSlope = vegetationMaxSlope,
         });
         service.SetToolEnabled(IsActive);
     }

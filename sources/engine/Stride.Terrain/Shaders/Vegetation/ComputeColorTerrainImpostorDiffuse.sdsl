@@ -1,0 +1,51 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Samples the baked impostor diffuse atlas at the three frames chosen by the displacement
+    /// feature and blends them by barycentric weight.
+    ///
+    /// Colour is weighted by coverage as well as frame weight, so a frame where this texel is
+    /// empty contributes no colour rather than dragging the blend towards black. Alpha is blended
+    /// by frame weight alone and left for the material's cutoff feature to test.
+    /// </summary>
+    // ShaderBaseStream is mixed in for ShadingPosition, used by the dissolve dither. Deliberately
+    // not ShaderBase - that would drag VSMain/PSMain into what is only a compute colour node.
+    shader ComputeColorTerrainImpostorDiffuse : ComputeColor, TerrainImpostorStream, Texturing, ShaderBaseStream
+    {
+        rgroup PerMaterial
+        {
+            stage Texture2D ImpostorDiffuseAtlas;
+        }
+
+        override float4 Compute()
+        {
+            float4 s0 = ImpostorDiffuseAtlas.Sample(LinearSampler, streams.ImpostorUV0);
+            float4 s1 = ImpostorDiffuseAtlas.Sample(LinearSampler, streams.ImpostorUV1);
+            float4 s2 = ImpostorDiffuseAtlas.Sample(LinearSampler, streams.ImpostorUV2);
+
+            float3 w = streams.ImpostorWeights;
+
+            float alpha = s0.a * w.x + s1.a * w.y + s2.a * w.z;
+
+            float3 weightedColor = s0.rgb * (s0.a * w.x) + s1.rgb * (s1.a * w.y) + s2.rgb * (s2.a * w.z);
+            float colorWeight = s0.a * w.x + s1.a * w.y + s2.a * w.z;
+
+            float3 color = weightedColor / max(colorWeight, 0.0001);
+
+            // Dissolve out across the handover band so the impostor does not sit on top of the
+            // real mesh as solid geometry while both are drawn. An ordered screen space hash is
+            // used rather than blending because the material is alpha tested, not alpha blended -
+            // zeroing alpha here lets the existing cutoff feature do the discard.
+            float dither = frac(dot(floor(streams.ShadingPosition.xy), float2(0.7548776662, 0.5698402909)));
+            if (streams.ImpostorFade < dither)
+            {
+                alpha = 0.0;
+            }
+
+            return float4(color, alpha);
+        }
+    };
+}

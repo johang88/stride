@@ -1,0 +1,46 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Hemi-octahedral direction mapping shared by the impostor baker and the impostor billboard.
+    /// Both sides must agree exactly or the baked frames will not line up with the runtime lookup,
+    /// so the C# equivalents live in TerrainImpostorOctahedral.cs and are kept in sync by hand.
+    ///
+    /// Only the upper hemisphere is represented - trees are never viewed convincingly from below,
+    /// and spending the whole sphere on it would halve the angular resolution for no gain.
+    /// </summary>
+    shader TerrainImpostorOctahedral
+    {
+        // Normalised direction (y >= 0) -> [0,1]^2.
+        float2 HemiOctEncode(float3 dir)
+        {
+            float3 d = dir / (abs(dir.x) + abs(dir.y) + abs(dir.z));
+            float2 uv = float2(d.x + d.z, d.x - d.z);
+            return uv * 0.5 + 0.5;
+        }
+
+        // [0,1]^2 -> normalised direction on the upper hemisphere.
+        float3 HemiOctDecode(float2 uv)
+        {
+            float2 e = uv * 2.0 - 1.0;
+            float2 t = float2(e.x + e.y, e.x - e.y) * 0.5;
+            return normalize(float3(t.x, 1.0 - abs(t.x) - abs(t.y), t.y));
+        }
+
+        // Orthonormal basis for a frame captured looking from 'dir' towards the origin.
+        // Must match TerrainImpostorOctahedral.GetFrameBasis on the C# side.
+        void GetFrameBasis(float3 dir, out float3 right, out float3 up)
+        {
+            float3 refUp = float3(0, 1, 0);
+            if (abs(dir.y) > 0.999)
+            {
+                refUp = float3(0, 0, 1);
+            }
+
+            right = normalize(cross(refUp, dir));
+            up = cross(dir, right);
+        }
+    };
+}

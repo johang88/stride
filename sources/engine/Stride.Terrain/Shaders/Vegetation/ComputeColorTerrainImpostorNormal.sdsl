@@ -1,0 +1,47 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Samples the baked impostor normal atlas and rotates the result out of capture-frame space
+    /// into the billboard's current world basis.
+    ///
+    /// Feeds MaterialNormalMapFeature, which expects a tangent space normal in [0,1]. Since the
+    /// billboard's tangent frame is exactly the basis the vertex stage built, and the baked normal
+    /// is already relative to a near identical frame, passing it through directly is correct to
+    /// within the angular step between frames.
+    /// </summary>
+    shader ComputeColorTerrainImpostorNormal : ComputeColor, TerrainImpostorStream, Texturing
+    {
+        rgroup PerMaterial
+        {
+            stage Texture2D ImpostorNormalAtlas;
+        }
+
+        override float4 Compute()
+        {
+            float3 n0 = ImpostorNormalAtlas.Sample(LinearSampler, streams.ImpostorUV0).xyz * 2.0 - 1.0;
+            float3 n1 = ImpostorNormalAtlas.Sample(LinearSampler, streams.ImpostorUV1).xyz * 2.0 - 1.0;
+            float3 n2 = ImpostorNormalAtlas.Sample(LinearSampler, streams.ImpostorUV2).xyz * 2.0 - 1.0;
+
+            float3 w = streams.ImpostorWeights;
+
+            float3 n = normalize(n0 * w.x + n1 * w.y + n2 * w.z);
+
+            // Rebase from capture-frame axes onto the billboard's tangent frame. The billboard's
+            // tangent is cross(toCamera, worldUp) while the capture frame's X is cross(worldUp,
+            // dir) - opposite - and its bitangent, cross(normal, tangent), comes out as -up
+            // against the frame's +up. So X and Y both invert; Z is shared and passes through.
+            // Getting this wrong tilts every normal sideways and the impostor lights too dark.
+            //
+            // Written as component assignments rather than float3(-n.x, -n.y, n.z) * 0.5 because
+            // the SDSL parser rejects a nested constructor followed by an operator.
+            float3 rebased = n;
+            rebased.x = -rebased.x;
+            rebased.y = -rebased.y;
+
+            return float4(rebased * 0.5 + 0.5, 1.0);
+        }
+    };
+}

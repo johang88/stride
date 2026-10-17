@@ -24,6 +24,7 @@ using Stride.Input;
 using Stride.Terrain;
 using Stride.Terrain.Editing;
 using Stride.Terrain.Splines;
+using Stride.Terrain.Vegetation;
 
 namespace Stride.Terrain.Editor;
 
@@ -57,6 +58,9 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
     private Vector3? lastHit;
     // Whether a left click on the terrain owns the mouse (until the button is released)
     private bool mouseClaimed;
+    private bool impostorPreview;
+    // The grass layer and vegetation type names last sent to the panel
+    private string notifiedDefinitions;
 
     public EditorGameTerrainService([NotNull] EntityHierarchyEditorViewModel editor, [NotNull] IEditorGameController controller)
     {
@@ -268,7 +272,7 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
         {
             if (session == null || targetData == null || target == null)
                 return false;
-            strokeBefore = new TerrainSnapshot();
+            strokeBefore = new TerrainSnapshot(GetChannels(settings.Tool));
             strokeTool = settings.Tool;
             foreach (var worldPosition in path)
             {
@@ -349,6 +353,13 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
         }
 
         UpdateTarget();
+        if (target != null)
+        {
+            target.ImpostorPreview = impostorPreview;
+            var definitions = string.Join("\n", target.Grass.Select(x => x.Name)) + "\n\n" + string.Join("\n", target.Vegetation.Select(x => x.Name));
+            if (definitions != notifiedDefinitions)
+                NotifyTargetChanged();
+        }
         if (!enabled || target == null || targetData == null || !IsActive)
         {
             EndStroke();
@@ -408,6 +419,7 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
             {
                 TerrainBrushTool.Paint => new Color4(0.2f, 0.9f, 1.0f, 0.9f),
                 TerrainBrushTool.Hole => new Color4(1.0f, 0.3f, 0.2f, 0.9f),
+                TerrainBrushTool.Grass or TerrainBrushTool.Vegetation => settings.Invert ? new Color4(1.0f, 0.55f, 0.1f, 0.9f) : new Color4(0.35f, 1.0f, 0.3f, 0.9f),
                 _ => settings.Invert ? new Color4(1.0f, 0.55f, 0.1f, 0.9f) : new Color4(1.0f, 0.95f, 0.3f, 0.9f),
             };
             ShowOverlay(new Vector2(local.X, local.Z), settings, color);
@@ -443,7 +455,7 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
             }
             else if (session != null)
             {
-                strokeBefore = new TerrainSnapshot();
+                strokeBefore = new TerrainSnapshot(GetChannels(settings.Tool));
                 strokeTool = settings.Tool;
                 // A stroke always applies at least once, even for a click without moving
                 ApplyBrush(new Vector2(local.X, local.Z), settings, 1 / 30.0f);
@@ -463,9 +475,80 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
         var before = strokeBefore;
         lock (session.SyncRoot)
         {
-            TerrainBrush.Apply(data, localCenter, settings, dt, (min, max) => before.Capture(data, min, max));
+            TerrainBrush.Apply(data, localCenter, settings, dt, (min, max) => before.Capture(data, min, max), () => before.CaptureVegetation(data));
             session.MarkModified();
         }
+    }
+
+    // What a tool edits (the undo snapshot captures that only)
+    private static TerrainChangeFlags GetChannels(TerrainBrushTool tool) => tool switch
+    {
+        TerrainBrushTool.Paint or TerrainBrushTool.Hole => TerrainChangeFlags.Splat,
+        TerrainBrushTool.Grass => TerrainChangeFlags.Grass,
+        TerrainBrushTool.Vegetation => TerrainChangeFlags.None,
+        _ => TerrainChangeFlags.Heights,
+    };
+
+    /// <summary>
+    /// Sets the density of a grass layer from the weight of a terrain material layer over the whole terrain (one undoable
+    /// edit): where the terrain layer is painted, the grass grows at the given density.
+    /// </summary>
+    public void FillGrassFromLayer(int grassLayer, int terrainLayer, float density)
+    {
+        controller.InvokeAsync(() =>
+        {
+            if (session == null || targetData == null || (uint)grassLayer >= TerrainData.MaxGrassLayers)
+                return;
+            var data = targetData;
+            var before = new TerrainSnapshot(TerrainChangeFlags.Grass);
+            TerrainSnapshot after;
+            lock (session.SyncRoot)
+            {
+                before.Capture(data, Int2.Zero, new Int2(data.Resolution - 1));
+                var grass = data.GetOrCreateGrassDensity(grassLayer);
+                var size = data.GrassResolution;
+                for (int z = 0; z < size; z++)
+                {
+                    for (int x = 0; x < size; x++)
+                    {
+                        var weight = TerrainSplat.GetWeight(data.Splat[z * 2 * data.Resolution + x * 2], terrainLayer);
+                        grass[z * size + x] = (byte)Math.Clamp(MathF.Round(weight * density * 255), 0, 255);
+                    }
+                }
+                data.NotifyChanged(Int2.Zero, new Int2(data.Resolution - 1), TerrainChangeFlags.Grass);
+                session.MarkModified();
+                after = TerrainSnapshot.CaptureSameTiles(data, before);
+            }
+            PushUndo(before, after, "Fill grass from terrain layer");
+        });
+    }
+
+    /// <summary>
+    /// Draws the vegetation of the target as impostors at any distance, to check them.
+    /// </summary>
+    public void SetImpostorPreview(bool preview)
+    {
+        controller.InvokeAsync(() =>
+        {
+            impostorPreview = preview;
+            if (target != null)
+                target.ImpostorPreview = preview;
+        });
+    }
+
+    /// <summary>
+    /// What each vegetation type of the target draws (levels of detail, instances, impostor).
+    /// </summary>
+    public Task<IReadOnlyList<TerrainVegetationTypeInfo>> GetVegetationInfo()
+    {
+        return controller.InvokeAsync(() =>
+        {
+            var processor = game.SceneSystem.SceneInstance?.Processors.Get<TerrainVegetationProcessor>();
+            var vegetation = target != null ? processor?.GetVegetation(target) : null;
+            if (vegetation == null)
+                return (IReadOnlyList<TerrainVegetationTypeInfo>)Array.Empty<TerrainVegetationTypeInfo>();
+            return vegetation.GetTypeInfos();
+        });
     }
 
     private void Sample(Vector2 localCenter, TerrainBrushSettings settings)
@@ -503,6 +586,8 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
             TerrainBrushTool.Noise => "Add terrain noise",
             TerrainBrushTool.Paint => "Paint terrain",
             TerrainBrushTool.Hole => "Edit terrain holes",
+            TerrainBrushTool.Grass => "Paint grass",
+            TerrainBrushTool.Vegetation => "Place vegetation",
             _ => "Edit terrain",
         });
     }
@@ -632,7 +717,10 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
         var name = target?.Entity?.Name;
         var material = targetData?.Material;
         var layers = material?.Layers.Select(x => x.Name).ToList() ?? new List<string>();
-        editor.Dispatcher.InvokeAsync(() => ToolsViewModel?.OnTargetChanged(name, layers));
+        var grass = target?.Grass.Select(x => x.Name).ToList() ?? new List<string>();
+        var vegetation = target?.Vegetation.Select(x => x.Name).ToList() ?? new List<string>();
+        notifiedDefinitions = string.Join("\n", grass) + "\n\n" + string.Join("\n", vegetation);
+        editor.Dispatcher.InvokeAsync(() => ToolsViewModel?.OnTargetChanged(name, layers, grass, vegetation));
     }
 
     private void ShowOverlay(Vector2 center, in TerrainBrushSettings settings, Color4 color)

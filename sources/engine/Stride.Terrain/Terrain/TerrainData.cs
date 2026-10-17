@@ -2,6 +2,7 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Stride.Core;
@@ -20,7 +21,45 @@ public enum TerrainChangeFlags
     None = 0,
     Heights = 1,
     Splat = 2,
-    All = Heights | Splat,
+    /// <summary>
+    /// Grass density (the region is in terrain samples, see <see cref="TerrainData.GrassResolution"/>).
+    /// </summary>
+    Grass = 4,
+    /// <summary>
+    /// The vegetation instances (the region covers the whole terrain).
+    /// </summary>
+    Vegetation = 8,
+    All = Heights | Splat | Grass | Vegetation,
+}
+
+/// <summary>
+/// A placed tree or other large plant of a terrain (one of the vegetation types of its <see cref="TerrainComponent"/>).
+/// </summary>
+[DataContract("TerrainVegetationInstance")]
+[StructLayout(LayoutKind.Sequential)]
+public struct TerrainVegetationInstance
+{
+    /// <summary>
+    /// Index of the vegetation type in <see cref="TerrainComponent.Vegetation"/>.
+    /// </summary>
+    public int Type;
+
+    /// <summary>
+    /// Position on the terrain (local XZ, meters).
+    /// </summary>
+    public Vector2 Position;
+
+    /// <summary>
+    /// Height above the terrain surface (meters): instances follow the terrain when it's sculpted.
+    /// </summary>
+    public float HeightOffset;
+
+    /// <summary>
+    /// Rotation around the vertical axis (radians).
+    /// </summary>
+    public float Rotation;
+
+    public float Scale;
 }
 
 /// <summary>
@@ -29,7 +68,7 @@ public enum TerrainChangeFlags
 public readonly record struct TerrainDataChangedEventArgs(Int2 Min, Int2 Max, TerrainChangeFlags Flags);
 
 /// <summary>
-/// The height and material-weight samples of a terrain.
+/// The height and material-weight samples of a terrain, its grass density and its vegetation instances.
 /// </summary>
 /// <remarks>
 /// Samples are laid out on a square grid of <see cref="Resolution"/> x <see cref="Resolution"/> points spaced by <see cref="CellSize"/>.
@@ -42,10 +81,17 @@ public readonly record struct TerrainDataChangedEventArgs(Int2 Min, Int2 Max, Te
 [ContentSerializer(typeof(DataContentSerializer<TerrainData>))]
 public sealed class TerrainData
 {
-    private const int SerializationVersion = 1;
+    private const int SerializationVersion = 2;
+
+    /// <summary>
+    /// Number of grass density channels (grass layers of <see cref="TerrainComponent.Grass"/>).
+    /// </summary>
+    public const int MaxGrassLayers = 8;
 
     private ushort[] heights;
     private uint[] splat;
+    private byte[][] grassDensity = new byte[MaxGrassLayers][];
+    private List<TerrainVegetationInstance> vegetation = new();
     private float minHeight;
     private float maxHeight;
     private float heightScale;
@@ -103,6 +149,36 @@ public sealed class TerrainData
     public uint[] Splat => splat;
 
     /// <summary>
+    /// Number of grass density samples along each side: one every two terrain samples.
+    /// </summary>
+    public int GrassResolution => (Resolution - 1) / 2 + 1;
+
+    /// <summary>
+    /// Distance in meters between two grass density samples.
+    /// </summary>
+    public float GrassCellSize => CellSize * 2;
+
+    /// <summary>
+    /// The density samples (0-255, row-major) of a grass layer, or null when nothing was painted on it.
+    /// </summary>
+    public byte[] GetGrassDensity(int layer) => (uint)layer < MaxGrassLayers ? grassDensity[layer] : null;
+
+    /// <summary>
+    /// The density samples of a grass layer, allocated (empty) on first use.
+    /// </summary>
+    public byte[] GetOrCreateGrassDensity(int layer)
+    {
+        if ((uint)layer >= MaxGrassLayers)
+            throw new ArgumentOutOfRangeException(nameof(layer));
+        return grassDensity[layer] ??= new byte[GrassResolution * GrassResolution];
+    }
+
+    /// <summary>
+    /// The placed trees and other large plants.
+    /// </summary>
+    public List<TerrainVegetationInstance> Vegetation => vegetation;
+
+    /// <summary>
     /// Incremented each time the data is modified.
     /// </summary>
     [DataMemberIgnore]
@@ -127,14 +203,22 @@ public sealed class TerrainData
     }
 
     /// <summary>
-    /// Creates a copy of the samples (the material reference is shared).
+    /// Creates a copy of the samples, grass and vegetation (the material reference is shared).
     /// </summary>
     public TerrainData Clone()
     {
         var clone = new TerrainData(Resolution, CellSize, minHeight, maxHeight) { Material = Material };
         Array.Copy(heights, clone.heights, heights.Length);
         Array.Copy(splat, clone.splat, splat.Length);
+        CopyVegetationFrom(this, clone);
         return clone;
+    }
+
+    private static void CopyVegetationFrom(TerrainData source, TerrainData target)
+    {
+        for (int layer = 0; layer < MaxGrassLayers; layer++)
+            target.grassDensity[layer] = (byte[])source.grassDensity[layer]?.Clone();
+        target.vegetation = new List<TerrainVegetationInstance>(source.vegetation);
     }
 
     /// <summary>
@@ -150,6 +234,7 @@ public sealed class TerrainData
             for (int i = 0; i < heights.Length; i++)
                 heights[i] = Quantize(other.Dequantize(other.heights[i]));
         Array.Copy(other.splat, splat, splat.Length);
+        CopyVegetationFrom(other, this);
         NotifyChanged(Int2.Zero, new Int2(Resolution - 1), TerrainChangeFlags.All);
     }
 
@@ -232,6 +317,28 @@ public sealed class TerrainData
         var normal = new Vector3(hl - hr, 2 * d, hd - hu);
         normal.Normalize();
         return normal;
+    }
+
+    /// <summary>
+    /// Samples the density (0-1) of a grass layer at a local position (bilinear).
+    /// </summary>
+    public float SampleGrassDensity(int layer, float localX, float localZ)
+    {
+        var density = GetGrassDensity(layer);
+        if (density == null)
+            return 0;
+        var size = GrassResolution;
+        var fx = Math.Clamp(localX / GrassCellSize, 0, size - 1);
+        var fz = Math.Clamp(localZ / GrassCellSize, 0, size - 1);
+        var x0 = Math.Min((int)fx, size - 2);
+        var z0 = Math.Min((int)fz, size - 2);
+        var tx = fx - x0;
+        var tz = fz - z0;
+        var row0 = z0 * size + x0;
+        var row1 = row0 + size;
+        var a = density[row0] + (density[row0 + 1] - density[row0]) * tx;
+        var b = density[row1] + (density[row1 + 1] - density[row1]) * tx;
+        return (a + (b - a) * tz) / 255.0f;
     }
 
     /// <summary>
@@ -365,6 +472,29 @@ public sealed class TerrainData
 
             stream.Serialize(MemoryMarshal.AsBytes(obj.heights.AsSpan()));
             stream.Serialize(MemoryMarshal.AsBytes(obj.splat.AsSpan()));
+
+            // Grass layers that have density, then the vegetation instances
+            var grassLayers = 0;
+            for (int layer = 0; layer < MaxGrassLayers; layer++)
+            {
+                if (obj.grassDensity[layer] != null)
+                    grassLayers |= 1 << layer;
+            }
+            stream.Serialize(ref grassLayers);
+            for (int layer = 0; layer < MaxGrassLayers; layer++)
+            {
+                if ((grassLayers & (1 << layer)) == 0)
+                    continue;
+                if (mode == ArchiveMode.Deserialize)
+                    obj.grassDensity[layer] = new byte[obj.GrassResolution * obj.GrassResolution];
+                stream.Serialize(obj.grassDensity[layer].AsSpan());
+            }
+
+            var instanceCount = obj.vegetation.Count;
+            stream.Serialize(ref instanceCount);
+            if (mode == ArchiveMode.Deserialize)
+                obj.vegetation = new List<TerrainVegetationInstance>(new TerrainVegetationInstance[instanceCount]);
+            stream.Serialize(MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(obj.vegetation)));
         }
     }
 }

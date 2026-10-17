@@ -1,0 +1,29 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Streams carried from the impostor billboard's vertex stage to its pixel stage. Kept in a
+    /// shader of their own so the displacement feature that writes them and the compute colour
+    /// nodes that read them can both mix it in without depending on each other.
+    /// </summary>
+    shader TerrainImpostorStream
+    {
+        // Atlas UVs of the three hemi-octahedral frames bracketing the view direction.
+        stage stream float2 ImpostorUV0;
+        stage stream float2 ImpostorUV1;
+        stage stream float2 ImpostorUV2;
+
+        // Barycentric weights for those three frames. Sums to one.
+        stage stream float3 ImpostorWeights;
+
+        // Billboard basis, used to rotate baked frame-space normals back into world space.
+        stage stream float3 ImpostorRight;
+        stage stream float3 ImpostorUp;
+        stage stream float3 ImpostorForward;
+
+        // 0 at the mesh handover distance, 1 once the impostor is solely responsible.
+        stage stream float ImpostorFade;
+    };
+}
