@@ -503,7 +503,7 @@
                   <DataTemplate>
                     <StackPanel Orientation="Horizontal">
                       <ToggleButton IsChecked="{Binding IsActive}" IsEnabled="{Binding IsAvailable}" Height="28" Padding="6,0" Background="Transparent"
-                                    Content="{Binding DisplayName}" ToolTip="{Binding ToolTip}" ToolTipService.ShowOnDisabled="True"/>
+                                    Content="{Binding Converter={pvc:EditorToolToContent}}" ToolTip="{Binding ToolTip}" ToolTipService.ShowOnDisabled="True"/>
                       <Separator Background="{StaticResource ToggleButtonNormalBackground}" Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}"/>
                     </StackPanel>
                   </DataTemplate>

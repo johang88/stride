@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -16,6 +17,7 @@ using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Terrain.Splines;
 using Stride.Core.Annotations;
+using Stride.Core.Diagnostics;
 using Stride.Core.Presentation.Collections;
 using Stride.Core.Presentation.Commands;
 using Stride.Core.Presentation.Services;
@@ -62,6 +64,9 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
     private float noiseScale = 8.0f;
     private TerrainLayerItemViewModel selectedLayer;
     private readonly ObservableList<TerrainLayerItemViewModel> layers = new();
+    private readonly ObservableList<TerrainBrushItemViewModel> brushes = new();
+    private TerrainBrushItemViewModel selectedBrush;
+    private float rotation;
 
     public TerrainToolsViewModel([NotNull] IViewModelServiceProvider serviceProvider, [NotNull] IEditorGameController controller, [NotNull] EntityHierarchyEditorViewModel editor)
         : base(serviceProvider)
@@ -75,6 +80,9 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         SelectToolCommand = new AnonymousCommand<TerrainBrushTool>(ServiceProvider, x => Tool = x);
         ImportHeightmapCommand = new AnonymousTaskCommand(ServiceProvider, ImportHeightmap);
         ExportHeightmapCommand = new AnonymousTaskCommand(ServiceProvider, ExportHeightmap);
+        ImportBrushCommand = new AnonymousTaskCommand(ServiceProvider, ImportBrush);
+        OpenBrushFolderCommand = new AnonymousCommand(ServiceProvider, OpenBrushFolder);
+        RefreshBrushes();
 
         Dispatcher.InvokeTask(async () =>
         {
@@ -93,6 +101,8 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
 
     public override string ToolTip => "Sculpt and paint terrains in the viewport";
 
+    public override string IconResourceKey => "TerrainIcon.Tool";
+
     public override bool IsAvailable => service != null;
 
     /// <summary>
@@ -102,7 +112,13 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
 
     /// <inheritdoc/>
     /// <remarks>The terrain tools take the mouse in the viewport while active.</remarks>
-    protected override void OnIsActiveChanged() => PushSettings();
+    protected override void OnIsActiveChanged()
+    {
+        // Brush images may have been added to the folder meanwhile
+        if (IsActive)
+            RefreshBrushes();
+        PushSettings();
+    }
 
     public string TargetName { get => targetName; private set => SetValue(ref targetName, value, nameof(TargetName), nameof(HasTarget)); }
 
@@ -124,6 +140,28 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
 
     public float Falloff { get => falloff; set => SetValue(ref falloff, Math.Clamp(value, 0.0f, 1.0f), PushSettings); }
 
+    /// <summary>
+    /// The brushes: built-in shapes, then the brush images of the project (see <see cref="TerrainBrushLibrary"/>).
+    /// </summary>
+    public IReadOnlyObservableList<TerrainBrushItemViewModel> Brushes => brushes;
+
+    public TerrainBrushItemViewModel SelectedBrush { get => selectedBrush; set => SetValue(ref selectedBrush, value, PushSettings, nameof(SelectedBrush), nameof(IsCustomBrush), nameof(Hint)); }
+
+    /// <summary>
+    /// Whether the brush has a custom shape (rotation applies, falloff doesn't).
+    /// </summary>
+    public bool IsCustomBrush => selectedBrush?.IsCustom == true;
+
+    /// <summary>
+    /// Rotation of a custom brush in degrees (counter-clockwise seen from above).
+    /// </summary>
+    public float Rotation { get => rotation; set => SetValue(ref rotation, ((value % 360) + 360) % 360, PushSettings); }
+
+    /// <summary>
+    /// The folder of the project's brush images, in the resources of the edited scene's package.
+    /// </summary>
+    public string BrushFolder => TerrainBrushLibrary.GetFolder(editor.Asset.Directory?.Package?.Package);
+
     public float FlattenHeight { get => flattenHeight; set => SetValue(ref flattenHeight, value, PushSettings); }
 
     public float NoiseScale { get => noiseScale; set => SetValue(ref noiseScale, Math.Max(value, 0.1f), PushSettings); }
@@ -141,13 +179,17 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         TerrainBrushTool.Paint => "Drag to paint the layer, Shift to erase it. Ctrl+click picks the layer.",
         TerrainBrushTool.Hole => "Drag to cut holes, Shift to fill them.",
         _ => "",
-    } + " [ and ] change the radius.";
+    } + " [ and ] change the radius" + (IsCustomBrush ? ", Ctrl+[ and Ctrl+] rotate the brush." : ".");
 
     public ICommandBase SelectToolCommand { get; }
 
     public ICommandBase ImportHeightmapCommand { get; }
 
     public ICommandBase ExportHeightmapCommand { get; }
+
+    public ICommandBase ImportBrushCommand { get; }
+
+    public ICommandBase OpenBrushFolderCommand { get; }
 
     public ICommandBase NewRoadCommand { get; }
 
@@ -183,6 +225,12 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         OnPropertyChanged(nameof(Radius));
     }
 
+    internal void OnRotationChangedFromViewport(float degrees)
+    {
+        rotation = degrees;
+        OnPropertyChanged(nameof(Rotation));
+    }
+
     internal void OnHeightSampled(float height) => FlattenHeight = height;
 
     internal void OnLayerSampled(int layer)
@@ -205,6 +253,8 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
             TargetHeight = flattenHeight,
             Layer = selectedLayer?.Index ?? 0,
             NoiseScale = noiseScale,
+            Mask = selectedBrush?.Mask,
+            Rotation = MathUtil.DegreesToRadians(rotation),
         });
         service.SetToolEnabled(IsActive);
     }
@@ -333,6 +383,64 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
             editor.SelectedContent.Add(created);
         }
         return spline.Id;
+    }
+
+    /// <summary>
+    /// Reloads the brush list (built-in brushes and the images of the brush folder), keeping the selection when it's still there.
+    /// </summary>
+    public void RefreshBrushes()
+    {
+        var selectedName = selectedBrush?.Name;
+        var selectedFile = selectedBrush?.FilePath;
+        brushes.Clear();
+        brushes.AddRange(TerrainBrushLibrary.BuiltIn);
+        brushes.AddRange(TerrainBrushLibrary.LoadFolder(BrushFolder, (file, e) => editor.Logger.Warning($"Could not load the terrain brush [{file}]: {e.Message}")));
+        SelectedBrush = brushes.FirstOrDefault(x => x.FilePath == selectedFile && x.Name == selectedName) ?? brushes[0];
+        OnPropertyChanged(nameof(Hint));
+    }
+
+    private async Task ImportBrush()
+    {
+        var folder = BrushFolder;
+        if (folder == null)
+            return;
+        var file = await ServiceProvider.Get<IDialogService>().OpenFilePickerAsync(null,
+        [
+            new FilePickerFilter("Brush images") { Patterns = TerrainBrushLibrary.ImageExtensions.Select(x => "*" + x).ToList() },
+        ]);
+        if (file == null)
+            return;
+
+        var source = file.ToOSPath();
+        try
+        {
+            // Checks it loads before copying it into the project
+            TerrainBrushLibrary.LoadMask(source);
+            Directory.CreateDirectory(folder);
+            var name = Path.GetFileNameWithoutExtension(source);
+            var extension = Path.GetExtension(source);
+            var target = Path.Combine(folder, name + extension);
+            for (int i = 2; File.Exists(target) && !string.Equals(Path.GetFullPath(target), Path.GetFullPath(source), StringComparison.OrdinalIgnoreCase); i++)
+                target = Path.Combine(folder, $"{name} {i}{extension}");
+            if (!File.Exists(target))
+                File.Copy(source, target);
+
+            RefreshBrushes();
+            SelectedBrush = brushes.FirstOrDefault(x => string.Equals(x.FilePath, target, StringComparison.OrdinalIgnoreCase)) ?? SelectedBrush;
+        }
+        catch (Exception e)
+        {
+            await ServiceProvider.Get<IDialogService>().MessageBoxAsync($"Failed to import the brush: {e.Message}", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void OpenBrushFolder()
+    {
+        var folder = BrushFolder;
+        if (folder == null)
+            return;
+        Directory.CreateDirectory(folder);
+        Process.Start(new ProcessStartInfo(folder) { UseShellExecute = true });
     }
 
     private async Task ImportHeightmap()

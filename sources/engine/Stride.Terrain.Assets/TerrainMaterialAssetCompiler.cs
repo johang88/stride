@@ -155,6 +155,7 @@ internal sealed class TerrainMaterialAssetCompiler : AssetCompilerBase
                         HeightBlendScale = layer.HeightBlendScale,
                         HeightBlendOffset = layer.HeightBlendOffset,
                         TilingVariation = layer.TilingVariation,
+                        Triplanar = layer.Triplanar,
                         SurfaceTag = layer.SurfaceTag,
                     });
                 }

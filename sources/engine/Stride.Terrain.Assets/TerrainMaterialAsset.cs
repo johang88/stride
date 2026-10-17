@@ -185,6 +185,15 @@ public sealed class TerrainLayerDescription
     public float TilingVariation { get; set; } = 0.5f;
 
     /// <summary>
+    /// Projects the textures along the three axes on slopes instead of from the top only, so they don't stretch on steep
+    /// terrain. Flat ground looks the same; slopes cost up to three times the texture samples. (The cliff layer always is.)
+    /// </summary>
+    [DataMember(127)]
+    [DefaultValue(false)]
+    [Display("Tri-planar")]
+    public bool Triplanar { get; set; }
+
+    /// <summary>
     /// Free-form tag available to gameplay (footsteps, VFX).
     /// </summary>
     [DataMember(130)]

@@ -19,6 +19,7 @@ using Stride.Core.Mathematics;
 using Stride.Core.Presentation.Services;
 using Stride.Editor.EditorGame.Game;
 using Stride.Engine;
+using Stride.Graphics;
 using Stride.Input;
 using Stride.Terrain;
 using Stride.Terrain.Editing;
@@ -48,6 +49,8 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
     private bool resolvingAsset;
     private TerrainProcessor overlayProcessor;
     private TerrainComponent overlayTarget;
+    private TerrainBrushMask overlayMask;
+    private Texture overlayMaskTexture;
 
     private TerrainSnapshot strokeBefore;
     private TerrainBrushTool strokeTool;
@@ -331,6 +334,8 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
             }
             await game.Script.NextFrame();
         }
+        overlayMaskTexture?.Dispose();
+        overlayMaskTexture = null;
     }
 
     private void UpdateFrame()
@@ -358,14 +363,25 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
         if (camera?.Component == null)
             return;
 
-        // Shortcuts
+        // Shortcuts: [ and ] change the radius, with Ctrl they rotate a custom brush
         if (input.IsKeyPressed(Keys.OemOpenBrackets) || input.IsKeyPressed(Keys.OemCloseBrackets))
         {
-            var factor = input.IsKeyPressed(Keys.OemOpenBrackets) ? 1 / 1.2f : 1.2f;
-            settings.Radius = Math.Clamp(settings.Radius * factor, 0.5f, 500.0f);
-            SetBrush(settings);
-            var radius = settings.Radius;
-            editor.Dispatcher.InvokeAsync(() => ToolsViewModel?.OnRadiusChangedFromViewport(radius));
+            var decrease = input.IsKeyPressed(Keys.OemOpenBrackets);
+            if (settings.Mask != null && (input.IsKeyDown(Keys.LeftCtrl) || input.IsKeyDown(Keys.RightCtrl)))
+            {
+                var degrees = MathUtil.RadiansToDegrees(settings.Rotation) + (decrease ? -15 : 15);
+                degrees = ((MathF.Round(degrees / 15) * 15 % 360) + 360) % 360;
+                settings.Rotation = MathUtil.DegreesToRadians(degrees);
+                SetBrush(settings);
+                editor.Dispatcher.InvokeAsync(() => ToolsViewModel?.OnRotationChangedFromViewport(degrees));
+            }
+            else
+            {
+                settings.Radius = Math.Clamp(settings.Radius * (decrease ? 1 / 1.2f : 1.2f), 0.5f, 500.0f);
+                SetBrush(settings);
+                var radius = settings.Radius;
+                editor.Dispatcher.InvokeAsync(() => ToolsViewModel?.OnRadiusChangedFromViewport(radius));
+            }
         }
         settings.Invert ^= input.IsKeyDown(Keys.LeftShift) || input.IsKeyDown(Keys.RightShift);
 
@@ -394,7 +410,7 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
                 TerrainBrushTool.Hole => new Color4(1.0f, 0.3f, 0.2f, 0.9f),
                 _ => settings.Invert ? new Color4(1.0f, 0.55f, 0.1f, 0.9f) : new Color4(1.0f, 0.95f, 0.3f, 0.9f),
             };
-            ShowOverlay(new Vector2(local.X, local.Z), settings.Radius, settings.Radius * (1 - settings.Falloff), color);
+            ShowOverlay(new Vector2(local.X, local.Z), settings, color);
         }
         else
         {
@@ -619,7 +635,7 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
         editor.Dispatcher.InvokeAsync(() => ToolsViewModel?.OnTargetChanged(name, layers));
     }
 
-    private void ShowOverlay(Vector2 center, float radius, float inner, Color4 color)
+    private void ShowOverlay(Vector2 center, in TerrainBrushSettings settings, Color4 color)
     {
         var processor = game.SceneSystem.SceneInstance?.Processors.OfType<TerrainProcessor>().FirstOrDefault();
         if (processor == null)
@@ -628,7 +644,29 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
             HideOverlay();
         overlayProcessor = processor;
         overlayTarget = target;
-        processor.SetBrushOverlay(target, center, radius, inner, color);
+        var inner = settings.Mask != null ? 0 : settings.Radius * (1 - settings.Falloff);
+        processor.SetBrushOverlay(target, center, settings.Radius, inner, color, GetMaskTexture(settings.Mask), settings.Rotation);
+    }
+
+    /// <summary>
+    /// The GPU copy of a brush mask drawn by the overlay (game thread), recreated when the brush changes.
+    /// </summary>
+    private Texture GetMaskTexture(TerrainBrushMask mask)
+    {
+        if (mask != overlayMask)
+        {
+            overlayMaskTexture?.Dispose();
+            overlayMaskTexture = null;
+            overlayMask = mask;
+            if (mask != null)
+            {
+                var pixels = new byte[mask.Values.Length];
+                for (int i = 0; i < pixels.Length; i++)
+                    pixels[i] = (byte)Math.Clamp(mask.Values[i] * 255 + 0.5f, 0, 255);
+                overlayMaskTexture = Texture.New2D(game.GraphicsDevice, mask.Size, mask.Size, PixelFormat.R8_UNorm, pixels);
+            }
+        }
+        return overlayMaskTexture;
     }
 
     private void HideOverlay()

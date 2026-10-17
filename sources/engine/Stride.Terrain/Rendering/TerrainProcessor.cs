@@ -109,13 +109,18 @@ public sealed class TerrainProcessor : EntityProcessor<TerrainComponent, Terrain
     /// <param name="radius">Outer radius in meters.</param>
     /// <param name="innerRadius">Radius where the brush starts fading out.</param>
     /// <param name="color">Outline color (alpha is the opacity).</param>
-    public void SetBrushOverlay(TerrainComponent component, Vector2 localCenter, float radius, float innerRadius, Color4 color)
+    /// <param name="mask">Shape of a custom brush (red channel, see <see cref="Editing.TerrainBrushMask"/>), or null for a round brush.</param>
+    /// <param name="rotation">Rotation of the mask in radians.</param>
+    public void SetBrushOverlay(TerrainComponent component, Vector2 localCenter, float radius, float innerRadius, Color4 color, Texture mask = null, float rotation = 0)
     {
         var pass = GetRenderObject(component)?.MaterialPass;
         if (pass == null)
             return;
         pass.Parameters.Set(TerrainBrushOverlayKeys.TerrainBrush, new Vector4(localCenter, radius, innerRadius));
         pass.Parameters.Set(TerrainBrushOverlayKeys.TerrainBrushColor, (Vector4)color);
+        pass.Parameters.Set(TerrainBrushOverlayKeys.TerrainBrushShape, new Vector4(mask != null ? 1 : 0, MathF.Cos(rotation), MathF.Sin(rotation), 0));
+        if (mask != null)
+            pass.Parameters.Set(TerrainBrushOverlayKeys.TerrainBrushMask, mask);
     }
 
     public override void Draw(RenderContext context)

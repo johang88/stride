@@ -34,10 +34,11 @@ namespace Stride.Terrain
             stage float4 TerrainLayerParams[64];
             // rgb = albedo tint, a = roughness scale
             stage float4 TerrainLayerTints[64];
-            // x = tiling variation amount
+            // x = tiling variation amount, y = tri-planar projection (1) or top-down (0)
             stage float4 TerrainLayerVariations[64];
             stage float TerrainHeightBlendSharpness;
-            // x = cliff layer (negative: none), y = slope where it starts, z = slope where it fully covers (slope = 1 - normal.y)
+            // x = cliff layer (negative: none), y = slope where it starts, z = slope where it fully covers (slope = 1 - normal.y),
+            // w = 1 when the material has tri-planar layers or a cliff layer (steep slopes bypass the virtual texture)
             stage float4 TerrainCliffParams;
             // x = parallax depth (meters, 0: off), y = distance over which it fades out (meters)
             stage float4 TerrainParallax;
@@ -149,10 +150,12 @@ namespace Stride.Terrain
             TerrainAddLayer((value >> 12) & 63, weightC * s, layers, weights, count);
         }
 
-        // Samples and blends the layers at a local position.
-        // dLocalDx/dLocalDy are the local position derivatives used to filter the layer textures.
-        TerrainSurface TerrainSampleLayers(float2 localXZ, float2 dLocalDx, float2 dLocalDy)
+        // Samples and blends the layers at a local position (height included), around the height field normal (macroNormal).
+        // dLocalDx/dLocalDy are the local XZ derivatives used to filter the layer textures.
+        TerrainSurface TerrainSampleLayers(float3 localPosition, float3 macroNormal, float2 dLocalDx, float2 dLocalDy)
         {
+            float2 localXZ = localPosition.xz;
+            float3 triplanarBlend = TerrainTriplanarBlend(macroNormal);
             uint layers[12];
             float weights[12];
             float4 albedoHeight[12];
@@ -197,7 +200,15 @@ namespace Stride.Terrain
                 float4 layerParams = TerrainLayerParams[layers[i]];
                 float2 uv = localXZ * layerParams.x;
                 variationMix[i] = TerrainVariationMix(layers[i], localXZ);
-                albedoHeight[i] = TerrainSampleAlbedoHeight(layers[i], uv, dLocalDx * layerParams.x, dLocalDy * layerParams.x, variationMix[i]);
+                if (TerrainIsTriplanar(layers[i]) && triplanarBlend.y < 0.99)
+                {
+                    float4 unused;
+                    TerrainSampleTriplanar(layers[i], localPosition, macroNormal, triplanarBlend, dLocalDx, dLocalDy, albedoHeight[i], unused);
+                }
+                else
+                {
+                    albedoHeight[i] = TerrainSampleAlbedoHeight(layers[i], uv, dLocalDx * layerParams.x, dLocalDy * layerParams.x, variationMix[i]);
+                }
                 float layerNoise = TerrainValueNoise(localXZ * 1.7 + (float)layers[i] * 17.31) - 0.5;
                 // The height map only competes where the layer is actually painted: a nearly absent layer with a strong
                 // height map would otherwise win right up to the line where its weight reaches zero (hard edges)
@@ -219,8 +230,17 @@ namespace Stride.Terrain
                     float4 layerParams = TerrainLayerParams[layers[j]];
                     float4 tint = TerrainLayerTints[layers[j]];
                     float2 uv = localXZ * layerParams.x;
-                    float4 nr = TerrainSampleNormalRoughness(layers[j], uv, dLocalDx * layerParams.x, dLocalDy * layerParams.x, variationMix[j]);
-                    nr.xy *= layerParams.y;
+                    float4 nr;
+                    if (TerrainIsTriplanar(layers[j]) && triplanarBlend.y < 0.99)
+                    {
+                        float4 unused;
+                        TerrainSampleTriplanar(layers[j], localPosition, macroNormal, triplanarBlend, dLocalDx, dLocalDy, unused, nr);
+                    }
+                    else
+                    {
+                        nr = TerrainSampleNormalRoughness(layers[j], uv, dLocalDx * layerParams.x, dLocalDy * layerParams.x, variationMix[j]);
+                        nr.xy *= layerParams.y;
+                    }
                     nr.z *= tint.a;
                     albedo += albedoHeight[j].rgb * tint.rgb * w;
                     normalRoughness += nr * w;
@@ -243,16 +263,73 @@ namespace Stride.Terrain
             return surface;
         }
 
-        // Samples a layer with a planar projection (uv in meters) and returns albedo (rgb) and the tangent space normal (xy) + roughness + occlusion
-        void TerrainSampleProjected(uint layer, float2 uvMeters, float2 gradient, out float4 albedoHeight, out float4 normalRoughness)
+        // Samples a layer with a planar projection (uv and its screen derivatives in meters) and returns albedo (rgb) + height (a)
+        // and the tangent space normal (xy) + roughness + occlusion
+        void TerrainSampleProjected(uint layer, float2 uvMeters, float2 dUvDx, float2 dUvDy, out float4 albedoHeight, out float4 normalRoughness)
         {
             float4 layerParams = TerrainLayerParams[layer];
             float2 uv = uvMeters * layerParams.x;
-            float2 g = gradient * layerParams.x;
             float amount = TerrainVariationMix(layer, uvMeters);
-            albedoHeight = TerrainSampleAlbedoHeight(layer, uv, float2(g.x, 0), float2(0, g.y), amount);
-            normalRoughness = TerrainSampleNormalRoughness(layer, uv, float2(g.x, 0), float2(0, g.y), amount);
+            albedoHeight = TerrainSampleAlbedoHeight(layer, uv, dUvDx * layerParams.x, dUvDy * layerParams.x, amount);
+            normalRoughness = TerrainSampleNormalRoughness(layer, uv, dUvDx * layerParams.x, dUvDy * layerParams.x, amount);
             normalRoughness.xy *= layerParams.y;
+        }
+
+        // Weights of the three tri-planar projections (x: plane facing X, y: top, z: plane facing Z) for a surface normal
+        float3 TerrainTriplanarBlend(float3 macroNormal)
+        {
+            float3 blend = pow(abs(macroNormal), 4.0);
+            return blend / max(blend.x + blend.y + blend.z, 1e-5);
+        }
+
+        bool TerrainIsTriplanar(uint layer)
+        {
+            return TerrainLayerVariations[layer].y > 0.5;
+        }
+
+        // Samples a layer projected along the three axes and blended by the slope, so it doesn't stretch on steep terrain.
+        // The top projection matches the regular top-down mapping, so flat ground looks the same either way.
+        // Returns albedo + height and the tangent space normal (xy, in the frame of the macro normal) + roughness + occlusion.
+        void TerrainSampleTriplanar(uint layer, float3 localPosition, float3 macroNormal, float3 blend, float2 dLocalDx, float2 dLocalDy, out float4 albedoHeight, out float4 normalRoughness)
+        {
+            // Position derivatives on the surface: the height follows the slope (works for virtual texture pages too, which
+            // have no screen derivatives of the height)
+            float2 slope = -macroNormal.xz / max(macroNormal.y, 0.05);
+            float3 dPositionDx = float3(dLocalDx.x, dot(slope, dLocalDx), dLocalDx.y);
+            float3 dPositionDy = float3(dLocalDy.x, dot(slope, dLocalDy), dLocalDy.y);
+
+            albedoHeight = 0;
+            normalRoughness = 0;
+            float3 normalLocal = macroNormal;
+            float4 a;
+            float4 n;
+            if (blend.x > 0.01)
+            {
+                TerrainSampleProjected(layer, localPosition.zy, dPositionDx.zy, dPositionDy.zy, a, n);
+                albedoHeight += a * blend.x;
+                normalRoughness.zw += n.zw * blend.x;
+                normalLocal += float3(0, n.y, n.x) * blend.x;
+            }
+            if (blend.z > 0.01)
+            {
+                TerrainSampleProjected(layer, localPosition.xy, dPositionDx.xy, dPositionDy.xy, a, n);
+                albedoHeight += a * blend.z;
+                normalRoughness.zw += n.zw * blend.z;
+                normalLocal += float3(n.x, n.y, 0) * blend.z;
+            }
+            if (blend.y > 0.01)
+            {
+                TerrainSampleProjected(layer, localPosition.xz, dLocalDx, dLocalDy, a, n);
+                albedoHeight += a * blend.y;
+                normalRoughness.zw += n.zw * blend.y;
+                normalLocal += float3(n.x, 0, n.y) * blend.y;
+            }
+            normalLocal = normalize(normalLocal);
+
+            // Back to the tangent space of the macro normal (as the top-down layers are)
+            float3 tangent = normalize(float3(1, 0, 0) - macroNormal * macroNormal.x);
+            float3 bitangent = cross(tangent, macroNormal);
+            normalRoughness.xy = float2(dot(normalLocal, tangent), dot(normalLocal, bitangent));
         }
 
         // Covers steep slopes with the cliff layer, projected tri-planar so it doesn't stretch on cliffs.
@@ -267,55 +344,16 @@ namespace Stride.Terrain
 
             uint layer = (uint)TerrainCliffParams.x;
             float4 tint = TerrainLayerTints[layer];
-            float3 blend = pow(abs(macroNormal), 4.0);
-            blend /= max(blend.x + blend.y + blend.z, 1e-5);
+            float4 albedoHeight;
+            float4 normalRoughness;
+            TerrainSampleTriplanar(layer, localPosition, macroNormal, TerrainTriplanarBlend(macroNormal), dLocalDx, dLocalDy, albedoHeight, normalRoughness);
+            float3 cliffNormalTS = float3(normalRoughness.xy, sqrt(saturate(1.0 - dot(normalRoughness.xy, normalRoughness.xy))));
 
-            // Texture footprint: horizontal from the derivatives, vertical stretched by the slope
-            float horizontal = max(length(dLocalDx), length(dLocalDy));
-            float vertical = horizontal / max(macroNormal.y, 0.2);
-
-            float3 albedo = 0;
-            float4 normalRoughness = 0;
-            float height = 0;
-            float3 normalLocal = macroNormal;
-            float4 a;
-            float4 n;
-            if (blend.x > 0.01)
-            {
-                TerrainSampleProjected(layer, localPosition.zy, float2(horizontal, vertical), a, n);
-                albedo += a.rgb * blend.x;
-                height += a.a * blend.x;
-                normalRoughness.zw += n.zw * blend.x;
-                normalLocal += float3(0, n.y, n.x) * blend.x;
-            }
-            if (blend.z > 0.01)
-            {
-                TerrainSampleProjected(layer, localPosition.xy, float2(horizontal, vertical), a, n);
-                albedo += a.rgb * blend.z;
-                height += a.a * blend.z;
-                normalRoughness.zw += n.zw * blend.z;
-                normalLocal += float3(n.x, n.y, 0) * blend.z;
-            }
-            if (blend.y > 0.01)
-            {
-                TerrainSampleProjected(layer, localPosition.xz, float2(horizontal, horizontal), a, n);
-                albedo += a.rgb * blend.y;
-                height += a.a * blend.y;
-                normalRoughness.zw += n.zw * blend.y;
-                normalLocal += float3(n.x, 0, n.y) * blend.y;
-            }
-            normalLocal = normalize(normalLocal);
-
-            // Back to the tangent space of the macro normal (as the layers are)
-            float3 tangent = normalize(float3(1, 0, 0) - macroNormal * macroNormal.x);
-            float3 bitangent = cross(tangent, macroNormal);
-            float3 cliffNormalTS = float3(dot(normalLocal, tangent), dot(normalLocal, bitangent), dot(normalLocal, macroNormal));
-
-            surface.Albedo = lerp(surface.Albedo, albedo * tint.rgb, coverage);
+            surface.Albedo = lerp(surface.Albedo, albedoHeight.rgb * tint.rgb, coverage);
             surface.NormalTS = normalize(lerp(surface.NormalTS, cliffNormalTS, coverage));
             surface.Roughness = lerp(surface.Roughness, saturate(normalRoughness.z * tint.a), coverage);
             surface.Occlusion = lerp(surface.Occlusion, saturate(normalRoughness.w), coverage);
-            surface.Height = lerp(surface.Height, saturate(height), coverage);
+            surface.Height = lerp(surface.Height, saturate(albedoHeight.a), coverage);
             return surface;
         }
 

@@ -16,8 +16,9 @@ namespace Stride.Terrain
             float2 dy = ddy(localXZ);
 
             float3 macroNormal = TerrainSampleNormal(localXZ, dx, dy);
-            TerrainSurface surface = TerrainSampleLayers(localXZ, dx, dy);
-            surface = TerrainApplyCliff(surface, float3(localXZ.x, TerrainSampleHeight(localXZ), localXZ.y), macroNormal, dx, dy);
+            float3 localPosition = float3(localXZ.x, TerrainSampleHeight(localXZ), localXZ.y);
+            TerrainSurface surface = TerrainSampleLayers(localPosition, macroNormal, dx, dy);
+            surface = TerrainApplyCliff(surface, localPosition, macroNormal, dx, dy);
 
             streams.normalWS = TerrainTangentToLocal(surface.NormalTS, macroNormal);
             streams.matDiffuse = float4(TerrainApplyBrush(surface.Albedo, localXZ, dx, dy), 1.0);

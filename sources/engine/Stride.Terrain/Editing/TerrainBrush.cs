@@ -59,6 +59,21 @@ public struct TerrainBrushSettings
     /// </summary>
     public float NoiseScale;
 
+    /// <summary>
+    /// Shape of a custom brush, stretched over the brush diameter (null: round brush fading out by <see cref="Falloff"/>).
+    /// </summary>
+    public TerrainBrushMask Mask;
+
+    /// <summary>
+    /// Rotation of the custom brush mask in radians (counter-clockwise seen from above).
+    /// </summary>
+    public float Rotation;
+
+    /// <summary>
+    /// Distance from the center to the farthest point the brush can touch: the corners of a rotated mask reach beyond the radius.
+    /// </summary>
+    public readonly float Reach => Mask != null ? Radius * MathF.Sqrt(2) : Radius;
+
     public static TerrainBrushSettings Default => new()
     {
         Tool = TerrainBrushTool.Raise,
@@ -93,7 +108,18 @@ public static class TerrainBrush
     }
 
     /// <summary>
-    /// Brush weight (0-1) at a distance from its center.
+    /// Brush weight (0-1) of the sample (x, z) of a terrain for a brush centered at a local position.
+    /// </summary>
+    public static float Weight(TerrainData data, Vector2 center, int x, int z, in TerrainBrushSettings settings)
+    {
+        var offset = new Vector2(x * data.CellSize - center.X, z * data.CellSize - center.Y);
+        if (settings.Mask != null)
+            return settings.Mask.Weight(offset, settings.Radius, settings.Rotation);
+        return Weight(offset.Length(), settings.Radius, settings.Falloff);
+    }
+
+    /// <summary>
+    /// Brush weight (0-1) of a round brush at a distance from its center.
     /// </summary>
     public static float Weight(float distance, float radius, float falloff)
     {
@@ -121,7 +147,7 @@ public static class TerrainBrush
         if (settings.Radius <= 0)
             return false;
 
-        GetRegion(data, center, settings.Radius, out var min, out var max);
+        GetRegion(data, center, settings.Reach, out var min, out var max);
         if (min.X > max.X || min.Y > max.Y)
             return false;
 
@@ -159,13 +185,6 @@ public static class TerrainBrush
         return true;
     }
 
-    private static float Distance(TerrainData data, Vector2 center, int x, int z)
-    {
-        var dx = x * data.CellSize - center.X;
-        var dz = z * data.CellSize - center.Y;
-        return MathF.Sqrt(dx * dx + dz * dz);
-    }
-
     private static void ApplyRaise(TerrainData data, Vector2 center, in TerrainBrushSettings s, float dt, Int2 min, Int2 max)
     {
         var amount = RaiseRate * s.Radius * s.Strength * dt * (s.Invert ? -1 : 1);
@@ -173,7 +192,7 @@ public static class TerrainBrush
         {
             for (int x = min.X; x <= max.X; x++)
             {
-                var w = Weight(Distance(data, center, x, z), s.Radius, s.Falloff);
+                var w = Weight(data, center, x, z, s);
                 if (w > 0)
                     data.SetHeight(x, z, data.GetHeight(x, z) + amount * w);
             }
@@ -187,7 +206,7 @@ public static class TerrainBrush
         {
             for (int x = min.X; x <= max.X; x++)
             {
-                var w = Weight(Distance(data, center, x, z), s.Radius, s.Falloff) * blend;
+                var w = Weight(data, center, x, z, s) * blend;
                 if (w <= 0)
                     continue;
                 var h = data.GetHeight(x, z);
@@ -217,7 +236,7 @@ public static class TerrainBrush
         {
             for (int x = 0; x < width; x++)
             {
-                var w = Weight(Distance(data, center, min.X + x, min.Y + z), s.Radius, s.Falloff) * blend;
+                var w = Weight(data, center, min.X + x, min.Y + z, s) * blend;
                 if (w <= 0)
                     continue;
                 float sum = 0;
@@ -245,7 +264,7 @@ public static class TerrainBrush
         {
             for (int x = min.X; x <= max.X; x++)
             {
-                var w = Weight(Distance(data, center, x, z), s.Radius, s.Falloff);
+                var w = Weight(data, center, x, z, s);
                 if (w <= 0)
                     continue;
                 var n = Fbm(x * frequency, z * frequency);
@@ -262,7 +281,7 @@ public static class TerrainBrush
         {
             for (int x = min.X; x <= max.X; x++)
             {
-                var w = Weight(Distance(data, center, x, z), s.Radius, s.Falloff) * rate;
+                var w = Weight(data, center, x, z, s) * rate;
                 if (w <= 1e-4f)
                     continue;
                 ref var splat = ref data.Splat[z * resolution + x];
@@ -278,7 +297,8 @@ public static class TerrainBrush
         {
             for (int x = min.X; x <= max.X; x++)
             {
-                if (Distance(data, center, x, z) > s.Radius)
+                // Holes are on or off: the brush cuts where it's at least half on
+                if (Weight(data, center, x, z, s with { Falloff = 0 }) < 0.5f)
                     continue;
                 ref var splat = ref data.Splat[z * resolution + x];
                 splat = TerrainSplat.Paint(splat, TerrainSplat.HoleLayer, s.Invert ? -1 : 1);

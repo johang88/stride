@@ -141,6 +141,13 @@ public sealed class TerrainLayer
     public float TilingVariation { get; set; } = 0.5f;
 
     /// <summary>
+    /// Projects the layer along the three axes on slopes instead of from the top only, so it doesn't stretch on steep terrain.
+    /// </summary>
+    [DataMember(87)]
+    [DefaultValue(false)]
+    public bool Triplanar { get; set; }
+
+    /// <summary>
     /// A free-form tag (e.g. footstep sound or VFX surface type) available to gameplay through terrain queries.
     /// </summary>
     [DataMember(90)]

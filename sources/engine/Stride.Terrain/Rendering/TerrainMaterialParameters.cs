@@ -2,6 +2,7 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using Stride.Core.Mathematics;
 using Stride.Graphics;
@@ -53,7 +54,7 @@ internal static class TerrainMaterialParameters
             }
             layerParams[i] = new Vector4(1.0f / Math.Max(layer.TileSize, 0.01f), layer.NormalStrength, layer.HeightBlendScale, layer.HeightBlendOffset);
             layerTints[i] = new Vector4(layer.Tint.R, layer.Tint.G, layer.Tint.B, layer.RoughnessScale);
-            layerVariations[i] = new Vector4(Math.Clamp(layer.TilingVariation, 0, 1), 0, 0, 0);
+            layerVariations[i] = new Vector4(Math.Clamp(layer.TilingVariation, 0, 1), layer.Triplanar ? 1 : 0, 0, 0);
         }
 
         parameters.Set(TerrainLayersKeys.TerrainLayerParams, layerParams);
@@ -61,12 +62,16 @@ internal static class TerrainMaterialParameters
         parameters.Set(TerrainLayersKeys.TerrainLayerVariations, layerVariations);
         parameters.Set(TerrainLayersKeys.TerrainHeightBlendSharpness, Math.Max(material?.HeightBlendSharpness ?? 0.2f, 1e-3f));
         var cliffLayer = material != null && material.CliffLayer >= 0 && material.CliffLayer < material.Layers.Count ? material.CliffLayer : -1;
-        parameters.Set(TerrainLayersKeys.TerrainCliffParams, new Vector4(cliffLayer, material?.CliffSlopeStart ?? 0.35f, material?.CliffSlopeEnd ?? 0.5f, 0));
+        var projectsSlopes = cliffLayer >= 0 || material?.Layers.Any(x => x.Triplanar) == true;
+        parameters.Set(TerrainLayersKeys.TerrainCliffParams, new Vector4(cliffLayer, material?.CliffSlopeStart ?? 0.35f, material?.CliffSlopeEnd ?? 0.5f, projectsSlopes ? 1 : 0));
         parameters.Set(TerrainLayersKeys.TerrainParallax, new Vector4(material?.ParallaxDepth ?? 0, Math.Max(material?.ParallaxFadeDistance ?? 40, 1), 0, 0));
 
         var fallback = Fallbacks.GetValue(device, d => new FallbackTextures(d));
         parameters.Set(TerrainLayersKeys.TerrainAlbedoHeightArray, material?.AlbedoHeightArray ?? fallback.AlbedoHeight);
         parameters.Set(TerrainLayersKeys.TerrainNormalRoughnessArray, material?.NormalRoughnessArray ?? fallback.NormalRoughness);
+        // Bound until an editor brush sets its mask (the overlay only samples it then)
+        if (parameters.Get(TerrainBrushOverlayKeys.TerrainBrushMask) == null)
+            parameters.Set(TerrainBrushOverlayKeys.TerrainBrushMask, fallback.BrushMask);
     }
 
     /// <summary>
@@ -76,11 +81,13 @@ internal static class TerrainMaterialParameters
     {
         public readonly Texture AlbedoHeight;
         public readonly Texture NormalRoughness;
+        public readonly Texture BrushMask;
 
         public FallbackTextures(GraphicsDevice device)
         {
             AlbedoHeight = CreateArray(device, new Color(140, 140, 140, 128), PixelFormat.R8G8B8A8_UNorm_SRgb);
             NormalRoughness = CreateArray(device, new Color(128, 128, 220, 255), PixelFormat.R8G8B8A8_UNorm);
+            BrushMask = Texture.New2D(device, 1, 1, PixelFormat.R8_UNorm, new byte[] { 255 });
         }
 
         private static unsafe Texture CreateArray(GraphicsDevice device, Color color, PixelFormat format)

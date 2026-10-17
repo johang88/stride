@@ -22,8 +22,10 @@ namespace Stride.Terrain
             float2 dx = float2(TerrainVTPage.z, 0.0);
             float2 dy = float2(0.0, TerrainVTPage.z);
 
-            TerrainSurface surface = TerrainSampleLayers(localXZ, dx, dy);
-            surface = TerrainApplyCliff(surface, float3(localXZ.x, TerrainSampleHeight(localXZ), localXZ.y), TerrainSampleNormalLevel(localXZ, 0), dx, dy);
+            float3 localPosition = float3(localXZ.x, TerrainSampleHeight(localXZ), localXZ.y);
+            float3 macroNormal = TerrainSampleNormalLevel(localXZ, 0);
+            TerrainSurface surface = TerrainSampleLayers(localPosition, macroNormal, dx, dy);
+            surface = TerrainApplyCliff(surface, localPosition, macroNormal, dx, dy);
             streams.ColorTarget = float4(surface.Albedo, surface.Height);
             streams.ColorTarget1 = float4(surface.NormalTS.xy * 0.5 + 0.5, surface.Roughness, surface.Occlusion);
         }

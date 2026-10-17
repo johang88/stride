@@ -94,10 +94,27 @@ namespace Stride.Terrain
                 normalTS = surface.NormalTS;
                 roughness = surface.Roughness;
                 occlusion = surface.Occlusion;
+
+                // The virtual texture is a top-down projection: on steep slopes its texels stretch down the slope, so
+                // tri-planar layers (and the cliff layer) are blended from the layers themselves there
+                float steep = TerrainCliffParams.w > 0.5 ? smoothstep(0.12, 0.25, 1.0 - macroNormal.y) : 0.0;
+                if (steep > 0.0)
+                {
+                    float3 localPosition = float3(localXZ.x, TerrainSampleHeight(localXZ), localXZ.y);
+                    TerrainSurface direct = TerrainSampleLayers(localPosition, macroNormal, dx, dy);
+                    direct = TerrainApplyCliff(direct, localPosition, macroNormal, dx, dy);
+                    albedo = lerp(albedo, direct.Albedo, steep);
+                    normalTS = normalize(lerp(normalTS, direct.NormalTS, steep));
+                    roughness = lerp(roughness, direct.Roughness, steep);
+                    occlusion = lerp(occlusion, direct.Occlusion, steep);
+                }
             }
             else
             {
-                TerrainSurface surface = TerrainSampleLayers(localXZ, dx, dy);
+                // Same as a virtual texture page (TerrainVTComposeShader)
+                float3 localPosition = float3(localXZ.x, TerrainSampleHeight(localXZ), localXZ.y);
+                TerrainSurface surface = TerrainSampleLayers(localPosition, macroNormal, dx, dy);
+                surface = TerrainApplyCliff(surface, localPosition, macroNormal, dx, dy);
                 albedo = surface.Albedo;
                 normalTS = surface.NormalTS;
                 roughness = surface.Roughness;

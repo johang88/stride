@@ -51,6 +51,12 @@ public abstract class EntityHierarchyEditorToolViewModel : DispatcherViewModel
     public virtual string ToolTip => null;
 
     /// <summary>
+    /// Key of an image in the application resources (e.g. a DrawingImage added by the package's view assembly) shown on the
+    /// toolbar toggle instead of <see cref="DisplayName"/>; null or not found: the name is shown.
+    /// </summary>
+    public virtual string IconResourceKey => null;
+
+    /// <summary>
     /// Whether the tool can be activated (raise a property change when it changes).
     /// </summary>
     public virtual bool IsAvailable => true;

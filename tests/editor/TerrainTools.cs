@@ -12,8 +12,10 @@ using Stride.Assets.Presentation.AssetEditors.SceneEditor.ViewModels;
 using Stride.Terrain.Editor;
 using Stride.Core.Assets.Editor.Services;
 using Stride.Core.Assets.Editor.ViewModel;
+using Stride.Core.Assets.Templates;
 using Stride.Core.Mathematics;
 using Stride.GameStudio.AutoTesting;
+using Stride.Terrain;
 using Stride.Terrain.Editing;
 
 namespace Stride.Editor.Tests;
@@ -55,6 +57,15 @@ public class TerrainTools : IUITest
             return;
         }
 
+        // The terrain asset templates come with the terrain package (Stride.Terrain.Assets)
+        var templates = await session.Dispatcher.InvokeAsync(() => session.FindTemplates(TemplateScope.Asset).OfType<TemplateAssetDescription>().Where(x => x.Group == "Terrain").Select(x => x.Name).ToList());
+        Console.WriteLine($"TERRAIN templates: {string.Join(", ", templates)}");
+        if (templates.Count != 2)
+        {
+            ctx.Exit(7);
+            return;
+        }
+
         var service = await session.Dispatcher.InvokeAsync(() => editor.Tools.OfType<TerrainToolsViewModel>().Single().Service);
         await session.Dispatcher.InvokeAsync(() => editor.Tools.OfType<TerrainToolsViewModel>().Single().IsActive = true);
         await ctx.WaitForRendering(30);
@@ -90,6 +101,28 @@ public class TerrainTools : IUITest
         await session.Dispatcher.InvokeAsync(() => { session.ActionHistory.RedoCommand.Execute(); session.ActionHistory.RedoCommand.Execute(); });
         await ctx.WaitForRendering(30);
 
+        // A custom brush: the ridge (long along X) turned a quarter, so it raises a band along Z
+        var tools = editor.Tools.OfType<TerrainToolsViewModel>().Single();
+        await session.Dispatcher.InvokeAsync(() =>
+        {
+            tools.SelectedBrush = tools.Brushes.First(x => x.Name == "Ridge");
+            tools.Rotation = 90;
+        });
+        await ctx.WaitForRendering(10);
+        await ctx.Screenshot("brush");
+        var before = await service.GetTargetDataCopy();
+        var ridge = raise with { Mask = tools.SelectedBrush.Mask, Rotation = MathUtil.PiOverTwo, Radius = 20 };
+        await service.SimulateStroke(new Vector3(60, 0, 40), ridge, 30);
+        var after = await service.GetTargetDataCopy();
+        var (width, depth) = ChangedExtent(before, after);
+        Console.WriteLine($"TERRAIN ridge brush changed {width} x {depth} samples (X x Z)");
+        await session.Dispatcher.InvokeAsync(() => session.ActionHistory.UndoCommand.Execute());
+        if (depth <= width * 2)
+        {
+            ctx.Exit(6);
+            return;
+        }
+
         // Save writes the terrain data file next to the asset
         var saved = await session.Dispatcher.InvokeTask(() => session.SaveSession());
         var terrain = await session.Dispatcher.InvokeAsync(() => session.AllAssets.OfType<TerrainViewModel>().FirstOrDefault());
@@ -102,5 +135,25 @@ public class TerrainTools : IUITest
 
         await ctx.Screenshot("saved");
         ctx.Exit();
+    }
+
+    // Size in samples (X, Z) of the region whose heights changed between two copies of a terrain
+    private static (int Width, int Depth) ChangedExtent(TerrainData before, TerrainData after)
+    {
+        int minX = int.MaxValue, maxX = -1, minZ = int.MaxValue, maxZ = -1;
+        var resolution = before.Resolution;
+        for (int z = 0; z < resolution; z++)
+        {
+            for (int x = 0; x < resolution; x++)
+            {
+                if (before.Heights[z * resolution + x] == after.Heights[z * resolution + x])
+                    continue;
+                minX = Math.Min(minX, x);
+                maxX = Math.Max(maxX, x);
+                minZ = Math.Min(minZ, z);
+                maxZ = Math.Max(maxZ, z);
+            }
+        }
+        return maxX < 0 ? (0, 0) : (maxX - minX + 1, maxZ - minZ + 1);
     }
 }

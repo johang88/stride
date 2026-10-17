@@ -4,28 +4,61 @@
 namespace Stride.Terrain
 {
     /// <summary>
-    /// Draws the editor brush on the terrain surface.
+    /// Draws the editor brush on the terrain surface: a circle (round brush) or the shape of a custom brush mask.
     /// </summary>
     shader TerrainBrushOverlay
     {
+        rgroup PerMaterial
+        {
+            // Custom brush shape (red), row 0 at the far edge (-Z) before rotation (matches TerrainBrushMask)
+            stage Texture2D TerrainBrushMask;
+        }
+
         cbuffer PerMaterial
         {
             // xy = center (local XZ), z = radius (0 = hidden), w = inner radius where the falloff starts
             stage float4 TerrainBrush;
             stage float4 TerrainBrushColor;
+            // x = 1 with a custom mask, y = cos(rotation), z = sin(rotation)
+            stage float4 TerrainBrushShape;
         }
+
+        stage SamplerState TerrainBrushSampler
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
 
         float3 TerrainApplyBrush(float3 albedo, float2 localXZ, float2 dLocalDx, float2 dLocalDy)
         {
             if (TerrainBrush.z <= 0.0)
                 return albedo;
 
-            float d = distance(localXZ, TerrainBrush.xy);
             float pixel = max(length(dLocalDx), length(dLocalDy));
-            float outer = 1.0 - saturate(abs(d - TerrainBrush.z) / (pixel * 1.5));
-            float inner = TerrainBrush.w > 0.0 ? (1.0 - saturate(abs(d - TerrainBrush.w) / (pixel * 1.0))) * 0.5 : 0.0;
-            float fill = d < TerrainBrush.z ? 0.12 : 0.0;
-            float amount = saturate(max(max(outer, inner), fill)) * TerrainBrushColor.a;
+            float amount;
+            if (TerrainBrushShape.x > 0.5)
+            {
+                // Into the mask frame (TerrainBrushMask.Weight)
+                float2 offset = localXZ - TerrainBrush.xy;
+                float2 p = float2(offset.x * TerrainBrushShape.y + offset.y * TerrainBrushShape.z, -offset.x * TerrainBrushShape.z + offset.y * TerrainBrushShape.y);
+                float2 uv = p / TerrainBrush.z * 0.5 + 0.5;
+                if (any(uv < 0.0) || any(uv > 1.0))
+                    return albedo;
+                float mask = TerrainBrushMask.SampleLevel(TerrainBrushSampler, uv, 0).r;
+                // Shaded by the mask, outlined where it's half on
+                float edgeWidth = max(fwidth(mask), 1e-4) * 1.5;
+                float outline = (1.0 - saturate(abs(mask - 0.5) / edgeWidth)) * step(0.02, mask);
+                amount = saturate(max(outline, mask * 0.35)) * TerrainBrushColor.a;
+            }
+            else
+            {
+                float d = distance(localXZ, TerrainBrush.xy);
+                float outer = 1.0 - saturate(abs(d - TerrainBrush.z) / (pixel * 1.5));
+                float inner = TerrainBrush.w > 0.0 ? (1.0 - saturate(abs(d - TerrainBrush.w) / (pixel * 1.0))) * 0.5 : 0.0;
+                float fill = d < TerrainBrush.z ? 0.12 : 0.0;
+                amount = saturate(max(max(outer, inner), fill)) * TerrainBrushColor.a;
+            }
             return lerp(albedo, TerrainBrushColor.rgb, amount);
         }
     };

@@ -41,12 +41,13 @@ namespace Stride.Core.Presentation.Themes
         /// <param name="theme"></param>
         private static void TransformParts(Media.Drawing drawing, IconTheme theme)
         {
-            if (drawing is GeometryDrawing gd && gd.Brush is SolidColorBrush s)
+            if (drawing is GeometryDrawing gd)
             {
-                var hsl = s.Color.ToHslColor();
-                var newL = TransformLuminosity(hsl, theme.BackgroundLuminosity);
-                var newColor = new HslColor(hsl.Hue, hsl.Saturation, newL, hsl.Alpha).ToColor();
-                s.Color = newColor;
+                // Fills and outlines (pens) alike
+                if (gd.Brush is SolidColorBrush s)
+                    TransformBrush(s, theme);
+                if (gd.Pen?.Brush is SolidColorBrush p)
+                    TransformBrush(p, theme);
             }
             else if (drawing is DrawingGroup dg)
             {
@@ -58,6 +59,13 @@ namespace Stride.Core.Presentation.Themes
                     }
                 }
             }
+        }
+
+        private static void TransformBrush(SolidColorBrush brush, IconTheme theme)
+        {
+            var hsl = brush.Color.ToHslColor();
+            var newL = TransformLuminosity(hsl, theme.BackgroundLuminosity);
+            brush.Color = new HslColor(hsl.Hue, hsl.Saturation, newL, hsl.Alpha).ToColor();
         }
 
         private static bool IsDark(double luminosity) => luminosity < 0.5;

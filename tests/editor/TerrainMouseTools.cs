@@ -97,6 +97,26 @@ public class TerrainMouseTools : IUITest
         }
         Console.WriteLine($"Viewport {rect}");
 
+        // A custom brush shows its shape under the cursor
+        await session.Dispatcher.InvokeAsync(() =>
+        {
+            tools.SelectedBrush = tools.Brushes.First(x => x.Name == "Rock");
+            tools.Rotation = 30;
+            tools.Radius = 20;
+        });
+        SetCursorPos((int)(rect.Value.Left + rect.Value.Width * 0.5), (int)(rect.Value.Top + rect.Value.Height * 0.65));
+        await ctx.WaitForRendering(20);
+        await ctx.Screenshot("custom-brush");
+        await session.Dispatcher.InvokeAsync(() =>
+        {
+            tools.SelectedBrush = tools.Brushes[0];
+            tools.Rotation = 0;
+            tools.Radius = 12;
+            // The capture can take the focus from the editor
+            SetForegroundWindow(new WindowInteropHelper(Application.Current.MainWindow).Handle);
+        });
+        await Task.Delay(300);
+
         var start = await service.GetTargetDataCopy();
         // Raise: drag across the lower middle of the view, where the terrain is
         await Drag(rect.Value, 0.35, 0.65, 0.65, 0.7);
@@ -115,6 +135,7 @@ public class TerrainMouseTools : IUITest
         await ctx.Screenshot("after");
         var painted = await service.GetTargetDataCopy();
         var splatChanges = raised.Splat.Zip(painted.Splat).Count(x => !x.First.Equals(x.Second));
+
 
         // The camera still rotates with a right drag over the terrain while the tools are active
         var viewBefore = await service.GetViewCenter();
