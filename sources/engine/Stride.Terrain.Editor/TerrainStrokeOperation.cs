@@ -6,7 +6,7 @@ using Stride.Assets.Presentation.AssetEditors.GameEditor.Services;
 using Stride.Core.Presentation.Dirtiables;
 using Stride.Terrain.Editing;
 
-namespace Stride.Assets.Presentation.AssetEditors.TerrainEditor;
+namespace Stride.Terrain.Editor;
 
 /// <summary>
 /// Undoable terrain edit (a brush stroke or an import): the affected tiles before and after.

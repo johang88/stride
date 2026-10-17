@@ -1,0 +1,8 @@
+!Package
+SerializedVersion: {Assets: 3.1.0.0}
+TemplateFolders:
+    - Path: !dir Templates/Assets
+      Group: Assets
+      Files:
+        - !file Templates/Assets/Terrain/Terrain.sdtpl
+        - !file Templates/Assets/Terrain/TerrainMaterial.sdtpl

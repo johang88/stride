@@ -6,11 +6,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Game;
+using Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.Services;
 using Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewModels;
 using Stride.Assets.Presentation.AssetEditors.GameEditor.Game;
 using Stride.Assets.Presentation.AssetEditors.GameEditor.Services;
 using Stride.Assets.Presentation.ViewModel;
-using Stride.Assets.Terrain;
+using Stride.Terrain.Assets;
 using Stride.Core.Annotations;
 using Stride.Core.Extensions;
 using Stride.Core.IO;
@@ -23,11 +24,12 @@ using Stride.Terrain;
 using Stride.Terrain.Editing;
 using Stride.Terrain.Splines;
 
-namespace Stride.Assets.Presentation.AssetEditors.TerrainEditor;
+namespace Stride.Terrain.Editor;
 
 /// <summary>
 /// Editor game service sculpting and painting terrains with the mouse.
 /// </summary>
+[EditorGameService(typeof(EntityHierarchyEditorController), Order = 260)]
 public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Stride.Editor.EditorGame.ViewModels.IEditorGameViewModelService
 {
     private static readonly Stride.Core.Diagnostics.Logger Log = Stride.Core.Diagnostics.GlobalLogger.GetLogger("TerrainEditor");

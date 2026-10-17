@@ -2,13 +2,14 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System.ComponentModel;
+using Stride.Assets;
 using Stride.Core;
 using Stride.Core.Annotations;
 using Stride.Core.Assets;
 using Stride.Core.IO;
 using Stride.Terrain;
 
-namespace Stride.Assets.Terrain;
+namespace Stride.Terrain.Assets;
 
 /// <summary>
 /// A terrain height field with its splat map. The samples are stored in a binary source file (<see cref="TerrainDataFile"/>)

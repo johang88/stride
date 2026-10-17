@@ -6,7 +6,7 @@ using Stride.Core.Diagnostics;
 using Stride.Core.IO;
 using Stride.Terrain;
 
-namespace Stride.Assets.Presentation.AssetEditors.TerrainEditor;
+namespace Stride.Terrain.Editor;
 
 /// <summary>
 /// Tracks the samples of a terrain asset edited in the editor game, and writes them to the asset data file on save.

@@ -4,7 +4,7 @@
 using Stride.Core.Assets;
 using Stride.Core.Mathematics;
 
-namespace Stride.Assets.Terrain;
+namespace Stride.Terrain.Assets;
 
 public sealed class TerrainAssetFactory : AssetFactory<TerrainAsset>
 {

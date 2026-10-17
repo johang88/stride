@@ -10,7 +10,7 @@ using Stride.Engine.Processors;
 
 namespace Stride.Assets.Presentation.AssetEditors.GameEditor.Game
 {
-    internal static class EditorGameHelper
+    public static class EditorGameHelper
     {
         public static Ray CalculateRayFromMousePosition([NotNull] CameraComponent camera, Vector2 mousePosition, Matrix worldView)
         {

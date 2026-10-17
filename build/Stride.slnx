@@ -85,6 +85,9 @@
     <Project Path="../sources/engine/Stride.Rendering/Stride.Rendering.csproj" />
     <Project Path="../sources/engine/Stride.VirtualReality/Stride.VirtualReality.csproj" />
     <Project Path="../sources/engine/Stride.Terrain/Stride.Terrain.csproj" />
+    <Project Path="../sources/engine/Stride.Terrain.Assets/Stride.Terrain.Assets.csproj" />
+    <Project Path="../sources/engine/Stride.Terrain.Editor/Stride.Terrain.Editor.csproj" />
+    <Project Path="../sources/engine/Stride.Terrain.Editor.Wpf/Stride.Terrain.Editor.Wpf.csproj" />
   </Folder>
   <Folder Name="/20-StrideRuntime/Stride.Shared/">
     <Project Path="../sources/shared/Stride.Core.ShellHelper/Stride.Core.ShellHelper.shproj" />

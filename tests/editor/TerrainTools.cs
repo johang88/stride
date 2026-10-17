@@ -9,8 +9,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Stride.Assets.Presentation.AssetEditors.SceneEditor.ViewModels;
-using Stride.Assets.Presentation.AssetEditors.TerrainEditor;
-using Stride.Assets.Presentation.ViewModel;
+using Stride.Terrain.Editor;
 using Stride.Core.Assets.Editor.Services;
 using Stride.Core.Assets.Editor.ViewModel;
 using Stride.Core.Mathematics;
@@ -56,10 +55,17 @@ public class TerrainTools : IUITest
             return;
         }
 
-        var service = await session.Dispatcher.InvokeAsync(() => editor.TerrainTools.Service);
-        await session.Dispatcher.InvokeAsync(() => editor.TerrainTools.IsActive = true);
+        var service = await session.Dispatcher.InvokeAsync(() => editor.Tools.OfType<TerrainToolsViewModel>().Single().Service);
+        await session.Dispatcher.InvokeAsync(() => editor.Tools.OfType<TerrainToolsViewModel>().Single().IsActive = true);
         await ctx.WaitForRendering(30);
         await ctx.Screenshot("tools");
+
+        // A cold project is still compiling the terrain when the scene opens
+        if (!await service.WaitForTarget(TimeSpan.FromMinutes(5)))
+        {
+            ctx.Exit(4);
+            return;
+        }
 
         var raise = TerrainBrushSettings.Default;
         raise.Radius = 25;

@@ -62,7 +62,7 @@ public class RpgContent : IUITest
             return rock?.Layers.FirstOrDefault()?.BlendMap?.GetType().Name;
         });
         Check(blendLayer == "ComputeTerrainBlendMask", $"terrain blend material layer loaded ({blendLayer})");
-        var cliff = await session.Dispatcher.InvokeAsync(() => (session.AllAssets.FirstOrDefault(x => x.Asset is Stride.Assets.Terrain.TerrainMaterialAsset)?.Asset as Stride.Assets.Terrain.TerrainMaterialAsset)?.CliffLayer);
+        var cliff = await session.Dispatcher.InvokeAsync(() => (session.AllAssets.FirstOrDefault(x => x.Asset is Stride.Terrain.Assets.TerrainMaterialAsset)?.Asset as Stride.Terrain.Assets.TerrainMaterialAsset)?.CliffLayer);
         Check(cliff == 2, $"terrain material cliff layer ({cliff})");
 
         // Create an item and a dialogue from their templates (not saved)

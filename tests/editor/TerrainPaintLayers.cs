@@ -11,7 +11,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Stride.Assets.Presentation.AssetEditors.SceneEditor.ViewModels;
-using Stride.Assets.Presentation.ViewModel;
+using Stride.Terrain.Editor;
 using Stride.Core.Assets.Editor.Services;
 using Stride.Core.Assets.Editor.ViewModel;
 using Stride.Core.Mathematics;
@@ -57,7 +57,7 @@ public class TerrainPaintLayers : IUITest
             ctx.Exit(3);
             return;
         }
-        var tools = await session.Dispatcher.InvokeAsync(() => editor.TerrainTools);
+        var tools = await session.Dispatcher.InvokeAsync(() => editor.Tools.OfType<TerrainToolsViewModel>().Single());
         for (int i = 0; i < 100 && !await session.Dispatcher.InvokeAsync(() => tools.IsAvailable); i++)
             await Task.Delay(100);
         var service = await session.Dispatcher.InvokeAsync(() => tools.Service);

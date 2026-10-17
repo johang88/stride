@@ -149,7 +149,17 @@ internal sealed class UITestHost
     private IUITest LoadTest()
     {
         var asm = Assembly.LoadFrom(testDllPath);
-        var candidates = asm.GetTypes()
+        Type[] types;
+        try
+        {
+            types = asm.GetTypes();
+        }
+        catch (ReflectionTypeLoadException e)
+        {
+            // Types using assemblies the editor loads with the session's packages (not shipped next to the tests) load once the session is open
+            types = e.Types.Where(t => t is not null).ToArray()!;
+        }
+        var candidates = types
             .Where(t => t.GetCustomAttribute<UITestAttribute>() is not null)
             .ToList();
         if (candidates.Count == 0)

@@ -17,6 +17,7 @@ using Stride.Core.Assets.Editor.ViewModel;
 using Vector3 = Stride.Core.Mathematics.Vector3;
 using Stride.Core.Presentation.Controls;
 using Stride.GameStudio.AutoTesting;
+using Stride.Terrain.Editor;
 using Stride.Terrain.Editing;
 
 namespace Stride.Editor.Tests;
@@ -58,7 +59,7 @@ public class TerrainMouseTools : IUITest
             ctx.Exit(3);
             return;
         }
-        var tools = await session.Dispatcher.InvokeAsync(() => editor.TerrainTools);
+        var tools = await session.Dispatcher.InvokeAsync(() => editor.Tools.OfType<TerrainToolsViewModel>().Single());
         for (int i = 0; i < 100 && !await session.Dispatcher.InvokeAsync(() => tools.IsAvailable); i++)
             await Task.Delay(100);
         var service = await session.Dispatcher.InvokeAsync(() => tools.Service);

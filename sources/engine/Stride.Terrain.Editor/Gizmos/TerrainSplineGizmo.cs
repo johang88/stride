@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using Stride.Assets.Presentation.AssetEditors.Gizmos;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Engine.Gizmos;
@@ -11,7 +12,7 @@ using Stride.Rendering;
 using Stride.Terrain.Splines;
 using Buffer = Stride.Graphics.Buffer;
 
-namespace Stride.Assets.Presentation.AssetEditors.Gizmos;
+namespace Stride.Terrain.Editor.Gizmos;
 
 /// <summary>
 /// Draws a terrain spline: the curve, its edges and the falloff band, and a marker at each control point.

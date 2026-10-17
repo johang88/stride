@@ -11,7 +11,7 @@ using Stride.Core.IO;
 using Stride.Core.Serialization.Contents;
 using Stride.Terrain;
 
-namespace Stride.Assets.Terrain;
+namespace Stride.Terrain.Assets;
 
 [AssetCompiler(typeof(TerrainAsset), typeof(AssetCompilationContext))]
 internal sealed class TerrainAssetCompiler : AssetCompilerBase

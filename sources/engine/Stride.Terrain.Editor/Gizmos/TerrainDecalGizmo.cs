@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Stride.Assets.Presentation.AssetEditors.Gizmos;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Engine.Gizmos;
@@ -13,7 +14,7 @@ using Stride.Terrain;
 using Stride.Terrain.Decals;
 using Buffer = Stride.Graphics.Buffer;
 
-namespace Stride.Assets.Presentation.AssetEditors.Gizmos;
+namespace Stride.Terrain.Editor.Gizmos;
 
 /// <summary>
 /// Draws the outline of a terrain decal laid on the terrain, and an arrow along its local Z axis (direction of the texture V).

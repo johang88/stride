@@ -92,7 +92,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewMode
         /// <remarks>
         /// This property ignores the concept of folder.
         /// </remarks>
-        internal abstract int EntityCount { get; }
+        public abstract int EntityCount { get; }
 
         [CanBeNull]
         private IEditorGameSelectionViewModelService SelectionService => Editor.Controller.GetService<IEditorGameSelectionViewModelService>();

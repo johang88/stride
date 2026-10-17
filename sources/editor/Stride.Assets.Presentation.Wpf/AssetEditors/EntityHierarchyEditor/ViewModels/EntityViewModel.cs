@@ -159,7 +159,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewMode
         }
 
         /// <inheritdoc/>
-        internal override int EntityCount => AssetSideEntity.Transform.Children.Count;
+        public override int EntityCount => AssetSideEntity.Transform.Children.Count;
 
         // TODO: turn this non-static and put it in the base - just keep the entity-specific part here. This need to rework a bit how we initialize folders
         private static IEnumerable<EntityDesign> GetOrCreateChildPartDesigns([NotNull] EntityHierarchyAssetBase asset, [NotNull] EntityDesign entityDesign)

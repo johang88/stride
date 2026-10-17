@@ -24,7 +24,7 @@ using Stride.Graphics;
 using Stride.Terrain;
 using Stride.Terrain.Editing;
 
-namespace Stride.Assets.Presentation.AssetEditors.TerrainEditor;
+namespace Stride.Terrain.Editor;
 
 /// <summary>
 /// A layer of the target terrain's material.
@@ -47,12 +47,12 @@ public sealed class TerrainLayerItemViewModel
 /// <summary>
 /// The terrain sculpting and painting tools of a scene editor.
 /// </summary>
-public sealed class TerrainToolsViewModel : DispatcherViewModel
+[EntityHierarchyEditorTool(typeof(EntityHierarchyEditorViewModel))]
+public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
 {
     private readonly IEditorGameController controller;
     private readonly EntityHierarchyEditorViewModel editor;
     private EditorGameTerrainService service;
-    private bool isActive;
     private string targetName;
     private TerrainBrushTool tool = TerrainBrushTool.Raise;
     private float radius = 10.0f;
@@ -89,17 +89,20 @@ public sealed class TerrainToolsViewModel : DispatcherViewModel
         });
     }
 
-    public bool IsAvailable => service != null;
+    public override string DisplayName => "Terrain";
+
+    public override string ToolTip => "Sculpt and paint terrains in the viewport";
+
+    public override bool IsAvailable => service != null;
 
     /// <summary>
     /// The editor game service applying the tools (null until the scene is loaded).
     /// </summary>
     public EditorGameTerrainService Service => service;
 
-    /// <summary>
-    /// Whether the terrain tools take the mouse in the viewport.
-    /// </summary>
-    public bool IsActive { get => isActive; set => SetValue(ref isActive, value, PushSettings); }
+    /// <inheritdoc/>
+    /// <remarks>The terrain tools take the mouse in the viewport while active.</remarks>
+    protected override void OnIsActiveChanged() => PushSettings();
 
     public string TargetName { get => targetName; private set => SetValue(ref targetName, value, nameof(TargetName), nameof(HasTarget)); }
 
@@ -203,7 +206,7 @@ public sealed class TerrainToolsViewModel : DispatcherViewModel
             Layer = selectedLayer?.Index ?? 0,
             NoiseScale = noiseScale,
         });
-        service.SetToolEnabled(isActive);
+        service.SetToolEnabled(IsActive);
     }
 
     /// <summary>
@@ -264,7 +267,7 @@ public sealed class TerrainToolsViewModel : DispatcherViewModel
             {
                 if (editor.FindPartViewModel(new AbsoluteId(editor.Asset.Id, id)) is not EntityViewModel point)
                     continue;
-                var node = editor.NodeContainer.GetNode(point.AssetSideEntity.Transform)[nameof(TransformComponent.Position)];
+                var node = editor.Session.AssetNodeContainer.GetNode(point.AssetSideEntity.Transform)[nameof(TransformComponent.Position)];
                 if ((Vector3)node.Retrieve() == position)
                     continue;
                 node.Update(position);

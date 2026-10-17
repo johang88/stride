@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Stride.Assets;
 using Stride.Assets.Textures;
 using Stride.Core;
 using Stride.Core.Assets;
@@ -20,7 +21,7 @@ using Stride.Graphics.Data;
 using Stride.Terrain;
 using Stride.TextureConverter;
 
-namespace Stride.Assets.Terrain;
+namespace Stride.Terrain.Assets;
 
 [AssetCompiler(typeof(TerrainMaterialAsset), typeof(AssetCompilationContext))]
 internal sealed class TerrainMaterialAssetCompiler : AssetCompilerBase

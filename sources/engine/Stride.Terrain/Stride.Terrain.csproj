@@ -7,7 +7,14 @@
     <StrideAssemblyProcessorOptions>--serialization --parameter-key</StrideAssemblyProcessorOptions>
     <StridePackAssets>true</StridePackAssets>
     <StrideCodeAnalysis>true</StrideCodeAnalysis>
+    <!-- The terrain, spline and decal components are written in scene assets -->
+    <StrideContainsAssetTypes>true</StrideContainsAssetTypes>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Companion packages: the terrain and terrain material assets, compilers and templates in .Assets, the terrain tools in .Editor -->
+    <StrideCompanionProject Include="..\Stride.Terrain.Assets\Stride.Terrain.Assets.csproj" />
+    <StrideCompanionProject Include="..\Stride.Terrain.Editor\Stride.Terrain.Editor.csproj" />
+  </ItemGroup>
   <ItemGroup>
     <Compile Include="..\..\shared\SharedAssemblyInfo.cs">
       <Link>Properties\SharedAssemblyInfo.cs</Link>

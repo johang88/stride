@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Linq;
+using System.Reflection;
 using System.Threading.Tasks;
 using Stride.Core.Assets;
 using Stride.Core.Assets.Editor.Services;
@@ -14,6 +15,7 @@ using Stride.Core.Annotations;
 using Stride.Core.Diagnostics;
 using Stride.Core.Extensions;
 using Stride.Core.Mathematics;
+using Stride.Core.Reflection;
 using Stride.Core.Presentation.Commands;
 using Stride.Core.Presentation.Interop;
 using Stride.Core.Presentation.Services;
@@ -48,6 +50,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewMode
         private string filterPattern;
         private List<string> filterTokens;
         private bool compilingAssets;
+        private EntityHierarchyEditorToolViewModel activeTool;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="EntityHierarchyEditorViewModel"/> class.
@@ -65,7 +68,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewMode
             Overlays = new EditorOverlaysViewModel(ServiceProvider, Controller);
             Lighting = new EditorLightingViewModel(ServiceProvider, Controller, this);
             Rendering = new EditorRenderingViewModel(ServiceProvider, Controller);
-            TerrainTools = new TerrainEditor.TerrainToolsViewModel(ServiceProvider, Controller, this);
+            Tools = CreateTools();
             EntityGizmos = new EntityGizmosViewModel(ServiceProvider, Controller);
             CreateEntityCommand = new AnonymousTaskCommand<IEntityFactory>(ServiceProvider, x => CreateEntity(true, x, ActiveRoot ?? HierarchyRoot));
             CreateEntityInRootCommand = new AnonymousTaskCommand<IEntityFactory>(ServiceProvider, x => CreateEntity(false, x, ActiveRoot ?? HierarchyRoot));
@@ -121,7 +124,17 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewMode
         [NotNull]
         public EditorLightingViewModel Lighting { get; }
 
-        public TerrainEditor.TerrainToolsViewModel TerrainTools { get; }
+        /// <summary>
+        /// The tools packages add to this editor (see <see cref="EntityHierarchyEditorToolAttribute"/>).
+        /// </summary>
+        public IReadOnlyList<EntityHierarchyEditorToolViewModel> Tools { get; }
+
+        /// <summary>
+        /// The tool whose panel is shown beside the viewport, if any.
+        /// </summary>
+        public EntityHierarchyEditorToolViewModel ActiveTool { get => activeTool; private set => SetValue(ref activeTool, value, nameof(ActiveTool), nameof(HasActiveTool)); }
+
+        public bool HasActiveTool => activeTool != null;
 
         [NotNull]
         public EntityGizmosViewModel EntityGizmos { get; }
@@ -182,7 +195,11 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewMode
 
             // Unregister editor view models
             Overlays.Destroy();
-            TerrainTools.Destroy();
+            foreach (var tool in Tools)
+            {
+                tool.PropertyChanged -= ToolPropertyChanged;
+                tool.Destroy();
+            }
 
             base.Destroy();
         }
@@ -676,6 +693,59 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewMode
         private void SelectedAssetsChanged(object sender, NotifyCollectionChangedEventArgs e)
         {
             Controller.GetService<IEditorGameAssetHighlighterViewModelService>()?.HighlightAssets(Session.ActiveAssetView.SelectedAssets);
+        }
+
+        /// <summary>
+        /// Creates the tools declared for this editor by <see cref="EntityHierarchyEditorToolAttribute"/> in every asset assembly.
+        /// </summary>
+        private List<EntityHierarchyEditorToolViewModel> CreateTools()
+        {
+            var declarations = new List<(Type Type, int Order)>();
+            foreach (var toolType in AssetRegistry.AssetAssemblies.SelectMany(x => AssemblyRegistry.GetScanTypes(x, typeof(EntityHierarchyEditorToolAttribute))).Distinct())
+            {
+                if (!typeof(EntityHierarchyEditorToolViewModel).IsAssignableFrom(toolType) || toolType.IsAbstract)
+                    continue;
+
+                var declaration = toolType.GetCustomAttribute<EntityHierarchyEditorToolAttribute>(inherit: false);
+                if (declaration != null && declaration.EditorType.IsInstanceOfType(this))
+                    declarations.Add((toolType, declaration.Order));
+            }
+
+            var tools = new List<EntityHierarchyEditorToolViewModel>();
+            foreach (var (toolType, _) in declarations.OrderBy(x => x.Order).ThenBy(x => x.Type.FullName, StringComparer.Ordinal))
+            {
+                try
+                {
+                    var tool = (EntityHierarchyEditorToolViewModel)Activator.CreateInstance(toolType, ServiceProvider, Controller, this);
+                    tool.PropertyChanged += ToolPropertyChanged;
+                    tools.Add(tool);
+                }
+                catch (Exception e)
+                {
+                    EditorLogger.Error($"Unable to create the editor tool [{toolType.Name}]", e);
+                }
+            }
+            return tools;
+        }
+
+        private void ToolPropertyChanged(object sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName != nameof(EntityHierarchyEditorToolViewModel.IsActive))
+                return;
+
+            var tool = (EntityHierarchyEditorToolViewModel)sender;
+            if (tool.IsActive)
+            {
+                // One tool at a time: activating a tool deactivates the previous one
+                var previous = ActiveTool;
+                ActiveTool = tool;
+                if (previous != null && previous != tool)
+                    previous.IsActive = false;
+            }
+            else if (ActiveTool == tool)
+            {
+                ActiveTool = null;
+            }
         }
 
         // TODO: this is code for re-selection after undo/redo, it is here for reference and can be removed once the feature is re-implemented

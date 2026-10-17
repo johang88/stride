@@ -11,7 +11,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewModels;
 using Stride.Assets.Presentation.AssetEditors.SceneEditor.ViewModels;
-using Stride.Assets.Presentation.AssetEditors.TerrainEditor;
+using Stride.Terrain.Editor;
 using Stride.Core;
 using Stride.Core.Assets.Editor.Services;
 using Stride.Core.Assets.Editor.ViewModel;
@@ -84,7 +84,7 @@ public class TerrainDecals : IUITest
         Check(decalEntities > 0 && bakingSplines > 0, $"{decalEntities} decal entities, {bakingSplines} splines baking a decal");
 
         // The editor game has the decals of the scene
-        var tools = await session.Dispatcher.InvokeAsync(() => editor.TerrainTools);
+        var tools = await session.Dispatcher.InvokeAsync(() => editor.Tools.OfType<TerrainToolsViewModel>().Single());
         for (int i = 0; i < 100 && !await session.Dispatcher.InvokeAsync(() => tools.IsAvailable); i++)
             await Task.Delay(100);
         var service = await session.Dispatcher.InvokeAsync(() => tools.Service);

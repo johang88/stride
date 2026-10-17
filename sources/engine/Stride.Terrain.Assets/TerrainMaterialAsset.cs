@@ -3,6 +3,7 @@
 
 using System.Collections.Generic;
 using System.ComponentModel;
+using Stride.Assets;
 using Stride.Core;
 using Stride.Core.Annotations;
 using Stride.Core.Assets;
@@ -10,7 +11,7 @@ using Stride.Core.Mathematics;
 using Stride.Graphics;
 using Stride.Terrain;
 
-namespace Stride.Assets.Terrain;
+namespace Stride.Terrain.Assets;
 
 /// <summary>
 /// The material layers a terrain is painted with. The layer textures are compiled into texture arrays.

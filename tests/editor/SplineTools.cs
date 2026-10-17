@@ -10,7 +10,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewModels;
 using Stride.Assets.Presentation.AssetEditors.SceneEditor.ViewModels;
-using Stride.Assets.Presentation.ViewModel;
+using Stride.Terrain.Editor;
 using Stride.Core;
 using Stride.Core.Assets.Editor.Services;
 using Stride.Core.Assets.Editor.ViewModel;
@@ -66,7 +66,7 @@ public class SplineTools : IUITest
             ctx.Exit(3);
             return;
         }
-        var tools = await session.Dispatcher.InvokeAsync(() => editor.TerrainTools);
+        var tools = await session.Dispatcher.InvokeAsync(() => editor.Tools.OfType<TerrainToolsViewModel>().Single());
         for (int i = 0; i < 100 && !await session.Dispatcher.InvokeAsync(() => tools.IsAvailable); i++)
             await Task.Delay(100);
 

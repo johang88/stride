@@ -25,6 +25,12 @@
   <ItemGroup>
     <ProjectReference Include="..\..\sources\editor\Stride.GameStudio.AutoTesting\Stride.GameStudio.AutoTesting.csproj" />
     <ProjectReference Include="..\..\sources\tests\Stride.ScreenshotComparator\Stride.ScreenshotComparator.csproj" />
+    <!-- The terrain tests drive the terrain tools of the scene editor. Compile only: Game Studio loads these from the
+         project's packages, and second copies next to the tests would register their types twice -->
+    <ProjectReference Include="..\..\sources\engine\Stride.Terrain.Editor\Stride.Terrain.Editor.csproj" Private="false" />
+    <ProjectReference Include="..\..\sources\engine\Stride.Terrain.Assets\Stride.Terrain.Assets.csproj" Private="false" />
+    <ProjectReference Include="..\..\sources\engine\Stride.Terrain\Stride.Terrain.csproj" Private="false" />
+    <ProjectReference Include="..\..\sources\plugins\BepuPhysics\Stride.BepuPhysics\Stride.BepuPhysics.csproj" Private="false" />
     <!-- Build-time triggers so bin/packages has all three Stride.Templates.* nupkgs available
          for the GameStudio bridge to find via PackageStore. Without these, the screenshot tests
          that instantiate genre-starter templates (TopDownRPG, etc.) fail at template-lookup time. -->
@@ -39,5 +45,11 @@
       <SkipGetTargetFrameworkProperties>true</SkipGetTargetFrameworkProperties>
     </ProjectReference>
   </ItemGroup>
+  <!-- Nor copies of the physics engine the terrain packages bring -->
+  <Target Name="_StrideEditorTestsSkipBepuRuntime" AfterTargets="ResolvePackageAssets">
+    <ItemGroup>
+      <RuntimeCopyLocalItems Remove="@(RuntimeCopyLocalItems)" Condition="'%(RuntimeCopyLocalItems.NuGetPackageId)' == 'BepuPhysics' Or '%(RuntimeCopyLocalItems.NuGetPackageId)' == 'BepuUtilities'" />
+    </ItemGroup>
+  </Target>
   <Import Project="..\..\sources\sdk\Stride.Build.Sdk.Editor\Sdk\Sdk.targets" />
 </Project>

@@ -43,7 +43,7 @@ namespace Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewMode
         public override string Name { get => name; set => throw new NotSupportedException($"Cannot change the name of a {nameof(EntityHierarchyRootViewModel)} object."); }
 
         /// <inheritdoc/>
-        internal override int EntityCount => EntityHierarchy.Hierarchy.RootParts.Count;
+        public override int EntityCount => EntityHierarchy.Hierarchy.RootParts.Count;
 
         /// <inheritdoc/>
         public override void Destroy()
