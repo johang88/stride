@@ -34,6 +34,8 @@ internal sealed class TerrainVegetationTypeRenderer : IDisposable
     private Buffer impostorInstances;
     private bool impostorInstancesDirty;
     private bool bakeAttempted;
+    // Where the impostors replace the meshes, with the quality (set by the update for the draw)
+    private float impostorDistance;
 
     private struct Instance
     {
@@ -144,14 +146,19 @@ internal sealed class TerrainVegetationTypeRenderer : IDisposable
     /// <summary>
     /// Fills the levels of detail with the instances in range of the camera (game thread).
     /// </summary>
-    public void Update(Vector3 camera, bool hasCamera, bool impostorPreview, bool enabled, RenderGroup renderGroup)
+    public void Update(Vector3 camera, bool hasCamera, bool impostorPreview, bool enabled, RenderGroup renderGroup, TerrainVegetationSettings settings)
     {
-        var impostorDistance = impostorPreview ? 0 : Math.Max(Definition.ImpostorDistance, 0);
+        var detail = Math.Max(settings.VegetationDetailScale, 0.0f);
+        impostorDistance = impostorPreview ? 0 : Math.Max(Definition.ImpostorDistance, 0) * detail;
         TerrainVegetationLods.GetLodDistances(Definition.LodDistances, Lods.Count, impostorDistance, lodDistances);
         if (lodThresholdsSquared.Length != lodDistances.Count)
             lodThresholdsSquared = new float[lodDistances.Count];
         for (int i = 0; i < lodDistances.Count; i++)
-            lodThresholdsSquared[i] = lodDistances[i] * lodDistances[i];
+        {
+            // Explicit distances follow the quality (spread ones already do, through the impostor distance)
+            var distance = Definition.LodDistances.Count >= Lods.Count ? lodDistances[i] * detail : lodDistances[i];
+            lodThresholdsSquared[i] = distance * distance;
+        }
 
         foreach (var matrices in lodMatrices)
             matrices.Clear();
@@ -206,13 +213,13 @@ internal sealed class TerrainVegetationTypeRenderer : IDisposable
             instancing.Enabled = visible;
             model.Enabled = visible;
             model.RenderGroup = renderGroup;
-            model.IsShadowCaster = Definition.CastShadows;
+            model.IsShadowCaster = Definition.CastShadows && settings.VegetationShadows;
         }
 
         var impostors = ImpostorEntity.Get<ModelComponent>();
         impostors.Enabled = enabled && Atlas != null && instances.Count > 0;
         impostors.RenderGroup = renderGroup;
-        impostors.IsShadowCaster = Definition.ImpostorsCastShadows;
+        impostors.IsShadowCaster = Definition.ImpostorsCastShadows && settings.ImpostorShadows;
     }
 
     /// <summary>
@@ -255,7 +262,6 @@ internal sealed class TerrainVegetationTypeRenderer : IDisposable
         parameters.Set(MaterialTerrainImpostorDisplacementKeys.ImpostorWorldSize, Atlas.WorldSize);
         parameters.Set(MaterialTerrainImpostorDisplacementKeys.ImpostorCenterOffset, Atlas.CenterOffset);
         parameters.Set(MaterialTerrainImpostorDisplacementKeys.ImpostorGridSize, (float)Atlas.GridSize);
-        var impostorDistance = impostorPreview ? 0 : Math.Max(Definition.ImpostorDistance, 0);
         parameters.Set(MaterialTerrainImpostorDisplacementKeys.ImpostorFadeStart, impostorDistance);
         parameters.Set(MaterialTerrainImpostorDisplacementKeys.ImpostorFadeEnd, Math.Max(impostorDistance - Definition.ImpostorFadeRange, 0));
         parameters.Set(MaterialTerrainImpostorDisplacementKeys.ImpostorCameraPosition, camera);

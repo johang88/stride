@@ -214,6 +214,24 @@
   </DrawingImage>
 
 
+  <!-- A grass layer or vegetation type in a list: the thumbnail of its (first) model and its name -->
+  <DataTemplate x:Key="TerrainDefinitionItemTemplate">
+    <DockPanel>
+      <Border Width="32" Height="32" Margin="0,1,6,1" Background="#20FFFFFF">
+        <Image Source="{Binding Thumbnail.Asset.ThumbnailData.Presenter, Mode=OneWay}" RenderOptions.BitmapScalingMode="HighQuality"/>
+      </Border>
+      <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+    </DockPanel>
+  </DataTemplate>
+  <DataTemplate x:Key="TerrainModelItemTemplate">
+    <DockPanel ToolTip="{Binding Asset.Url}">
+      <Border Width="24" Height="24" Margin="0,1,6,1" Background="#20FFFFFF">
+        <Image Source="{Binding Asset.ThumbnailData.Presenter, Mode=OneWay}" RenderOptions.BitmapScalingMode="HighQuality"/>
+      </Border>
+      <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+    </DockPanel>
+  </DataTemplate>
+
   <!-- The terrain tools panel beside the scene editor's viewport -->
   <DataTemplate DataType="{x:Type te:TerrainToolsViewModel}">
     <StackPanel>
@@ -277,10 +295,62 @@
         <sd:NumericTextBox Value="{Binding NoiseScale}" Minimum="0.1" SmallChange="0.5" LargeChange="5" DecimalPlaces="2" Margin="0,2,0,6"/>
       </StackPanel>
       <StackPanel Visibility="{Binding IsGrassTool, Converter={sd:VisibleOrCollapsed}}">
-        <TextBlock Text="{sd:Localize Grass layer}"/>
-        <ListBox ItemsSource="{Binding GrassLayers}" SelectedItem="{Binding SelectedGrassLayer}" DisplayMemberPath="DisplayName" MaxHeight="150" Margin="0,2,0,2"/>
-        <TextBlock Text="{sd:Localize 'The grass layers (plants, density, draw distance) are set on the terrain component.'}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"/>
-        <TextBlock Text="{sd:Localize Density}"/>
+        <DockPanel Margin="0,4,0,2">
+          <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" IsEnabled="{Binding CanEditDefinitions}">
+            <Button Width="26" Height="22" Padding="0" Margin="0,0,3,0" Command="{Binding AddGrassLayerCommand}"
+                    ToolTip="{sd:Localize 'Add a grass layer: pick the plants (models) it grows', Context=ToolTip}">
+              <Image Source="{DynamicResource ImageAdd}" Width="16" Height="16"/>
+            </Button>
+            <Button Width="26" Height="22" Padding="0" Command="{Binding RemoveGrassLayerCommand}"
+                    ToolTip="{sd:Localize 'Remove the grass layer and its painted density', Context=ToolTip}">
+              <Image Source="{DynamicResource ImageRemove}" Width="16" Height="16"/>
+            </Button>
+          </StackPanel>
+          <TextBlock Text="{sd:Localize Grass layers}" FontWeight="Bold" VerticalAlignment="Center"/>
+        </DockPanel>
+        <ListBox ItemsSource="{Binding GrassLayers}" SelectedItem="{Binding SelectedGrassLayer}" ItemTemplate="{StaticResource TerrainDefinitionItemTemplate}"
+                 MaxHeight="190" Margin="0,2,0,4" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+        <TextBlock Text="{sd:Localize 'The terrain is not part of this scene: edit its grass layers in the scene that holds it.'}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"
+                   Visibility="{Binding CanEditDefinitions, Converter={sd:VisibleOrCollapsed}, ConverterParameter={sd:False}}"/>
+        <TextBlock Text="{sd:Localize 'No grass layer yet: add one with the plants it grows, then paint it.'}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"
+                   Visibility="{Binding GrassLayers.Count, Converter={sd:Chained {sd:NumericToBool}, {sd:InvertBool}, {sd:VisibleOrCollapsed}}}"/>
+
+        <!-- The selected layer -->
+        <StackPanel DataContext="{Binding SelectedGrassLayer}" Visibility="{Binding CanEdit, Converter={sd:VisibleOrCollapsed}, FallbackValue={sd:Collapsed}}" Margin="8,0,0,4">
+          <TextBlock Text="{sd:Localize Name}"/>
+          <TextBox Text="{Binding Name, UpdateSourceTrigger=LostFocus}" Margin="0,2,0,6"/>
+          <DockPanel Margin="0,0,0,2">
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+              <Button Width="26" Height="22" Padding="0" Margin="0,0,3,0" Command="{Binding AddModelsCommand}" ToolTip="{sd:Localize 'Add plants (models) to the layer', Context=ToolTip}">
+                <Image Source="{DynamicResource ImageAdd}" Width="16" Height="16"/>
+              </Button>
+              <Button Width="26" Height="22" Padding="0" Command="{Binding RemoveModelCommand}" ToolTip="{sd:Localize 'Remove the plant from the layer', Context=ToolTip}">
+                <Image Source="{DynamicResource ImageRemove}" Width="16" Height="16"/>
+              </Button>
+            </StackPanel>
+            <TextBlock Text="{sd:Localize 'Plants (one picked at random per plant)'}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+          </DockPanel>
+          <ListBox ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel}" ItemTemplate="{StaticResource TerrainModelItemTemplate}" MaxHeight="130" Margin="0,2,0,6"
+                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+          <TextBlock Text="{sd:Localize Plants per m² (fully painted)}"/>
+          <sd:NumericTextBox Value="{Binding Density}" Minimum="0.01" Maximum="64" SmallChange="0.1" LargeChange="1" DecimalPlaces="2" Margin="0,2,0,6"/>
+          <TextBlock Text="{sd:Localize Scale}"/>
+          <UniformGrid Columns="2" Margin="0,2,0,6">
+            <sd:NumericTextBox Value="{Binding MinScale}" Minimum="0.01" Maximum="10" SmallChange="0.05" LargeChange="0.25" DecimalPlaces="2" Margin="0,0,2,0" ToolTip="{sd:Localize Smallest scale}"/>
+            <sd:NumericTextBox Value="{Binding MaxScale}" Minimum="0.01" Maximum="10" SmallChange="0.05" LargeChange="0.25" DecimalPlaces="2" Margin="2,0,0,0" ToolTip="{sd:Localize Largest scale}"/>
+          </UniformGrid>
+          <TextBlock Text="{sd:Localize Draw distance (m)}"/>
+          <sd:NumericTextBox Value="{Binding DrawDistance}" Minimum="1" Maximum="500" SmallChange="5" LargeChange="20" DecimalPlaces="0" Margin="0,2,0,6"
+                             ToolTip="{sd:Localize 'How far the layer grows from the camera (the game quality settings scale it)', Context=ToolTip}"/>
+          <TextBlock Text="{sd:Localize Thins out from (% of the draw distance)}" TextWrapping="Wrap"/>
+          <sd:NumericTextBox Value="{Binding ThinOutStartPercent}" Minimum="0" Maximum="100" SmallChange="5" LargeChange="10" DecimalPlaces="0" Margin="0,2,0,6"
+                             ToolTip="{sd:Localize 'From there to the draw distance, fewer and fewer plants remain, each shrinking away before it goes', Context=ToolTip}"/>
+          <CheckBox IsChecked="{Binding AlignToTerrain}" Content="{sd:Localize Tilt with the slope}" Margin="0,2,0,4"/>
+          <CheckBox IsChecked="{Binding CastShadows}" Content="{sd:Localize Cast shadows}" Margin="0,2,0,6"/>
+        </StackPanel>
+
+        <TextBlock Text="{sd:Localize Painting}" FontWeight="Bold" Margin="0,6,0,2"/>
+        <TextBlock Text="{sd:Localize Density painted (0-1)}"/>
         <sd:NumericTextBox Value="{Binding GrassDensity}" Minimum="0" Maximum="1" SmallChange="0.05" LargeChange="0.25" DecimalPlaces="2" Margin="0,2,0,6"/>
       </StackPanel>
       <StackPanel Visibility="{Binding ShowsTerrainLayers, Converter={sd:VisibleOrCollapsed}}">
@@ -291,9 +361,62 @@
                 ToolTip="{sd:Localize 'Sets the density of the grass layer over the whole terrain from where the terrain layer is painted (times the density)', Context=ToolTip}" />
       </StackPanel>
       <StackPanel Visibility="{Binding IsVegetationTool, Converter={sd:VisibleOrCollapsed}}">
-        <TextBlock Text="{sd:Localize Vegetation type}"/>
-        <ListBox ItemsSource="{Binding VegetationTypes}" SelectedItem="{Binding SelectedVegetationType}" DisplayMemberPath="DisplayName" MaxHeight="150" Margin="0,2,0,2"/>
-        <TextBlock Text="{sd:Localize 'The vegetation types (models, levels of detail, impostors) are set on the terrain component.'}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"/>
+        <DockPanel Margin="0,4,0,2">
+          <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" IsEnabled="{Binding CanEditDefinitions}">
+            <Button Width="26" Height="22" Padding="0" Margin="0,0,3,0" Command="{Binding AddVegetationTypesCommand}"
+                    ToolTip="{sd:Localize 'Add vegetation types: one per model picked (its levels of detail are the meshes of an FBX LOD group)', Context=ToolTip}">
+              <Image Source="{DynamicResource ImageAdd}" Width="16" Height="16"/>
+            </Button>
+            <Button Width="26" Height="22" Padding="0" Command="{Binding RemoveVegetationTypeCommand}"
+                    ToolTip="{sd:Localize 'Remove the vegetation type and its placed instances', Context=ToolTip}">
+              <Image Source="{DynamicResource ImageRemove}" Width="16" Height="16"/>
+            </Button>
+          </StackPanel>
+          <TextBlock Text="{sd:Localize Vegetation types}" FontWeight="Bold" VerticalAlignment="Center"/>
+        </DockPanel>
+        <ListBox ItemsSource="{Binding VegetationTypes}" SelectedItem="{Binding SelectedVegetationType}" ItemTemplate="{StaticResource TerrainDefinitionItemTemplate}"
+                 MaxHeight="190" Margin="0,2,0,4" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+        <TextBlock Text="{sd:Localize 'The terrain is not part of this scene: edit its vegetation types in the scene that holds it.'}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"
+                   Visibility="{Binding CanEditDefinitions, Converter={sd:VisibleOrCollapsed}, ConverterParameter={sd:False}}"/>
+        <TextBlock Text="{sd:Localize 'No vegetation type yet: add trees or bushes (models), then place them.'}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"
+                   Visibility="{Binding VegetationTypes.Count, Converter={sd:Chained {sd:NumericToBool}, {sd:InvertBool}, {sd:VisibleOrCollapsed}}}"/>
+
+        <!-- The selected type -->
+        <StackPanel DataContext="{Binding SelectedVegetationType}" Margin="8,0,0,4">
+          <StackPanel Visibility="{Binding CanEdit, Converter={sd:VisibleOrCollapsed}, FallbackValue={sd:Collapsed}}">
+            <TextBlock Text="{sd:Localize Name}"/>
+            <TextBox Text="{Binding Name, UpdateSourceTrigger=LostFocus}" Margin="0,2,0,6"/>
+            <TextBlock Text="{sd:Localize Model}"/>
+            <DockPanel Margin="0,2,0,6">
+              <Button Width="26" Height="22" Padding="0" DockPanel.Dock="Right" VerticalAlignment="Center" Command="{Binding ChangeModelCommand}"
+                      ToolTip="{sd:Localize 'Pick another model', Context=ToolTip}">
+                <Image Source="{DynamicResource ImagePickup}" Width="16" Height="16"/>
+              </Button>
+              <ContentPresenter Content="{Binding Model}" ContentTemplate="{StaticResource TerrainModelItemTemplate}"/>
+            </DockPanel>
+            <TextBlock Text="{sd:Localize Impostor distance (m)}"/>
+            <sd:NumericTextBox Value="{Binding ImpostorDistance}" Minimum="0" Maximum="5000" SmallChange="5" LargeChange="20" DecimalPlaces="0" Margin="0,2,0,6"
+                               ToolTip="{sd:Localize 'Where impostors replace the meshes (the game quality settings scale it)', Context=ToolTip}"/>
+            <TextBlock Text="{sd:Localize Level of detail distances (m)}"/>
+            <TextBox Text="{Binding LodDistances, UpdateSourceTrigger=LostFocus}" Margin="0,2,0,6"
+                     ToolTip="{sd:Localize 'Where each level of detail hands over to the next, nearest first, e.g. 20, 45, 80. Empty: spread up to the impostor distance', Context=ToolTip}"/>
+            <TextBlock Text="{sd:Localize Impostor fade range (m)}"/>
+            <sd:NumericTextBox Value="{Binding ImpostorFadeRange}" Minimum="0" Maximum="500" SmallChange="1" LargeChange="5" DecimalPlaces="0" Margin="0,2,0,6"
+                               ToolTip="{sd:Localize 'Width of the band where meshes and impostors dither into each other', Context=ToolTip}"/>
+            <TextBlock Text="{sd:Localize 'Impostor views per side, resolution (px)'}"/>
+            <UniformGrid Columns="2" Margin="0,2,0,6">
+              <sd:NumericTextBox Value="{Binding ImpostorViews}" Minimum="4" Maximum="16" SmallChange="1" LargeChange="2" DecimalPlaces="0" Margin="0,0,2,0"
+                                 ToolTip="{sd:Localize 'More views turn smoother around the impostor (video memory and baking time grow with the square)', Context=ToolTip}"/>
+              <sd:NumericTextBox Value="{Binding ImpostorResolution}" Minimum="32" Maximum="1024" SmallChange="32" LargeChange="128" DecimalPlaces="0" Margin="2,0,0,0"
+                                 ToolTip="{sd:Localize 'Resolution of each view', Context=ToolTip}"/>
+            </UniformGrid>
+            <CheckBox IsChecked="{Binding CastShadows}" Content="{sd:Localize Cast shadows}" Margin="0,2,0,4"/>
+            <CheckBox IsChecked="{Binding ImpostorsCastShadows}" Content="{sd:Localize Impostors cast shadows}" Margin="0,2,0,6"/>
+          </StackPanel>
+          <TextBlock Text="{Binding Info}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"/>
+        </StackPanel>
+
+        <TextBlock Text="{sd:Localize Placement}" FontWeight="Bold" Margin="0,6,0,2"/>
         <TextBlock Text="{sd:Localize Density (per 100 m²)}"/>
         <sd:NumericTextBox Value="{Binding VegetationDensity}" Minimum="0.01" Maximum="1000" SmallChange="0.5" LargeChange="5" DecimalPlaces="2" Margin="0,2,0,6"/>
         <TextBlock Text="{sd:Localize Spacing (m)}"/>
@@ -307,14 +430,10 @@
         <sd:NumericTextBox Value="{Binding VegetationMaxSlope}" Minimum="0" Maximum="90" SmallChange="1" LargeChange="5" DecimalPlaces="0" Margin="0,2,0,6"/>
         <CheckBox IsChecked="{Binding ImpostorPreview}" Content="{sd:Localize Show impostors only}" Margin="0,2,0,6"
                   ToolTip="{sd:Localize 'Draws the vegetation as impostors at any distance, to check them', Context=ToolTip}" />
-        <ItemsControl ItemsSource="{Binding VegetationInfo}" Margin="0,0,0,6">
-          <ItemsControl.ItemTemplate>
-            <DataTemplate>
-              <TextBlock Text="{Binding}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,4"/>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
       </StackPanel>
+      <Button Content="{sd:Localize All terrain settings, Context=Button}" Command="{Binding SelectTerrainCommand}" HorizontalAlignment="Left" Padding="8,2" Margin="0,0,0,6"
+              Visibility="{Binding HasTarget, Converter={sd:VisibleOrCollapsed}}"
+              ToolTip="{sd:Localize 'Selects the terrain entity: the property grid shows all its settings, grass layers and vegetation types included', Context=ToolTip}"/>
       <TextBlock Text="{Binding Hint}" TextWrapping="Wrap" Opacity="0.7" Margin="0,4,0,8"/>
 
       <DockPanel Margin="0,4,0,0">

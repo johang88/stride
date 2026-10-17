@@ -17,7 +17,8 @@ namespace Stride.Terrain.Vegetation;
 /// <summary>
 /// Draws the grass layers and vegetation types of <see cref="TerrainComponent"/>s: creates the entities drawing them (root
 /// entities of the terrain's scene, not saved), follows the definitions and the terrain data, and picks the levels of detail.
-/// Created by the <see cref="TerrainProcessor"/> of each visibility group.
+/// Created by the <see cref="TerrainProcessor"/> of each visibility group. The quality follows the
+/// <see cref="TerrainVegetationSettings"/> service, when the game registers one.
 /// </summary>
 public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponent, TerrainVegetationProcessor.TerrainVegetation>
 {
@@ -75,11 +76,12 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
         RegisterState();
         var modelProcessor = EntityManager.GetProcessor<ModelRenderProcessor>();
         var terrainProcessor = EntityManager.GetProcessor<TerrainProcessor>();
+        var settings = Services.GetService<TerrainVegetationSettings>() ?? TerrainVegetationSettings.Defaults;
         foreach (var data in ComponentDatas.Values)
         {
             try
             {
-                data.Update(graphicsDevice, content, state, modelProcessor, terrainProcessor);
+                data.Update(graphicsDevice, content, state, modelProcessor, terrainProcessor, settings);
             }
             catch (Exception e)
             {
@@ -151,7 +153,7 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
                 x.Atlas?.FrameResolution ?? 0)).ToList();
         }
 
-        internal void Update(GraphicsDevice device, ContentManager content, TerrainVegetationState state, ModelRenderProcessor modelProcessor, TerrainProcessor terrainProcessor)
+        internal void Update(GraphicsDevice device, ContentManager content, TerrainVegetationState state, ModelRenderProcessor modelProcessor, TerrainProcessor terrainProcessor, TerrainVegetationSettings settings)
         {
             var component = Component;
             var enabled = component.Enabled;
@@ -196,16 +198,18 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
             foreach (var variant in grass)
             {
                 var model = variant.ModelComponent;
-                model.Enabled = enabled && terrain != null;
+                model.Enabled = enabled && terrain != null && settings.GrassEnabled;
                 model.RenderGroup = component.RenderGroup;
-                model.IsShadowCaster = variant.Layer.CastShadows;
+                model.IsShadowCaster = variant.Layer.CastShadows && settings.GrassShadows;
                 variant.Terrain = terrain;
+                variant.DistanceScale = Math.Max(settings.GrassDistanceScale, 0.0f);
+                variant.DensityScale = Math.Max(settings.GrassDensityScale, 0.0f);
                 if (modelProcessor != null && modelProcessor.RenderModels.TryGetValue(model, out var renderModel))
                     state.GrassModels[renderModel] = variant;
             }
 
             foreach (var type in types)
-                type?.Update(state.CameraPosition, state.HasCamera, component.ImpostorPreview, enabled, component.RenderGroup);
+                type?.Update(state.CameraPosition, state.HasCamera, component.ImpostorPreview, enabled, component.RenderGroup, settings);
         }
 
         private void OnDataChanged(object sender, TerrainDataChangedEventArgs e)

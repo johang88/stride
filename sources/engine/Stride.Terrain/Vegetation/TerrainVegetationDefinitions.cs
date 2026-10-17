@@ -49,17 +49,18 @@ public sealed class TerrainGrassLayer
     /// Distance from the camera up to which the layer is drawn (meters).
     /// </summary>
     [DataMember(60)]
-    [DefaultValue(50.0f)]
+    [DefaultValue(80.0f)]
     [DataMemberRange(1, 500, 1, 10, 0)]
-    public float DrawDistance { get; set; } = 50.0f;
+    public float DrawDistance { get; set; } = 80.0f;
 
     /// <summary>
-    /// Fraction of the draw distance where plants start shrinking away.
+    /// Fraction of the draw distance where the plants start thinning out: from there to the draw distance, fewer and fewer
+    /// remain (slightly bigger, to keep the ground covered), each shrinking away before it goes.
     /// </summary>
     [DataMember(70)]
-    [DefaultValue(0.7f)]
+    [DefaultValue(0.15f)]
     [DataMemberRange(0, 1, 0.05, 0.1, 2)]
-    public float FadeStart { get; set; } = 0.7f;
+    public float ThinOutStart { get; set; } = 0.15f;
 
     /// <summary>
     /// Tilts the plants with the terrain slope.

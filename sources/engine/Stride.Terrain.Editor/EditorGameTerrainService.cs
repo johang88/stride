@@ -544,6 +544,52 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
     }
 
     /// <summary>
+    /// Removes the data of a grass layer (its density) or a vegetation type (its instances) from the target, the later layers
+    /// or types moving down one, as the layer or type is removed from the terrain component: an undoable operation pushed in
+    /// the current transaction (dispatcher thread).
+    /// </summary>
+    /// <returns>False when the target's data can't be edited (no terrain asset).</returns>
+    public bool RemoveDefinitionData(bool grass, int index)
+    {
+        var asset = targetAsset;
+        var editSession = session;
+        if (asset == null || editSession == null)
+            return false;
+
+        var undoRedo = editor.ServiceProvider.Get<IUndoRedoService>();
+        if (UPath.IsNullOrEmpty(asset.Asset.DataFile))
+            asset.PropertyGraph.RootNode[nameof(TerrainAsset.DataFile)].Update(asset.GetDefaultDataFile());
+        var operation = new TerrainDefinitionDataOperation(controller, editSession, grass, index, asset.Dirtiables);
+        operation.Remove();
+        undoRedo.PushOperation(operation);
+        return true;
+    }
+
+    /// <summary>
+    /// Instances placed per vegetation type of the target, and whether each grass layer has density painted.
+    /// </summary>
+    public Task<(int[] Instances, bool[] GrassPainted)> GetDefinitionUsage()
+    {
+        return controller.InvokeAsync(() =>
+        {
+            var data = targetData;
+            var instances = new int[target?.Vegetation.Count ?? 0];
+            var painted = new bool[TerrainData.MaxGrassLayers];
+            if (data != null)
+            {
+                foreach (var instance in data.Vegetation)
+                {
+                    if ((uint)instance.Type < (uint)instances.Length)
+                        instances[instance.Type]++;
+                }
+                for (int i = 0; i < painted.Length; i++)
+                    painted[i] = data.GetGrassDensity(i)?.Any(x => x != 0) == true;
+            }
+            return (instances, painted);
+        });
+    }
+
+    /// <summary>
     /// The world position of the target's first sample (local positions are relative to it).
     /// </summary>
     public Task<Vector3> GetTargetOrigin() => controller.InvokeAsync(() => target?.Origin ?? Vector3.Zero);
@@ -746,8 +792,9 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
         var layers = material?.Layers.Select(x => x.Name).ToList() ?? new List<string>();
         var grass = target?.Grass.Select(x => x.Name).ToList() ?? new List<string>();
         var vegetation = target?.Vegetation.Select(x => x.Name).ToList() ?? new List<string>();
+        var entityId = target?.Entity?.Id;
         notifiedDefinitions = string.Join("\n", grass) + "\n\n" + string.Join("\n", vegetation);
-        editor.Dispatcher.InvokeAsync(() => ToolsViewModel?.OnTargetChanged(name, layers, grass, vegetation));
+        editor.Dispatcher.InvokeAsync(() => ToolsViewModel?.OnTargetChanged(name, entityId, layers, grass, vegetation));
     }
 
     private void ShowOverlay(Vector2 center, in TerrainBrushSettings settings, Color4 color)

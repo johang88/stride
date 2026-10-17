@@ -5,7 +5,8 @@ namespace Stride.Terrain
 {
     /// <summary>
     /// Scatters the instances of one model of a grass layer around the camera: one thread per cell of a grid anchored to the
-    /// world (so plants stay put as the camera moves), jittered, kept with the probability of the painted density.
+    /// world (so plants stay put as the camera moves), jittered, kept with the probability of the painted density, then thinned
+    /// out with the distance: each plant has its own distance where it goes, shrinking away before it.
     /// The cells pick one of the layer's models at random; this pass appends those of model GrassVariant.
     /// </summary>
     shader TerrainGrassPopulate : ComputeShaderBase, TerrainBase
@@ -32,7 +33,10 @@ namespace Stride.Terrain
         stage uint GrassGridSize;
         stage float GrassSpacing;
         stage float GrassDrawDistance;
-        stage float GrassFadeStart;
+        // Distance where the plants start thinning out
+        stage float GrassThinOutStart;
+        // Distance over which a plant shrinks away before it goes
+        stage float GrassShrinkLength;
         stage float GrassMinScale;
         stage float GrassMaxScale;
         stage float GrassLayer;
@@ -70,11 +74,17 @@ namespace Stride.Terrain
             if (any(localXZ < 0.0) || any(localXZ > terrainSize))
                 return;
 
-            // Shrink away towards the draw distance
+            // Thinning out: the kept fraction falls as (1 - t)^2 from the start (t = 0) to the draw distance (t = 1), so each
+            // plant goes at its own t, 1 - sqrt(hash), and shrinks away over the last meters before
             float distanceToCamera = distance(localXZ, GrassCameraLocal.xz);
-            float fade = 1.0 - smoothstep(GrassDrawDistance * GrassFadeStart, GrassDrawDistance, distanceToCamera);
+            float thinOutRange = max(GrassDrawDistance - GrassThinOutStart, 0.001);
+            float t = (distanceToCamera - GrassThinOutStart) / thinOutRange;
+            float leaves = 1.0 - sqrt(GrassHash(cellSeed * 5.31 + 13.7));
+            float fade = saturate((leaves - t) * thinOutRange / GrassShrinkLength);
             if (fade <= 0.01)
                 return;
+            // The remaining plants grow a little, to keep the ground covered
+            fade *= 1.0 + 0.6 * saturate(t);
 
             // Kept with the probability of the density (bilinear: smooth borders)
             float2 densityUV = (localXZ / (TerrainCellSize * 2.0) + 0.5) / ((TerrainResolution - 1.0) * 0.5 + 1.0);

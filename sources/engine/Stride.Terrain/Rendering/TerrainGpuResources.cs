@@ -139,7 +139,8 @@ public sealed class TerrainGpuResources : IDisposable
         var hasGrass = false;
         for (int layer = 0; layer < TerrainData.MaxGrassLayers; layer++)
             hasGrass |= Data.GetGrassDensity(layer) != null;
-        if (!hasGrass)
+        // Once created, the array follows the layers even when none is left (they can be removed)
+        if (!hasGrass && GrassDensity == null)
             return;
 
         // The whole array on creation (its content is undefined), the modified region afterwards

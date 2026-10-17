@@ -12,6 +12,9 @@ using Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.EntityFactor
 using Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewModels;
 using Stride.Assets.Presentation.AssetEditors.GameEditor.Services;
 using Stride.Core.Assets;
+using Stride.Core.Assets.Editor.Services;
+using Stride.Core.Assets.Editor.ViewModel;
+using Stride.Core.Assets.Quantum;
 using Stride.Core;
 using Stride.Core.Mathematics;
 using Stride.Engine;
@@ -22,9 +25,12 @@ using Stride.Core.Presentation.Collections;
 using Stride.Core.Presentation.Commands;
 using Stride.Core.Presentation.Services;
 using Stride.Core.Presentation.ViewModels;
+using Stride.Core.Quantum;
 using Stride.Graphics;
+using Stride.Rendering;
 using Stride.Terrain;
 using Stride.Terrain.Editing;
+using Stride.Terrain.Vegetation;
 
 namespace Stride.Terrain.Editor;
 
@@ -65,11 +71,16 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
     private TerrainLayerItemViewModel selectedLayer;
     private readonly ObservableList<TerrainLayerItemViewModel> layers = new();
     private readonly ObservableList<TerrainBrushItemViewModel> brushes = new();
-    private readonly ObservableList<TerrainLayerItemViewModel> grassLayers = new();
-    private readonly ObservableList<TerrainLayerItemViewModel> vegetationTypes = new();
-    private readonly ObservableList<string> vegetationInfo = new();
-    private TerrainLayerItemViewModel selectedGrassLayer;
-    private TerrainLayerItemViewModel selectedVegetationType;
+    private readonly ObservableList<TerrainGrassLayerItemViewModel> grassLayers = new();
+    private readonly ObservableList<TerrainVegetationTypeItemViewModel> vegetationTypes = new();
+    private TerrainGrassLayerItemViewModel selectedGrassLayer;
+    private TerrainVegetationTypeItemViewModel selectedVegetationType;
+    // The target terrain's entity, and the grass layer and vegetation type names of its game-side component
+    private Guid? targetEntityId;
+    private List<string> gameGrassNames = new();
+    private List<string> gameVegetationNames = new();
+    private bool canEditDefinitions;
+    private bool definitionsRefreshQueued;
     private float grassDensity = 1.0f;
     private float vegetationDensity = 2.0f;
     private float vegetationSpacing = 3.0f;
@@ -96,7 +107,16 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         ImportBrushCommand = new AnonymousTaskCommand(ServiceProvider, ImportBrush);
         FillGrassFromLayerCommand = new AnonymousCommand(ServiceProvider, () => service?.FillGrassFromLayer(selectedGrassLayer?.Index ?? -1, selectedLayer?.Index ?? 0, grassDensity));
         OpenBrushFolderCommand = new AnonymousCommand(ServiceProvider, OpenBrushFolder);
+        AddGrassLayerCommand = new AnonymousTaskCommand(ServiceProvider, PickGrassLayer);
+        RemoveGrassLayerCommand = new AnonymousTaskCommand(ServiceProvider, () => RemoveDefinition(grass: true));
+        AddVegetationTypesCommand = new AnonymousTaskCommand(ServiceProvider, PickVegetationTypes);
+        RemoveVegetationTypeCommand = new AnonymousTaskCommand(ServiceProvider, () => RemoveDefinition(grass: false));
+        SelectTerrainCommand = new AnonymousCommand(ServiceProvider, SelectTerrain);
         RefreshBrushes();
+
+        // Grass layers and vegetation types are edited on the scene asset: follow its changes (undo included)
+        editor.Asset.PropertyGraph.Changed += OnAssetChanged;
+        editor.Asset.PropertyGraph.ItemChanged += OnAssetChanged;
 
         Dispatcher.InvokeTask(async () =>
         {
@@ -162,9 +182,14 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
     /// <summary>
     /// The grass layers of the target terrain (its density channels).
     /// </summary>
-    public IReadOnlyObservableList<TerrainLayerItemViewModel> GrassLayers => grassLayers;
+    public IReadOnlyObservableList<TerrainGrassLayerItemViewModel> GrassLayers => grassLayers;
 
-    public TerrainLayerItemViewModel SelectedGrassLayer { get => selectedGrassLayer; set => SetValue(ref selectedGrassLayer, value, PushSettings); }
+    public TerrainGrassLayerItemViewModel SelectedGrassLayer { get => selectedGrassLayer; set => SetValue(ref selectedGrassLayer, value, PushSettings); }
+
+    /// <summary>
+    /// Whether the grass layers and vegetation types can be edited here: the target terrain is part of the edited scene.
+    /// </summary>
+    public bool CanEditDefinitions { get => canEditDefinitions; private set => SetValue(ref canEditDefinitions, value); }
 
     /// <summary>
     /// Density (0-1) the grass tool paints towards (and fills with).
@@ -174,9 +199,9 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
     /// <summary>
     /// The vegetation types of the target terrain.
     /// </summary>
-    public IReadOnlyObservableList<TerrainLayerItemViewModel> VegetationTypes => vegetationTypes;
+    public IReadOnlyObservableList<TerrainVegetationTypeItemViewModel> VegetationTypes => vegetationTypes;
 
-    public TerrainLayerItemViewModel SelectedVegetationType { get => selectedVegetationType; set => SetValue(ref selectedVegetationType, value, PushSettings); }
+    public TerrainVegetationTypeItemViewModel SelectedVegetationType { get => selectedVegetationType; set => SetValue(ref selectedVegetationType, value, PushSettings); }
 
     /// <summary>
     /// Instances per 100 m² the vegetation tool fills up to.
@@ -202,12 +227,34 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
     /// </summary>
     public bool ImpostorPreview { get => impostorPreview; set => SetValue(ref impostorPreview, value, () => service?.SetImpostorPreview(value)); }
 
-    /// <summary>
-    /// One line per vegetation type: levels of detail (triangles, instances drawn), instances placed, impostor.
-    /// </summary>
-    public IReadOnlyObservableList<string> VegetationInfo => vegetationInfo;
-
     public ICommandBase FillGrassFromLayerCommand { get; }
+
+    /// <summary>
+    /// Adds a grass layer growing the models picked.
+    /// </summary>
+    public ICommandBase AddGrassLayerCommand { get; }
+
+    /// <summary>
+    /// Removes the selected grass layer and its painted density (the later layers move down one).
+    /// </summary>
+    public ICommandBase RemoveGrassLayerCommand { get; }
+
+    /// <summary>
+    /// Adds a vegetation type per model picked.
+    /// </summary>
+    public ICommandBase AddVegetationTypesCommand { get; }
+
+    /// <summary>
+    /// Removes the selected vegetation type and its placed instances (the later types move down one).
+    /// </summary>
+    public ICommandBase RemoveVegetationTypeCommand { get; }
+
+    /// <summary>
+    /// Selects the target terrain's entity, to see all its settings in the property grid.
+    /// </summary>
+    public ICommandBase SelectTerrainCommand { get; }
+
+    internal SessionViewModel Session => editor.Session;
 
     public float Radius { get => radius; set => SetValue(ref radius, Math.Clamp(value, 0.5f, 500.0f), PushSettings); }
 
@@ -278,6 +325,8 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
 
     public override void Destroy()
     {
+        editor.Asset.PropertyGraph.Changed -= OnAssetChanged;
+        editor.Asset.PropertyGraph.ItemChanged -= OnAssetChanged;
         if (service != null)
         {
             service.SetToolEnabled(false);
@@ -286,12 +335,231 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         base.Destroy();
     }
 
-    internal void OnTargetChanged(string name, List<string> layerNames, List<string> grassNames, List<string> vegetationNames)
+    internal void OnTargetChanged(string name, Guid? entityId, List<string> layerNames, List<string> grassNames, List<string> vegetationNames)
     {
         TargetName = name;
         SelectedLayer = Refill(layers, layerNames, selectedLayer);
-        SelectedGrassLayer = Refill(grassLayers, grassNames, selectedGrassLayer);
-        SelectedVegetationType = Refill(vegetationTypes, vegetationNames, selectedVegetationType);
+        targetEntityId = entityId;
+        gameGrassNames = grassNames;
+        gameVegetationNames = vegetationNames;
+        RefreshDefinitions();
+    }
+
+    private void OnAssetChanged(object sender, EventArgs e)
+    {
+        // Once for all the changes of an action
+        if (definitionsRefreshQueued)
+            return;
+        definitionsRefreshQueued = true;
+        Dispatcher.InvokeAsync(() =>
+        {
+            definitionsRefreshQueued = false;
+            if (!IsDestroyed)
+                RefreshDefinitions();
+        });
+    }
+
+    // The asset-side terrain component of the target, when the target is part of the edited scene
+    private TerrainComponent FindAssetComponent()
+    {
+        if (targetEntityId is not { } id || editor.FindPartViewModel(new AbsoluteId(editor.Asset.Id, id)) is not EntityViewModel entity)
+            return null;
+        return entity.AssetSideEntity.Get<TerrainComponent>();
+    }
+
+    /// <summary>
+    /// Updates the grass layer and vegetation type lists: rebuilt when layers or types were added, removed or moved, refreshed
+    /// otherwise.
+    /// </summary>
+    private void RefreshDefinitions()
+    {
+        var component = FindAssetComponent();
+        CanEditDefinitions = component != null;
+        var nodes = editor.Session.AssetNodeContainer;
+
+        var grassDefinitions = component?.Grass.Cast<object>().ToList() ?? Enumerable.Repeat<object>(null, gameGrassNames.Count).ToList();
+        SelectedGrassLayer = Sync(grassLayers, grassDefinitions, selectedGrassLayer, (i, definition) =>
+            new TerrainGrassLayerItemViewModel(this, i, (TerrainGrassLayer)definition, definition != null ? nodes.GetNode(definition) : null, i < gameGrassNames.Count ? gameGrassNames[i] : null));
+
+        var typeDefinitions = component?.Vegetation.Cast<object>().ToList() ?? Enumerable.Repeat<object>(null, gameVegetationNames.Count).ToList();
+        SelectedVegetationType = Sync(vegetationTypes, typeDefinitions, selectedVegetationType, (i, definition) =>
+            new TerrainVegetationTypeItemViewModel(this, i, (TerrainVegetationType)definition, definition != null ? nodes.GetNode(definition) : null, i < gameVegetationNames.Count ? gameVegetationNames[i] : null));
+    }
+
+    private static T Sync<T>(ObservableList<T> items, List<object> definitions, T selected, Func<int, object, T> create) where T : TerrainDefinitionItemViewModel
+    {
+        var same = items.Count == definitions.Count && definitions.All(x => x != null);
+        for (int i = 0; same && i < items.Count; i++)
+            same = items[i].Definition == definitions[i];
+        if (same)
+        {
+            foreach (var item in items)
+                item.Refresh();
+            return selected;
+        }
+
+        // Keeps the selected definition (or index) selected
+        var selectedDefinition = selected?.Definition;
+        var selectedIndex = selected?.Index ?? 0;
+        foreach (var item in items)
+            item.Destroy();
+        items.Clear();
+        for (int i = 0; i < definitions.Count; i++)
+            items.Add(create(i, definitions[i]));
+        return items.FirstOrDefault(x => selectedDefinition != null && x.Definition == selectedDefinition)
+            ?? items.FirstOrDefault(x => x.Index == Math.Min(selectedIndex, items.Count - 1));
+    }
+
+    /// <summary>
+    /// Changes the grass layers or vegetation types of the scene asset, as one undoable action.
+    /// </summary>
+    internal void EditDefinitions(string name, Action change)
+    {
+        var undoRedo = ServiceProvider.Get<IUndoRedoService>();
+        using var transaction = undoRedo.CreateTransaction();
+        change();
+        undoRedo.SetName(transaction, name);
+    }
+
+    /// <summary>
+    /// Lets the user pick model assets (none when cancelled).
+    /// </summary>
+    internal async Task<IReadOnlyList<AssetViewModel>> PickModels(bool multiple)
+    {
+        var picker = ServiceProvider.Get<IEditorDialogService>().CreateAssetPickerDialog(editor.Session);
+        picker.Message = multiple ? "Select the models (one or more)" : "Select the model";
+        picker.AllowMultiSelection = multiple;
+        picker.AcceptedTypes.AddRange(AssetRegistry.GetAssetTypes(typeof(Model)));
+        var result = await picker.ShowModal();
+        return result == DialogResult.Ok ? picker.SelectedAssets.ToList() : [];
+    }
+
+    // "SM_grass_bush_01" gives "Grass bush 01"
+    private static string NameFromAsset(AssetViewModel asset)
+    {
+        var name = asset.Name;
+        foreach (var prefix in new[] { "SM_", "SK_", "M_" })
+        {
+            if (name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && name.Length > prefix.Length)
+                name = name[prefix.Length..];
+        }
+        name = name.Replace('_', ' ').Trim();
+        return name.Length > 0 ? char.ToUpperInvariant(name[0]) + name[1..] : asset.Name;
+    }
+
+    private IObjectNode GetDefinitionList(bool grass)
+    {
+        var component = FindAssetComponent();
+        return component != null ? editor.Session.AssetNodeContainer.GetNode(component)[grass ? nameof(TerrainComponent.Grass) : nameof(TerrainComponent.Vegetation)].Target : null;
+    }
+
+    private async Task PickGrassLayer()
+    {
+        if (!CanEditDefinitions)
+            return;
+        if (grassLayers.Count >= TerrainData.MaxGrassLayers)
+        {
+            await ServiceProvider.Get<IDialogService>().MessageBoxAsync($"A terrain has at most {TerrainData.MaxGrassLayers} grass layers. A layer can grow several plants.", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        AddGrassLayer(await PickModels(multiple: true));
+    }
+
+    /// <summary>
+    /// Adds a grass layer growing models to the target (an undoable change of the scene) and selects it.
+    /// </summary>
+    /// <returns>Whether it was added (the target is part of the scene, has room for a layer, and models were given).</returns>
+    public bool AddGrassLayer(IReadOnlyList<AssetViewModel> models)
+    {
+        var list = GetDefinitionList(grass: true);
+        if (list == null || models.Count == 0 || grassLayers.Count >= TerrainData.MaxGrassLayers)
+            return false;
+
+        var layer = new TerrainGrassLayer { Name = NameFromAsset(models[0]) };
+        foreach (var asset in models)
+            layer.Models.Add(ContentReferenceHelper.CreateReference<Model>(asset));
+        AssetCollectionItemIdHelper.GenerateMissingItemIds(layer);
+        EditDefinitions($"Add grass layer {layer.Name}", () => list.Add(layer));
+        RefreshDefinitions();
+        SelectedGrassLayer = grassLayers.LastOrDefault() ?? SelectedGrassLayer;
+        return true;
+    }
+
+    private async Task PickVegetationTypes()
+    {
+        if (CanEditDefinitions)
+            AddVegetationTypes(await PickModels(multiple: true));
+    }
+
+    /// <summary>
+    /// Adds a vegetation type per model to the target (an undoable change of the scene) and selects the last one.
+    /// </summary>
+    /// <returns>Whether they were added (the target is part of the scene, and models were given).</returns>
+    public bool AddVegetationTypes(IReadOnlyList<AssetViewModel> picked)
+    {
+        var list = GetDefinitionList(grass: false);
+        if (list == null || picked.Count == 0)
+            return false;
+
+        EditDefinitions(picked.Count == 1 ? $"Add vegetation type {NameFromAsset(picked[0])}" : "Add vegetation types", () =>
+        {
+            foreach (var asset in picked)
+            {
+                var type = new TerrainVegetationType { Name = NameFromAsset(asset), Model = ContentReferenceHelper.CreateReference<Model>(asset) };
+                AssetCollectionItemIdHelper.GenerateMissingItemIds(type);
+                list.Add(type);
+            }
+        });
+        RefreshDefinitions();
+        SelectedVegetationType = vegetationTypes.LastOrDefault() ?? SelectedVegetationType;
+        return true;
+    }
+
+    /// <summary>
+    /// Removes the selected grass layer or vegetation type, with its data (painted density, placed instances), as one undoable
+    /// action: the later layers or types move down one, in the component and in the data.
+    /// </summary>
+    /// <param name="grass">The selected grass layer, otherwise the selected vegetation type.</param>
+    /// <param name="confirm">Whether to ask first when it has data.</param>
+    /// <returns>Whether it was removed.</returns>
+    public async Task<bool> RemoveDefinition(bool grass, bool confirm = true)
+    {
+        TerrainDefinitionItemViewModel item = grass ? selectedGrassLayer : selectedVegetationType;
+        var list = GetDefinitionList(grass);
+        if (item?.Definition == null || list == null || service == null)
+            return false;
+
+        var (instances, painted) = await service.GetDefinitionUsage();
+        var usage = grass
+            ? (item.Index < painted.Length && painted[item.Index] ? " Its painted density is removed too." : "")
+            : (item.Index < instances.Length && instances[item.Index] > 0 ? $" Its {instances[item.Index]:N0} placed instances are removed too." : "");
+        var kind = grass ? "grass layer" : "vegetation type";
+        if (confirm && usage.Length > 0 && await ServiceProvider.Get<IDialogService>().MessageBoxAsync($"Remove the {kind} {item.Name}?{usage}", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return false;
+
+        var index = item.Index;
+        var removed = false;
+        EditDefinitions($"Remove {kind} {item.Name}", () =>
+        {
+            // Without the data, only an unused last layer or type goes (removing another would renumber the data's)
+            var last = index == (grass ? grassLayers.Count : vegetationTypes.Count) - 1;
+            if (!service.RemoveDefinitionData(grass, index) && (usage.Length > 0 || !last))
+                return;
+            list.Remove(item.Definition, new NodeIndex(index));
+            removed = true;
+        });
+        if (!removed && confirm)
+            await ServiceProvider.Get<IDialogService>().MessageBoxAsync($"The terrain data can't be edited, so the {kind} can't be removed without breaking it.", MessageBoxButton.OK, MessageBoxImage.Warning);
+        RefreshDefinitions();
+        return removed;
+    }
+
+    private void SelectTerrain()
+    {
+        if (targetEntityId is not { } id || editor.FindPartViewModel(new AbsoluteId(editor.Asset.Id, id)) is not EntityViewModel entity)
+            return;
+        editor.ClearSelection();
+        editor.SelectedContent.Add(entity);
     }
 
     // Refills a list of named items, keeping the selected index when it's still there
@@ -324,12 +592,18 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
                 while (IsActive && IsVegetationTool && service != null && !IsDestroyed)
                 {
                     var infos = await service.GetVegetationInfo();
-                    vegetationInfo.Clear();
-                    foreach (var info in infos)
+                    // The infos skip types without a model: matched by name
+                    foreach (var item in vegetationTypes)
                     {
-                        var lods = string.Join(", ", info.LodTriangles.Select((triangles, lod) => $"{triangles:N0} ({(lod < info.LodInstances.Length ? info.LodInstances[lod] : 0)})"));
-                        var impostor = info.HasImpostor ? $"impostor {info.ImpostorViews}x{info.ImpostorViews} x {info.ImpostorResolution}px" : "no impostor";
-                        vegetationInfo.Add($"{info.Name}: {info.Instances:N0} placed, LODs (triangles, drawn): {lods}, {impostor}");
+                        var info = infos.FirstOrDefault(x => x.Name == item.Name);
+                        if (info == null)
+                        {
+                            item.Info = "No model (or not loaded yet).";
+                            continue;
+                        }
+                        var lods = string.Join("\n", info.LodTriangles.Select((triangles, lod) => $"  {lod}: {triangles:N0} triangles, {(lod < info.LodInstances.Length ? info.LodInstances[lod] : 0):N0} drawn"));
+                        var impostor = info.HasImpostor ? $"Impostor: {info.ImpostorViews}×{info.ImpostorViews} views of {info.ImpostorResolution} px" : "Impostor: not baked yet";
+                        item.Info = $"{info.Instances:N0} placed\nLevels of detail:\n{lods}\n{impostor}";
                     }
                     await Task.Delay(1000);
                 }

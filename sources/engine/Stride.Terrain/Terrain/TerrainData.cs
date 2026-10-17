@@ -174,6 +174,55 @@ public sealed class TerrainData
     }
 
     /// <summary>
+    /// Removes the density of a grass layer and moves the later layers down one, as when the layer is removed from
+    /// <see cref="TerrainComponent.Grass"/>.
+    /// </summary>
+    /// <returns>The removed samples (null if the layer had none), for <see cref="InsertGrassLayer"/>.</returns>
+    public byte[] RemoveGrassLayer(int layer)
+    {
+        if ((uint)layer >= MaxGrassLayers)
+            throw new ArgumentOutOfRangeException(nameof(layer));
+        var removed = grassDensity[layer];
+        Array.Copy(grassDensity, layer + 1, grassDensity, layer, MaxGrassLayers - layer - 1);
+        grassDensity[MaxGrassLayers - 1] = null;
+        NotifyChanged(Int2.Zero, new Int2(Resolution - 1), TerrainChangeFlags.Grass);
+        return removed;
+    }
+
+    /// <summary>
+    /// Inserts the density of a grass layer and moves the later layers up one (the last one is dropped).
+    /// </summary>
+    /// <param name="layer">The layer index.</param>
+    /// <param name="samples">The samples (<see cref="GrassResolution"/> squared), or null for none.</param>
+    public void InsertGrassLayer(int layer, byte[] samples)
+    {
+        if ((uint)layer >= MaxGrassLayers)
+            throw new ArgumentOutOfRangeException(nameof(layer));
+        if (samples != null && samples.Length != GrassResolution * GrassResolution)
+            throw new ArgumentException("The samples don't match the grass resolution.", nameof(samples));
+        Array.Copy(grassDensity, layer, grassDensity, layer + 1, MaxGrassLayers - layer - 1);
+        grassDensity[layer] = samples;
+        NotifyChanged(Int2.Zero, new Int2(Resolution - 1), TerrainChangeFlags.Grass);
+    }
+
+    /// <summary>
+    /// Removes the instances of a vegetation type and renumbers those of the later types, as when the type is removed from
+    /// <see cref="TerrainComponent.Vegetation"/>.
+    /// </summary>
+    /// <returns>The number of instances removed.</returns>
+    public int RemoveVegetationType(int type)
+    {
+        var removed = vegetation.RemoveAll(x => x.Type == type);
+        for (int i = 0; i < vegetation.Count; i++)
+        {
+            if (vegetation[i].Type > type)
+                vegetation[i] = vegetation[i] with { Type = vegetation[i].Type - 1 };
+        }
+        NotifyChanged(Int2.Zero, new Int2(Resolution - 1), TerrainChangeFlags.Vegetation);
+        return removed;
+    }
+
+    /// <summary>
     /// The placed trees and other large plants.
     /// </summary>
     public List<TerrainVegetationInstance> Vegetation => vegetation;

@@ -124,23 +124,38 @@ internal sealed class TerrainGrassVariant : IDisposable
     }
 
     /// <summary>
+    /// Multiplies the layer's draw distance (quality, set each frame by the processor).
+    /// </summary>
+    public float DistanceScale { get; set; } = 1.0f;
+
+    /// <summary>
+    /// Multiplies the layer's density (quality, set each frame by the processor).
+    /// </summary>
+    public float DensityScale { get; set; } = 1.0f;
+
+    /// <summary>
     /// Scatters the instances around the camera.
     /// </summary>
     public void Populate(RenderDrawContext context, ComputeEffectShader shader, Vector3 cameraPosition)
     {
         var terrain = Terrain;
         var density = terrain?.Gpu?.GrassDensity;
-        if (terrain?.Data == null || density == null || Layer.Density <= 0 || Layer.DrawDistance <= 0)
+        var layerDensity = Layer.Density * DensityScale;
+        var drawDistance = Layer.DrawDistance * DistanceScale;
+        if (terrain?.Data == null || density == null || layerDensity <= 0 || drawDistance <= 0)
         {
             // Nothing to scatter: the views cull nothing
             instanceCounter?.SetData(context.CommandList, (ReadOnlySpan<uint>)[0u]);
             return;
         }
 
-        var spacing = 1.0f / MathF.Sqrt(Layer.Density);
-        var gridSize = Math.Min(MaxGridSize, (int)MathF.Ceiling(2 * Layer.DrawDistance / spacing) + 1);
-        // At full density over the whole disc, split between the models, with some margin
-        var expected = MathF.PI * Layer.DrawDistance * Layer.DrawDistance * Layer.Density / VariantCount;
+        // The grid covers the draw distance at full density (a dense layer draws less far, rather than skipping cells)
+        var spacing = 1.0f / MathF.Sqrt(layerDensity);
+        var gridSize = Math.Min(MaxGridSize, (int)MathF.Ceiling(2 * drawDistance / spacing) + 1);
+        drawDistance = Math.Min(drawDistance, (gridSize - 1) * 0.5f * spacing);
+        var thinOutStart = drawDistance * Math.Clamp(Layer.ThinOutStart, 0.0f, 0.99f);
+        // Where fully painted, split between the models, with some margin
+        var expected = ThinnedArea(thinOutStart, drawDistance) * layerDensity / VariantCount;
         EnsureCapacity(Math.Min(gridSize * gridSize, (int)(expected * 1.25f) + 256));
 
         instanceCounter.SetData(context.CommandList, (ReadOnlySpan<uint>)[0u]);
@@ -155,8 +170,10 @@ internal sealed class TerrainGrassVariant : IDisposable
         parameters.Set(TerrainGrassPopulateKeys.GrassTerrainOrigin, origin);
         parameters.Set(TerrainGrassPopulateKeys.GrassGridSize, (uint)gridSize);
         parameters.Set(TerrainGrassPopulateKeys.GrassSpacing, spacing);
-        parameters.Set(TerrainGrassPopulateKeys.GrassDrawDistance, Layer.DrawDistance);
-        parameters.Set(TerrainGrassPopulateKeys.GrassFadeStart, Math.Clamp(Layer.FadeStart, 0, 0.999f));
+        parameters.Set(TerrainGrassPopulateKeys.GrassDrawDistance, drawDistance);
+        parameters.Set(TerrainGrassPopulateKeys.GrassThinOutStart, thinOutStart);
+        // Each plant shrinks away over the last meters before it goes
+        parameters.Set(TerrainGrassPopulateKeys.GrassShrinkLength, Math.Clamp((drawDistance - thinOutStart) * 0.1f, 0.5f, 6.0f));
         parameters.Set(TerrainGrassPopulateKeys.GrassMinScale, Layer.MinScale);
         parameters.Set(TerrainGrassPopulateKeys.GrassMaxScale, Math.Max(Layer.MinScale, Layer.MaxScale));
         parameters.Set(TerrainGrassPopulateKeys.GrassLayer, (float)LayerIndex);
@@ -167,6 +184,22 @@ internal sealed class TerrainGrassVariant : IDisposable
         shader.ThreadNumbers = new Int3(8, 8, 1);
         shader.ThreadGroupCounts = new Int3((gridSize + 7) / 8, (gridSize + 7) / 8, 1);
         shader.Draw(context, "TerrainGrass.Populate");
+    }
+
+    // Area covered at full density: the disc up to the thinning start, then the ring where the kept fraction falls as
+    // (1 - t)^2 (t from 0 at the start to 1 at the draw distance, as in the populate shader)
+    private static float ThinnedArea(float start, float end)
+    {
+        var area = MathF.PI * start * start;
+        const int steps = 32;
+        var step = (end - start) / steps;
+        for (int i = 0; i < steps; i++)
+        {
+            var t = (i + 0.5f) / steps;
+            var radius = start + t * (end - start);
+            area += (1 - t) * (1 - t) * 2 * MathF.PI * radius * step;
+        }
+        return area;
     }
 
     /// <summary>
