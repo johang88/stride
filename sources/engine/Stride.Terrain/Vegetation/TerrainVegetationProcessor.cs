@@ -17,8 +17,9 @@ namespace Stride.Terrain.Vegetation;
 /// <summary>
 /// Draws the grass layers and vegetation types of <see cref="TerrainComponent"/>s: creates the entities drawing them (root
 /// entities of the terrain's scene, not saved), follows the definitions and the terrain data, and picks the levels of detail.
+/// Created by the <see cref="TerrainProcessor"/> of each visibility group.
 /// </summary>
-public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponent, TerrainVegetationProcessor.TerrainVegetation>, IEntityComponentRenderProcessor
+public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponent, TerrainVegetationProcessor.TerrainVegetation>
 {
     private static readonly Stride.Core.Diagnostics.Logger Log = Stride.Core.Diagnostics.GlobalLogger.GetLogger("TerrainVegetation");
 
@@ -45,7 +46,13 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
         graphicsDevice = Services.GetSafeServiceAs<IGraphicsDeviceService>().GraphicsDevice;
         content = Services.GetService<ContentManager>();
         state = new TerrainVegetationState();
-        VisibilityGroup.Tags.Set(TerrainVegetationState.Key, state);
+    }
+
+    // The visibility group is set once the processor is added: the render feature finds the state in its tags
+    private void RegisterState()
+    {
+        if (VisibilityGroup != null && !VisibilityGroup.Tags.ContainsKey(TerrainVegetationState.Key))
+            VisibilityGroup.Tags.Set(TerrainVegetationState.Key, state);
     }
 
     protected override void OnSystemRemove()
@@ -65,6 +72,7 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
 
     public override void Update(GameTime time)
     {
+        RegisterState();
         var modelProcessor = EntityManager.GetProcessor<ModelRenderProcessor>();
         var terrainProcessor = EntityManager.GetProcessor<TerrainProcessor>();
         foreach (var data in ComponentDatas.Values)
@@ -83,12 +91,15 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
 
     public override void Draw(RenderContext context)
     {
+        RegisterState();
         EnsureRenderFeature(VisibilityGroup.RenderSystem);
         var drawContext = context.GetThreadContext();
         foreach (var data in ComponentDatas.Values)
         {
             foreach (var type in data.Types)
             {
+                if (type == null)
+                    continue;
                 baker ??= new TerrainImpostorBaker(Services, graphicsDevice);
                 type.Draw(drawContext, baker, state.CameraPosition, data.Component.ImpostorPreview);
             }
@@ -130,7 +141,7 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
         /// </summary>
         public IReadOnlyList<TerrainVegetationTypeInfo> GetTypeInfos()
         {
-            return types.Select(x => new TerrainVegetationTypeInfo(
+            return types.Where(x => x != null).Select(x => new TerrainVegetationTypeInfo(
                 x.Definition.Name,
                 x.Lods.Select(lod => lod.Meshes.Sum(mesh => (mesh.Draw?.DrawCount ?? 0) / 3)).ToArray(),
                 x.LastLodCounts.ToArray(),
@@ -177,7 +188,7 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
             {
                 instancesDirty = false;
                 for (int i = 0; i < types.Count; i++)
-                    types[i].SetInstances(data, origin, i);
+                    types[i]?.SetInstances(data, origin, i);
             }
 
             // Grass: each model's entity, mapped to its render model for the render feature
@@ -194,7 +205,7 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
             }
 
             foreach (var type in types)
-                type.Update(state.CameraPosition, state.HasCamera, component.ImpostorPreview, enabled, component.RenderGroup);
+                type?.Update(state.CameraPosition, state.HasCamera, component.ImpostorPreview, enabled, component.RenderGroup);
         }
 
         private void OnDataChanged(object sender, TerrainDataChangedEventArgs e)
@@ -244,7 +255,9 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
             {
                 var type = types[i];
                 var definition = definitions[i];
-                same = type.Definition == definition && type.Model == definition?.Model && type.Views == definition.ImpostorViews && type.Resolution == definition.ImpostorResolution;
+                same = type == null
+                    ? !IsDrawable(definition)
+                    : type.Definition == definition && type.Model == definition?.Model && type.Views == definition.ImpostorViews && type.Resolution == definition.ImpostorResolution;
             }
             if (same)
                 return;
@@ -252,19 +265,15 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
             ClearTypes();
             foreach (var definition in definitions)
             {
-                // A type without a model keeps its index (the instances refer to types by index) but draws nothing
-                var type = definition?.Model != null && definition.Model.Meshes.Count > 0 ? new TerrainVegetationTypeRenderer(device, content, definition) : null;
-                types.Add(type ?? EmptyType(device, content, definition));
+                // A type without a model (or whose model isn't loaded yet) keeps its index, as the instances refer to types
+                // by index, but draws nothing
+                types.Add(IsDrawable(definition) ? new TerrainVegetationTypeRenderer(device, content, definition) : null);
             }
             AddTypeEntities();
             instancesDirty = true;
         }
 
-        // A renderer drawing nothing, keeping the index of a type without a model
-        private static TerrainVegetationTypeRenderer EmptyType(GraphicsDevice device, ContentManager content, TerrainVegetationType definition)
-        {
-            return new TerrainVegetationTypeRenderer(device, content, new TerrainVegetationType { Name = definition?.Name ?? "Empty", Model = new Model() });
-        }
+        private static bool IsDrawable(TerrainVegetationType definition) => definition?.Model != null && definition.Model.Meshes.Count > 0;
 
         private void AddEntities()
         {
@@ -281,7 +290,7 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
                 return;
             foreach (var type in types)
             {
-                foreach (var entity in type.Entities)
+                foreach (var entity in type?.Entities ?? [])
                 {
                     if (entity.Scene == null)
                         scene.Entities.Add(entity);
@@ -295,7 +304,7 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
                 variant.Entity.Scene = null;
             foreach (var type in types)
             {
-                foreach (var entity in type.Entities)
+                foreach (var entity in type?.Entities ?? [])
                     entity.Scene = null;
             }
         }
@@ -316,9 +325,9 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
         {
             foreach (var type in types)
             {
-                foreach (var entity in type.Entities)
+                foreach (var entity in type?.Entities ?? [])
                     entity.Scene = null;
-                type.Dispose();
+                type?.Dispose();
             }
             types.Clear();
         }

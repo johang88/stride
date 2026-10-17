@@ -37,7 +37,8 @@ internal sealed class TerrainAssetCompiler : AssetCompilerBase
             : base(url, parameters, assetFinder)
         {
             this.sourcePath = sourcePath;
-            Version = 1;
+            // 2: grass density and vegetation in the compiled data
+            Version = 2;
         }
 
         public override IEnumerable<ObjectUrl> GetInputFiles()

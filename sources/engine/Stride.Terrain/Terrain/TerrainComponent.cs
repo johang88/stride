@@ -37,7 +37,6 @@ public enum TerrainShadingMode
 [DataContract("TerrainComponent")]
 [Display("Terrain", Expand = ExpandRule.Once)]
 [DefaultEntityComponentRenderer(typeof(TerrainProcessor))]
-[DefaultEntityComponentProcessor(typeof(TerrainVegetationProcessor))]
 [ComponentCategory("Terrain")]
 [ComponentOrder(11005)]
 public sealed class TerrainComponent : ActivableEntityComponent

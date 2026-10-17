@@ -113,6 +113,7 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
             TerrainSnapshot after;
             lock (session.SyncRoot)
             {
+                ClaimSession();
                 before.Capture(data, Int2.Zero, new Int2(data.Resolution - 1));
                 for (int i = 0; i < heights.Length; i++)
                     data.Heights[i] = data.Quantize(heights[i]);
@@ -143,6 +144,7 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
             TerrainSnapshot after;
             lock (session.SyncRoot)
             {
+                ClaimSession();
                 foreach (var spline in splines)
                 {
                     spline.Entity.Transform.UpdateWorldMatrix();
@@ -475,9 +477,26 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
         var before = strokeBefore;
         lock (session.SyncRoot)
         {
+            ClaimSession();
             TerrainBrush.Apply(data, localCenter, settings, dt, (min, max) => before.Capture(data, min, max), () => before.CaptureVegetation(data));
             session.MarkModified();
         }
+    }
+
+    /// <summary>
+    /// Makes the samples of this editor game the ones the session saves, before editing them (under the session lock).
+    /// </summary>
+    /// <remarks>
+    /// Several scene editors can show the same terrain asset, each with its own copy of the samples, and the session saves one
+    /// of them: the one last edited. Unsaved edits made in another editor are carried over first.
+    /// </remarks>
+    private void ClaimSession()
+    {
+        if (session.Data == targetData)
+            return;
+        if (session.Data != null && session.HasUnsavedChanges && session.Data.Resolution == targetData.Resolution)
+            targetData.CopySamplesFrom(session.Data);
+        session.Data = targetData;
     }
 
     // What a tool edits (the undo snapshot captures that only)
@@ -493,9 +512,9 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
     /// Sets the density of a grass layer from the weight of a terrain material layer over the whole terrain (one undoable
     /// edit): where the terrain layer is painted, the grass grows at the given density.
     /// </summary>
-    public void FillGrassFromLayer(int grassLayer, int terrainLayer, float density)
+    public Task FillGrassFromLayer(int grassLayer, int terrainLayer, float density)
     {
-        controller.InvokeAsync(() =>
+        return controller.InvokeAsync(() =>
         {
             if (session == null || targetData == null || (uint)grassLayer >= TerrainData.MaxGrassLayers)
                 return;
@@ -504,6 +523,7 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
             TerrainSnapshot after;
             lock (session.SyncRoot)
             {
+                ClaimSession();
                 before.Capture(data, Int2.Zero, new Int2(data.Resolution - 1));
                 var grass = data.GetOrCreateGrassDensity(grassLayer);
                 var size = data.GrassResolution;
@@ -522,6 +542,11 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
             PushUndo(before, after, "Fill grass from terrain layer");
         });
     }
+
+    /// <summary>
+    /// The world position of the target's first sample (local positions are relative to it).
+    /// </summary>
+    public Task<Vector3> GetTargetOrigin() => controller.InvokeAsync(() => target?.Origin ?? Vector3.Zero);
 
     /// <summary>
     /// Draws the vegetation of the target as impostors at any distance, to check them.
@@ -636,14 +661,16 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
             return;
         }
 
-        // The asset was recompiled (e.g. a property changed) and reloaded: keep the unsaved edits
+        // The asset was recompiled (e.g. a property changed) and reloaded: keep the unsaved edits, from the samples the session
+        // saves (another scene editor of the terrain may have edited it since this one did)
         if (session != null && previous != null && session.HasUnsavedChanges)
         {
             lock (session.SyncRoot)
             {
-                var source = previous.Resolution == data.Resolution
-                    ? previous
-                    : TerrainDataFile.Resample(previous, data.Resolution, data.CellSize, data.MinHeight, data.MaxHeight);
+                var edited = session.Data ?? previous;
+                var source = edited.Resolution == data.Resolution
+                    ? edited
+                    : TerrainDataFile.Resample(edited, data.Resolution, data.CellSize, data.MinHeight, data.MaxHeight);
                 data.CopySamplesFrom(source);
                 session.Data = data;
             }

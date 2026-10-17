@@ -188,6 +188,9 @@ internal sealed class TerrainGrassVariant : IDisposable
         commandList.Copy(dispatchArgsWritable, dispatchArgs);
 
         visibleCounter.SetData(commandList, (ReadOnlySpan<uint>)[0u]);
+        // The previous draws of the model still have the matrices bound for reading
+        commandList.ResourceBarrierTransition(world, GraphicsResourceState.UnorderedAccess);
+        commandList.ResourceBarrierTransition(worldInverse, GraphicsResourceState.UnorderedAccess);
 
         var parameters = cullShader.Parameters;
         parameters.Set(TerrainGrassCullKeys.GrassBoundingRadius, BoundingRadius);

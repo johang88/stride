@@ -39,12 +39,12 @@ namespace Stride.Terrain
             float4 positionScale = GrassInstances[index].PositionScale;
             float4 rotation = GrassInstances[index].Rotation;
 
-            [unroll]
-            for (int i = 0; i < 6; i++)
-            {
-                if (dot(GrassFrustumPlanes[i].xyz, positionScale.xyz) + GrassFrustumPlanes[i].w + GrassBoundingRadius * positionScale.w <= 0.0)
-                    return;
-            }
+            // Written out rather than looped: an early return inside an unrolled loop doesn't compile
+            float radius = GrassBoundingRadius * positionScale.w;
+            if (GrassPlaneDistance(0, positionScale.xyz) <= -radius || GrassPlaneDistance(1, positionScale.xyz) <= -radius
+                || GrassPlaneDistance(2, positionScale.xyz) <= -radius || GrassPlaneDistance(3, positionScale.xyz) <= -radius
+                || GrassPlaneDistance(4, positionScale.xyz) <= -radius || GrassPlaneDistance(5, positionScale.xyz) <= -radius)
+                return;
 
             float4x4 world = GrassTransformation(positionScale.w, rotation, positionScale.xyz);
 
@@ -57,6 +57,11 @@ namespace Stride.Terrain
             // Rotation and uniform scale: the normal transform is the matrix itself, up to the scale (normals are renormalized)
             m.Matrix = transpose(world);
             GrassWorldInverse[visibleIndex] = m;
+        }
+
+        float GrassPlaneDistance(int plane, float3 position)
+        {
+            return dot(GrassFrustumPlanes[plane].xyz, position) + GrassFrustumPlanes[plane].w;
         }
 
         // Same layout as Matrix.Transformation (row vectors, translation in the last row)

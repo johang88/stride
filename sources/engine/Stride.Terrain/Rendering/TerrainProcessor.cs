@@ -30,6 +30,7 @@ public sealed class TerrainProcessor : EntityProcessor<TerrainComponent, Terrain
     private Mesh patchMesh;
     private VirtualTexturing.TerrainVirtualTextureManager virtualTextures;
     private Shadows.TerrainShadowManager shadows;
+    private Vegetation.TerrainVegetationProcessor vegetation;
 
     public TerrainProcessor() : base(typeof(TransformComponent))
     {
@@ -50,10 +51,16 @@ public sealed class TerrainProcessor : EntityProcessor<TerrainComponent, Terrain
         Services.AddService(virtualTextures);
         shadows = new Shadows.TerrainShadowManager(graphicsDevice);
         Services.AddService(shadows);
+        // The grass and vegetation of the terrains, in the same visibility group
+        vegetation = new Vegetation.TerrainVegetationProcessor { VisibilityGroup = VisibilityGroup };
+        EntityManager.Processors.Add(vegetation);
     }
 
     protected override void OnSystemRemove()
     {
+        if (vegetation != null)
+            EntityManager.Processors.Remove(vegetation);
+        vegetation = null;
         foreach (var renderObject in ComponentDatas.Values)
             ReleaseResources(renderObject);
         patchMesh?.Draw.VertexBuffers[0].Buffer.Dispose();

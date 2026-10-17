@@ -72,7 +72,8 @@ internal static class TerrainImpostorMaterial
                 Diffuse = new MaterialDiffuseMapFeature(new ComputeTerrainImpostorDiffuse()),
                 DiffuseModel = new MaterialDiffuseLambertModelFeature(),
                 Specular = new MaterialMetalnessMapFeature(new ComputeFloat(0.0f)),
-                SpecularModel = new MaterialSpecularMicrofacetModelFeature(),
+                // The polynomial environment term: the lookup texture of the default one isn't in every content database
+                SpecularModel = new MaterialSpecularMicrofacetModelFeature { Environment = new MaterialSpecularMicrofacetEnvironmentGGXPolynomial() },
                 SubsurfaceScattering = new MaterialTerrainVegetationSubsurfaceFeature
                 {
                     SubsurfaceLightingAmount = new ComputeFloat(0.8f),
