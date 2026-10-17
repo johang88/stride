@@ -4,7 +4,8 @@
 // GameStudio check of the grass layer and vegetation type editing of the terrain tools panel, on a scene (STRIDE_VEGETATION_SCENE)
 // whose terrain has grass layers (one painted) and vegetation types (one placed) and a model asset named STRIDE_VEGETATION_MODEL
 // (default Fir_02_Small): changes a setting and undoes it, adds a type through the asset picker, removes a placed type and a
-// painted layer with their data (the later ones move down) and undoes that. Doesn't save. Logs "TYPES ..." lines.
+// painted layer with their data (the later ones move down) and undoes that, places a mix of two selected types with a stroke
+// and undoes it. Doesn't save. Logs "TYPES ..." lines.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -130,6 +131,30 @@ public class TerrainTypesEditing : IUITest
         await ctx.WaitDispatcherIdle();
         var back = await session.Dispatcher.InvokeAsync(() => tools.VegetationTypes.Count);
         Check(back == typeCount, "undoing the addition removes the type");
+
+        // Two types selected in the list: a stroke places a mix of them
+        await session.Dispatcher.InvokeAsync(() =>
+        {
+            tools.SelectedVegetationTypeItems.Clear();
+            tools.SelectedVegetationTypeItems.Add(tools.VegetationTypes[0]);
+            tools.SelectedVegetationTypeItems.Add(tools.VegetationTypes[1]);
+        });
+        await ctx.WaitDispatcherIdle();
+        var brush = service.Brush;
+        Console.WriteLine($"TYPES brush types {string.Join(",", brush.VegetationTypes ?? [])}");
+        Check(brush.VegetationTypes is [0, 1], "selecting two types makes the brush place both");
+        var data = await service.GetTargetDataCopy();
+        var origin = await service.GetTargetOrigin();
+        var stroke = brush with { Radius = 20, Strength = 1, Falloff = 0.3f, VegetationDensity = 3, VegetationSpacing = 3, VegetationMaxSlope = 60, Mask = null };
+        await service.SimulateStroke(origin + new Stride.Core.Mathematics.Vector3(data.Size * 0.5f, 0, data.Size * 0.5f), stroke, 20);
+        var mixed = await WaitForUsage(service, x => x.Instances[0] > usage[0] && x.Instances[1] > usage[1]);
+        Console.WriteLine($"TYPES mix stroke: instances per type {string.Join("/", mixed.Instances)}");
+        Check(mixed.Instances[0] > usage[0] && mixed.Instances[1] > usage[1] && mixed.Instances.Skip(2).SequenceEqual(usage.Skip(2)), "a stroke places a mix of the selected types only");
+        await ctx.WaitDispatcherIdle();
+        await session.Dispatcher.InvokeAsync(() => undoRedo.Undo());
+        var mixUndone = await WaitForUsage(service, x => x.Instances.SequenceEqual(usage));
+        Check(mixUndone.Instances.SequenceEqual(usage), "undoing the stroke removes the mix");
+        await session.Dispatcher.InvokeAsync(() => tools.SelectedVegetationTypeItems.Clear());
 
         // A painted grass layer removed with its density (the later ones move down), then restored
         var removedLayer = Array.FindIndex(painted, x => x);

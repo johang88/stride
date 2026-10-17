@@ -78,6 +78,18 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
     internal TerrainToolsViewModel ToolsViewModel { get; set; }
 
     /// <summary>
+    /// The brush used by the tool (thread-safe).
+    /// </summary>
+    public TerrainBrushSettings Brush
+    {
+        get
+        {
+            lock (settingsLock)
+                return brush;
+        }
+    }
+
+    /// <summary>
     /// Sets the brush used by the tool (thread-safe).
     /// </summary>
     public void SetBrush(TerrainBrushSettings settings)

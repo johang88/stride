@@ -2,7 +2,8 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:te="clr-namespace:Stride.Terrain.Editor;assembly=Stride.Terrain.Editor"
                     xmlns:tv="clr-namespace:Stride.Terrain.Editor.Views"
-                    xmlns:sd="http://schemas.stride3d.net/xaml/presentation">
+                    xmlns:sd="http://schemas.stride3d.net/xaml/presentation"
+                    xmlns:i="http://schemas.microsoft.com/xaml/behaviors">
   <!-- Icons (16x16, in the light palette of the editor icons: the editor themes them, outlines included) -->
   <DrawingImage x:Key="TerrainIcon.Tool">
     <DrawingImage.Drawing>
@@ -375,7 +376,12 @@
           <TextBlock Text="{sd:Localize Vegetation types}" FontWeight="Bold" VerticalAlignment="Center"/>
         </DockPanel>
         <ListBox ItemsSource="{Binding VegetationTypes}" SelectedItem="{Binding SelectedVegetationType}" ItemTemplate="{StaticResource TerrainDefinitionItemTemplate}"
-                 MaxHeight="190" Margin="0,2,0,4" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+                 SelectionMode="Extended" MaxHeight="190" Margin="0,2,0,4" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 ToolTip="{sd:Localize 'Ctrl or Shift click to select several types: the tool places a random mix of them', Context=ToolTip}">
+          <i:Interaction.Behaviors>
+            <sd:ListBoxBindableSelectedItemsBehavior SelectedItems="{Binding SelectedVegetationTypeItems}"/>
+          </i:Interaction.Behaviors>
+        </ListBox>
         <TextBlock Text="{sd:Localize 'The terrain is not part of this scene: edit its vegetation types in the scene that holds it.'}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"
                    Visibility="{Binding CanEditDefinitions, Converter={sd:VisibleOrCollapsed}, ConverterParameter={sd:False}}"/>
         <TextBlock Text="{sd:Localize 'No vegetation type yet: add trees or bushes (models), then place them.'}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"

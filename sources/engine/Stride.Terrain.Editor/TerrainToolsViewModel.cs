@@ -114,6 +114,8 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         SelectTerrainCommand = new AnonymousCommand(ServiceProvider, SelectTerrain);
         RefreshBrushes();
 
+        SelectedVegetationTypeItems.CollectionChanged += (_, _) => PushSettings();
+
         // Grass layers and vegetation types are edited on the scene asset: follow its changes (undo included)
         editor.Asset.PropertyGraph.Changed += OnAssetChanged;
         editor.Asset.PropertyGraph.ItemChanged += OnAssetChanged;
@@ -202,6 +204,11 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
     public IReadOnlyObservableList<TerrainVegetationTypeItemViewModel> VegetationTypes => vegetationTypes;
 
     public TerrainVegetationTypeItemViewModel SelectedVegetationType { get => selectedVegetationType; set => SetValue(ref selectedVegetationType, value, PushSettings); }
+
+    /// <summary>
+    /// The vegetation types selected in the list (Ctrl or Shift click): the vegetation tool places a mix of them.
+    /// </summary>
+    public ObservableList<object> SelectedVegetationTypeItems { get; } = new();
 
     /// <summary>
     /// Instances per 100 m² the vegetation tool fills up to.
@@ -301,7 +308,7 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         TerrainBrushTool.Paint => "Drag to paint the layer, Shift to erase it. Ctrl+click picks the layer.",
         TerrainBrushTool.Hole => "Drag to cut holes, Shift to fill them.",
         TerrainBrushTool.Grass => "Drag to paint the grass layer towards the density, Shift to erase it.",
-        TerrainBrushTool.Vegetation => "Drag to place the type up to the density, Shift to remove it.",
+        TerrainBrushTool.Vegetation => "Drag to place the selected types up to the density (Ctrl or Shift click types to place a mix), Shift to remove them.",
         _ => "",
     } + " [ and ] change the radius" + (IsCustomBrush ? ", Ctrl+[ and Ctrl+] rotate the brush." : ".");
 
@@ -654,6 +661,9 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
             GrassLayer = selectedGrassLayer?.Index ?? -1,
             GrassDensity = grassDensity,
             VegetationType = selectedVegetationType?.Index ?? -1,
+            VegetationTypes = SelectedVegetationTypeItems.Count > 1
+                ? SelectedVegetationTypeItems.OfType<TerrainVegetationTypeItemViewModel>().Where(vegetationTypes.Contains).Select(x => x.Index).Order().ToArray()
+                : null,
             VegetationDensity = vegetationDensity,
             VegetationSpacing = vegetationSpacing,
             VegetationMinScale = vegetationMinScale,

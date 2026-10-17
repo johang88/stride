@@ -83,9 +83,15 @@ public struct TerrainBrushSettings
     public float GrassDensity;
 
     /// <summary>
-    /// Vegetation type placed by the vegetation tool.
+    /// Vegetation type placed by the vegetation tool (when <see cref="VegetationTypes"/> is empty).
     /// </summary>
     public int VegetationType;
+
+    /// <summary>
+    /// Vegetation types the vegetation tool places as a mix, one picked at random per instance (null or empty: only
+    /// <see cref="VegetationType"/>). The density counts them together, and erasing removes all of them.
+    /// </summary>
+    public int[] VegetationTypes;
 
     /// <summary>
     /// Number of instances per 100 m² the vegetation tool fills the brush up to (where the brush is fully on).
@@ -113,6 +119,11 @@ public struct TerrainBrushSettings
     /// Distance from the center to the farthest point the brush can touch: the corners of a rotated mask reach beyond the radius.
     /// </summary>
     public readonly float Reach => Mask != null ? Radius * MathF.Sqrt(2) : Radius;
+
+    /// <summary>
+    /// Whether the vegetation tool places (and erases) a vegetation type.
+    /// </summary>
+    public readonly bool PlacesVegetationType(int type) => VegetationTypes is { Length: > 0 } types ? Array.IndexOf(types, type) >= 0 : type == VegetationType;
 
     public static TerrainBrushSettings Default => new()
     {
@@ -382,7 +393,7 @@ public static class TerrainBrush
     }
 
     /// <summary>
-    /// Adds instances of the vegetation type until the brush holds its density (or removes them, inverted).
+    /// Adds instances of the vegetation types until the brush holds their density (or removes them, inverted).
     /// </summary>
     private static bool ApplyVegetation(TerrainData data, Vector2 center, in TerrainBrushSettings s, float dt, Action beforeModify)
     {
@@ -396,7 +407,7 @@ public static class TerrainBrush
             for (int i = instances.Count - 1; i >= 0; i--)
             {
                 var instance = instances[i];
-                if (instance.Type != s.VegetationType || Vector2.DistanceSquared(instance.Position, center) > reach * reach)
+                if (!s.PlacesVegetationType(instance.Type) || Vector2.DistanceSquared(instance.Position, center) > reach * reach)
                     continue;
                 if (BrushWeight(instance.Position - center, s) < 0.5f)
                     continue;
@@ -418,7 +429,7 @@ public static class TerrainBrush
             if (offset.LengthSquared() > (reach + spacing) * (reach + spacing))
                 continue;
             nearby.Add(instance.Position);
-            if (instance.Type == s.VegetationType)
+            if (s.PlacesVegetationType(instance.Type))
                 existing += BrushWeight(offset, s);
         }
 
@@ -473,7 +484,7 @@ public static class TerrainBrush
             added = true;
             instances.Add(new TerrainVegetationInstance
             {
-                Type = s.VegetationType,
+                Type = s.VegetationTypes is { Length: > 0 } types ? types[random.Next(types.Length)] : s.VegetationType,
                 Position = candidate,
                 Rotation = random.NextSingle() * MathF.Tau,
                 Scale = MathUtil.Lerp(s.VegetationMinScale, Math.Max(s.VegetationMinScale, s.VegetationMaxScale), random.NextSingle()),
