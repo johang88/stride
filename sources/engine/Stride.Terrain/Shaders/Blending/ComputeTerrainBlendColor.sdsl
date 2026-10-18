@@ -4,15 +4,18 @@
 namespace Stride.Terrain
 {
     /// <summary>
-    /// Albedo of the terrain under the object (from the terrain virtual texture).
+    /// Albedo of the terrain under the object (from the terrain virtual texture), with the alpha of the object (its cutout mask,
+    /// which a blend layer must keep).
     /// </summary>
     shader ComputeTerrainBlendColor : ComputeColor, TerrainVirtualTextureBase, PositionStream4
     {
+        compose ComputeColor Alpha;
+
         override float4 Compute()
         {
             float2 vuv = TerrainVTWorldToUV(streams.PositionWS.xyz);
             TerrainVTSurface surface = TerrainVTSample(vuv, ddx(vuv), ddy(vuv));
-            return float4(surface.Albedo, 1);
+            return float4(surface.Albedo, Alpha.Compute().x);
         }
     };
 }

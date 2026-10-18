@@ -51,6 +51,30 @@ public sealed class TerrainVirtualTextureManager : IRenderViewExtension, IDispos
     /// </summary>
     public TerrainVirtualTexture Active { get; set; }
 
+    private readonly System.Collections.Generic.HashSet<object> feedbackExcluded = new();
+
+    /// <summary>
+    /// Keeps the meshes of a component (e.g. a <see cref="Stride.Engine.ModelComponent"/>) sampling the virtual texture out of the
+    /// feedback pass: they use pages other objects request (grass blending with the ground under it).
+    /// </summary>
+    public void ExcludeFromFeedback(object source)
+    {
+        lock (feedbackExcluded)
+            feedbackExcluded.Add(source);
+    }
+
+    public void IncludeInFeedback(object source)
+    {
+        lock (feedbackExcluded)
+            feedbackExcluded.Remove(source);
+    }
+
+    internal bool IsExcludedFromFeedback(object source)
+    {
+        lock (feedbackExcluded)
+            return source != null && feedbackExcluded.Contains(source);
+    }
+
     /// <summary>
     /// Whether the active virtual texture can be sampled.
     /// </summary>

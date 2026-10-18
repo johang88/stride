@@ -30,7 +30,7 @@ public static class TerrainVegetationSubsurfaceKeys
 public sealed class MaterialTerrainVegetationSubsurfaceFeature : MaterialFeature, IMaterialSubsurfaceScatteringFeature
 {
     /// <summary>
-    /// How much the light wraps around (lower: flatter and brighter) and how much sky back light the leaves get.
+    /// How far the light wraps around the leaves (0: plain diffuse, 1: soft) and how much sky back light they get.
     /// </summary>
     [NotNull]
     [DataMember(10)]
@@ -38,7 +38,7 @@ public sealed class MaterialTerrainVegetationSubsurfaceFeature : MaterialFeature
     public IComputeScalar SubsurfaceLightingAmount { get; set; } = new ComputeFloat(0.5f);
 
     /// <summary>
-    /// The color of light after going through a leaf (e.g. the leaf texture, or a dark green).
+    /// The color of light after going through a leaf (e.g. a dark green): the glow of leaves lit from behind.
     /// </summary>
     [NotNull]
     [DataMember(20)]
@@ -62,14 +62,27 @@ public sealed class MaterialTerrainVegetationSubsurfaceFeature : MaterialFeature
         shaderBuilder.LightDependentSurface = shaderSource;
     }
 
+    /// <remarks>
+    /// Material layers with equal shading models are shaded once with blended attributes (a layer with other models is shaded on
+    /// its own): constant values compare by value, so a terrain blend layer with the same settings merges with its base.
+    /// </remarks>
     public bool Equals(IMaterialShadingModelFeature other)
     {
         return other is MaterialTerrainVegetationSubsurfaceFeature feature
-            && SubsurfaceLightingAmount.Equals(feature.SubsurfaceLightingAmount)
-            && Extinction.Equals(feature.Extinction);
+            && NodeEquals(SubsurfaceLightingAmount, feature.SubsurfaceLightingAmount)
+            && NodeEquals(Extinction, feature.Extinction);
     }
 
     public override bool Equals(object obj) => obj is IMaterialShadingModelFeature feature && Equals(feature);
 
-    public override int GetHashCode() => HashCode.Combine(SubsurfaceLightingAmount, Extinction);
+    public override int GetHashCode() => typeof(MaterialTerrainVegetationSubsurfaceFeature).GetHashCode();
+
+    private static bool NodeEquals(IComputeNode a, IComputeNode b) => (a, b) switch
+    {
+        (ComputeFloat x, ComputeFloat y) => x.Value == y.Value,
+        (ComputeColor x, ComputeColor y) => x.Value == y.Value,
+        (ComputeTextureColor x, ComputeTextureColor y) => x.Texture == y.Texture && x.Scale == y.Scale && x.Offset == y.Offset && x.TexcoordIndex == y.TexcoordIndex,
+        (ComputeTextureScalar x, ComputeTextureScalar y) => x.Texture == y.Texture && x.Channel == y.Channel && x.Scale == y.Scale && x.Offset == y.Offset && x.TexcoordIndex == y.TexcoordIndex,
+        _ => Equals(a, b),
+    };
 }

@@ -4,98 +4,71 @@
 namespace Stride.Terrain
 {
     /// <summary>
-    /// Foliage shading: light reaches leaves through both faces (wrapped and back lit), dimmed by the transmission through the
-    /// leaf; the ambient back light is added by the skybox light from subsurfaceLightingAmount.
+    /// Foliage shading, added to the material's diffuse model: thin leaves and blades are lit through both faces. The lit side
+    /// gets wrapped diffuse light; light from behind goes through the leaf, tinted by the transmission color, strongest when
+    /// looking towards the light (the glow of backlit grass). The ambient back light is added by the skybox light from
+    /// subsurfaceLightingAmount. Two sided: the side facing the viewer is the one lit.
     /// </summary>
-    shader MaterialTerrainVegetationSubsurfaceShading : IMaterialSurfaceShading, Math, ShaderBaseStream, ShadowStream
+    shader MaterialTerrainVegetationSubsurfaceShading : IMaterialSurfaceShading, Math, ShaderBaseStream, ShadowStream, NormalStream
     {
         compose ComputeColor SubsurfaceLightingAmount;
         compose ComputeColor Extinction;
 
+        // The color of the light going through a leaf
         stream float3 extinction;
 
-        // Wrap factor for the direct path. Separate from subsurfaceLightingAmount because the two
-        // pull in opposite directions: here a lower value means MORE wrap, so flatter and
-        // brighter, while in the ambient path a lower value means darker. Driving both from one
-        // number makes dimming the ambient wash out the direct lighting.
+        // How far the diffuse light wraps around the lit side (0: Lambert)
         stream float subsurfaceWrap;
-
-        float3 CalculateSubSurfaceColor(float3 L, float3 V, float3 N, float subsurfaceLightingAmount, float3 diffuse, float3 extinction, float thickness)
-        {
-            float3 H = normalize(L + V);
-
-            // Backlight factor: only grazing/backlit surfaces get in-scatter
-            float backlight = saturate(dot(N, -L)); // 1 = backlit, 0 = front-lit
-            float inScatter = pow(backlight, 6) * 0.25;
-
-            float normalContribution = saturate(dot(N, H) * subsurfaceLightingAmount + 1 - subsurfaceLightingAmount);
-            float backScatter = normalContribution / (PI * 2);
-
-            float3 transmittance = exp(-extinction * thickness);
-            float3 scattered = diffuse * lerp(backScatter, 1.0, inScatter);
-
-            // Apply extinction/transmittance
-            return scattered * transmittance;
-        }
 
         override void PrepareForLightingAndShading()
         {
             base.PrepareForLightingAndShading();
 
+            // The Extinction map is a transmission color (e.g. a dark green: daylight after going through a leaf)
             streams.extinction = Extinction.Compute().xyz;
+            float authoredAmount = saturate(SubsurfaceLightingAmount.Compute().x);
+            streams.subsurfaceWrap = authoredAmount * 0.6;
 
-            // Use the amount authored on the material. This previously read
-            // matDiffuse.a * 2.5, which for alpha cutout foliage is ~2.5 everywhere - the alpha
-            // is 1 wherever the texel survives the cutoff, so it varied nothing and only scaled
-            // up. That 2.5 then multiplied the ambient subsurface term in LightSkyboxShader and
-            // was the main reason all vegetation read as washed out.
-            //
-            // Fold how much light actually gets through the leaf into the amount handed to
-            // LightSkyboxShader, which weights the back hemisphere by it.
-            //
-            // The Extinction map is read as a transmission colour rather than pushed through
-            // exp(-e * thickness): its contents already are one - the fir map averages a dark
-            // green (0.12, 0.23, 0.12), which is what daylight looks like after passing through a
-            // leaf. Through exp() those values come out at 0.89-0.94, i.e. near white, which is
-            // why ambient translucency was strong enough to make foliage glow in terrain shadow.
-            //
-            // Reduced to luminance because carrying it per channel needs a new light stream, and
-            // adding one shifts SPIR-V type emission order enough to trip a backend bug in the
-            // atmosphere shaders. The tint is cosmetic; the magnitude is what was wrong.
-            float3 luminanceWeights = float3(0.2126, 0.7152, 0.0722);
-            float transmittance = dot(streams.extinction, luminanceWeights);
-
-            float authoredAmount = SubsurfaceLightingAmount.Compute().x;
-
-            streams.subsurfaceWrap = authoredAmount;
+            // How much sky light from behind gets through, for LightSkyboxShader (luminance: a per channel tint would need a
+            // new light stream)
+            float transmittance = dot(streams.extinction, float3(0.2126, 0.7152, 0.0722));
             streams.subsurfaceLightingAmount = authoredAmount * transmittance;
+
+            // Leaves and blades are a mess of small, differently oriented surfaces: their highlight is broad and dim, not the
+            // white glints of a smooth surface (seen towards the sun, on back faces especially)
+            streams.alphaRoughness = max(streams.alphaRoughness, 0.3);
+            streams.matDiffuseSpecularAlphaBlend.y *= 0.5;
         }
 
         override float3 ComputeDirectLightContribution()
         {
-            // lightColor is the raw light, before occlusion - DirectLightGroup folds shadowColor
-            // and attenuation into lightColorNdotL, not into lightColor. Using lightColor on its
-            // own lit foliage at full sun intensity inside terrain and cascade shadow, which is
-            // why undergrowth glowed against near black ground. NdotL is still deliberately left
-            // out: light reaches a leaf through both faces.
-            float3 incomingLight = streams.lightColor * streams.lightAttenuation * streams.shadowColor * streams.lightDirectAmbientOcclusion;
+            // lightColor is the raw light: the shadows and attenuation are folded in here (NdotL is not, light reaches a leaf
+            // through both faces)
+            float3 light = streams.lightColor * streams.lightAttenuation * streams.shadowColor * streams.lightDirectAmbientOcclusion;
+            float3 albedo = streams.matDiffuseVisible;
+            // Cards and blades are seen from both sides: the side facing the viewer is the one lit by wrapped light. The diffuse
+            // model (Lambert) and the specular keep the mesh normal (no highlights on back faces)
+            float meshNDotL = dot(streams.normalWS, streams.lightDirectionWS);
+            float nDotL = dot(streams.normalWS, streams.viewWS) < 0.0 ? -meshNDotL : meshNDotL;
 
-            float3 result = CalculateSubSurfaceColor(
-                streams.lightDirectionWS,
-                streams.viewWS,
-                streams.normalWS,
-                streams.subsurfaceWrap,
-                incomingLight * streams.matDiffuseVisible,
-                streams.extinction,
-                lerp(0.2f, 0.5f, streams.matDiffuse.a)
-            );
+            // Replaces the diffuse model's light by wrapped light on the side facing the viewer
+            float wrap = streams.subsurfaceWrap;
+            float wrapped = saturate((nDotL + wrap) / (1.0 + wrap)) / (1.0 + wrap * 0.5);
+            float3 front = albedo * (wrapped - saturate(meshNDotL));
 
-            return result;
+            // Through the leaf: from behind, and much more when the light is right behind it as seen from the viewer
+            float back = saturate(-nDotL);
+            float forward = pow(saturate(dot(-streams.viewWS, streams.lightDirectionWS)), 6.0);
+            // Green living leaves let light through, dry brown ones barely
+            float leafiness = saturate((albedo.g - albedo.r) * 6.0 + 0.6);
+            float3 transmitted = streams.extinction * sqrt(max(albedo, 0.0)) * lerp(0.15, 1.0, leafiness) * (back * 0.9 + forward * 2.2);
+
+            return (front + transmitted) / PI * light * streams.matDiffuseSpecularAlphaBlend.x;
         }
 
         override float3 ComputeEnvironmentLightContribution()
         {
-            // Patched in Stride skybox light shader
+            // The diffuse model adds the ambient light, which includes the back light (LightSkyboxShader)
             return float3(0, 0, 0);
         }
     };

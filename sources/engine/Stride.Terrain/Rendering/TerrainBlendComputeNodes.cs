@@ -5,6 +5,8 @@ using System.ComponentModel;
 using System.Globalization;
 using Stride.Core;
 using Stride.Core.Annotations;
+using Stride.Core.Mathematics;
+using Stride.Rendering;
 using Stride.Rendering.Materials;
 using Stride.Rendering.Materials.ComputeColors;
 using Stride.Shaders;
@@ -18,6 +20,9 @@ namespace Stride.Terrain.Rendering;
 
 internal static class TerrainBlendNodes
 {
+    public static readonly ObjectParameterKey<Graphics.Texture> AlphaMap = ParameterKeys.NewObject<Graphics.Texture>();
+    public static readonly ValueParameterKey<float> AlphaValue = ParameterKeys.NewValue<float>();
+
     public static void RequestVirtualTexture(ShaderGeneratorContext context)
     {
         // Objects sampling the virtual texture also request its pages in the feedback pass
@@ -82,12 +87,29 @@ public sealed class ComputeTerrainBlendMask : ComputeNode, IComputeScalar, IComp
 [Display("Terrain Blend Color")]
 public sealed class ComputeTerrainBlendColor : ComputeNode, IComputeColor
 {
+    /// <summary>
+    /// The alpha of the color: in a blend layer of an alpha tested material (grass, foliage), its cutout mask (e.g. the alpha
+    /// of its diffuse texture), or the blend would make its cut out parts opaque near the ground. 1 when not set.
+    /// </summary>
+    [DataMember(10)]
+    public IComputeScalar Alpha { get; set; }
+
     public bool HasChanged => false;
+
+    public override System.Collections.Generic.IEnumerable<IComputeNode> GetChildren(object context = null)
+    {
+        if (Alpha != null)
+            yield return Alpha;
+    }
 
     public override ShaderSource GenerateShaderSource(ShaderGeneratorContext context, MaterialComputeColorKeys baseKeys)
     {
         TerrainBlendNodes.RequestVirtualTexture(context);
-        return new ShaderClassSource("ComputeTerrainBlendColor");
+        var alpha = Alpha ?? new ComputeFloat(1.0f);
+        var source = new ShaderMixinSource();
+        source.Mixins.Add(new ShaderClassSource("ComputeTerrainBlendColor"));
+        source.AddComposition("Alpha", alpha.GenerateShaderSource(context, new MaterialComputeColorKeys(TerrainBlendNodes.AlphaMap, TerrainBlendNodes.AlphaValue, Color.White)));
+        return source;
     }
 }
 

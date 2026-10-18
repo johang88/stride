@@ -42,7 +42,7 @@ public sealed class TerrainVirtualTextureStageSelector : RenderStageSelector
         var samples = renderObject switch
         {
             TerrainRenderObject terrain => terrain.UsesVirtualTexture,
-            RenderMesh mesh => mesh.MaterialPass?.Parameters.Get(TerrainVirtualTextureKeys.SamplesVirtualTexture) ?? false,
+            RenderMesh mesh => (mesh.MaterialPass?.Parameters.Get(TerrainVirtualTextureKeys.SamplesVirtualTexture) ?? false) && !Manager.IsExcludedFromFeedback(mesh.Source),
             _ => false,
         };
         if (samples)

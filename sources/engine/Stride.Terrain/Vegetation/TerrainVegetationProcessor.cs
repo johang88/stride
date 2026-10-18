@@ -65,7 +65,7 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
         baker = null;
     }
 
-    protected override TerrainVegetation GenerateComponentData(Entity entity, TerrainComponent component) => new(component);
+    protected override TerrainVegetation GenerateComponentData(Entity entity, TerrainComponent component) => new(component, Services.GetService<VirtualTexturing.TerrainVirtualTextureManager>());
 
     protected override bool IsAssociatedDataValid(Entity entity, TerrainComponent component, TerrainVegetation associatedData) => associatedData.Component == component;
 
@@ -128,10 +128,13 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
         private TerrainData data;
         private Vector3 origin;
         private bool instancesDirty;
+        // Grass may blend with the terrain virtual texture, but never requests its pages: the ground under it does
+        private readonly VirtualTexturing.TerrainVirtualTextureManager virtualTextures;
 
-        internal TerrainVegetation(TerrainComponent component)
+        internal TerrainVegetation(TerrainComponent component, VirtualTexturing.TerrainVirtualTextureManager virtualTextures)
         {
             Component = component;
+            this.virtualTextures = virtualTextures;
         }
 
         public TerrainComponent Component { get; }
@@ -246,6 +249,7 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
                 if (model.Meshes.Count == 0)
                     continue;
                 var grassVariant = new TerrainGrassVariant(device, layer, index, model, variant, count);
+                virtualTextures?.ExcludeFromFeedback(grassVariant.ModelComponent);
                 grass.Add(grassVariant);
                 scene?.Entities.Add(grassVariant.Entity);
             }
@@ -318,6 +322,7 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
             foreach (var variant in grass)
             {
                 variant.Entity.Scene = null;
+                virtualTextures?.IncludeInFeedback(variant.ModelComponent);
                 foreach (var key in state.GrassModels.Where(x => x.Value == variant).Select(x => x.Key).ToList())
                     state.GrassModels.Remove(key);
                 variant.Dispose();
