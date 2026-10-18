@@ -1,0 +1,56 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Rendering.VolumetricFog
+{
+    /// <summary>
+    /// Second pass of the volumetric fog: marches each froxel column away from the camera, accumulating the in-scattered light
+    /// and the transmittance (energy-conserving integration over each slice, Hillaire 2015).
+    /// Output per froxel: rgb = light scattered towards the camera from the camera up to the far end of the slice, a = transmittance.
+    /// </summary>
+    shader VolumetricFogIntegrate : ComputeShaderBase, VolumetricFogCommon
+    {
+        stage Texture3D<float4> FogScatterInput;
+        stage RWTexture3D<float4> FogIntegratedOutput;
+
+        cbuffer PerDispatch
+        {
+            stage float4 FogGrid;
+            stage float3 FogGridSize;
+            // 1 / M11, 1 / M22, M31, M32 of the projection
+            stage float4 FogProjection;
+        };
+
+        override void Compute()
+        {
+            uint2 column = streams.DispatchThreadId.xy;
+            if (any(column >= (uint2)FogGridSize.xy))
+                return;
+
+            // Ray length per meter of view depth through the column center
+            float2 uv = (column + 0.5) / FogGridSize.xy;
+            float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+            float2 slope = (ndc + FogProjection.zw) * FogProjection.xy;
+            float rayScale = sqrt(1.0 + dot(slope, slope));
+
+            float3 scattered = 0.0;
+            float transmittance = 1.0;
+            float sliceStart = 0.0;
+            int slices = (int)FogGridSize.z;
+            for (int slice = 0; slice < slices; slice++)
+            {
+                float sliceEnd = FogSliceToDepth((slice + 1.0) / slices, FogGrid);
+                float segment = (sliceEnd - sliceStart) * rayScale;
+                sliceStart = sliceEnd;
+
+                float4 medium = FogScatterInput[uint3(column, slice)];
+                float extinction = max(medium.a, 1e-7);
+                float sliceTransmittance = exp(-extinction * segment);
+                scattered += transmittance * (medium.rgb - medium.rgb * sliceTransmittance) / extinction;
+                transmittance *= sliceTransmittance;
+
+                FogIntegratedOutput[uint3(column, slice)] = float4(scattered, transmittance);
+            }
+        }
+    };
+}

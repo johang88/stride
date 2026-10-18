@@ -2,6 +2,7 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 using Stride.Rendering.Data;
 using Stride.Rendering.Materials;
+using Stride.Rendering.VolumetricFog;
 
 namespace Stride.Rendering
 {
@@ -42,6 +43,7 @@ namespace Stride.Rendering
     effect StrideForwardShadingEffect
     {
         using params MaterialKeys;
+        using params VolumetricFogKeys;
 
         // Derive from StrideEffectBase
         mixin StrideEffectBase;
@@ -76,5 +78,13 @@ namespace Stride.Rendering
         // Add direct and environment light groups
         // -----------------------------------------------
         mixin StrideLighting;
+
+        // -----------------------------------------------
+        // Fog transparent surfaces (the opaque ones are fogged in a full-screen pass)
+        // -----------------------------------------------
+        if (VolumetricFogKeys.Enabled)
+        {
+            mixin VolumetricFogShading;
+        }
     };
 }
