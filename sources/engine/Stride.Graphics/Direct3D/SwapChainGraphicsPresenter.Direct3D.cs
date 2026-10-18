@@ -322,13 +322,28 @@ namespace Stride.Graphics
                 RefreshRate = Description.RefreshRate.ToSilk(),
                 Format = (Format) Description.BackBufferFormat
             };
+            // The Swap-Chain switches in place: a new one for the same window fails (E_ACCESSDENIED) while the
+            // views of the old Back-Buffer still hold it. The buffers are resized even at the same size, as DXGI
+            // expects after a transition (and the mode switch flag follows the state)
             if (switchToFullScreen)
             {
-                OnDestroyed();
+                HResult result = swapChain->SetFullscreenState(Fullscreen: 1, pTarget: null);
+
+                // Not now (the window isn't in the foreground): it stays windowed, IsFullScreen tells the caller to try again later
+                if (result.Code == DxgiConstants.ErrorNotCurrentlyAvailable)
+                    return;
+
+                if (result.IsFailure)
+                    result.Throw();
+
+                // The transition takes the refresh rate the Swap-Chain was created with: the display mode is set once full screen
+                result = swapChain->ResizeTarget(in description);
+
+                if (result.IsFailure)
+                    result.Throw();
 
                 Description.IsFullScreen = true;
-
-                OnRecreated();
+                ResizeBackBuffer(backBuffer.ViewWidth, backBuffer.ViewHeight, backBuffer.ViewFormat);
             }
             else
             {
@@ -339,7 +354,7 @@ namespace Stride.Graphics
                     result.Throw();
 
                 // Call 1) SwapChain.IsFullScreen 2) SwapChain.Resize
-                Resize(backBuffer.ViewWidth, backBuffer.ViewHeight, backBuffer.ViewFormat);
+                ResizeBackBuffer(backBuffer.ViewWidth, backBuffer.ViewHeight, backBuffer.ViewFormat);
             }
 
             // If going to window mode:
@@ -445,6 +460,10 @@ namespace Stride.Graphics
             // Manually update Back-Buffer Texture
             backBuffer.OnDestroyed(immediately);
             backBuffer.LifetimeState = GraphicsResourceLifetimeState.Destroyed;
+
+            // DXGI doesn't release a full-screen Swap-Chain: back to windowed first
+            if (swapChain is not null && GetFullScreenState())
+                swapChain->SetFullscreenState(Fullscreen: 0, pTarget: null);
 
             SafeRelease(ref swapChain);
 #if STRIDE_GRAPHICS_API_DIRECT3D12
