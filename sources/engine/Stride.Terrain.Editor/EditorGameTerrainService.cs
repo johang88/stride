@@ -73,6 +73,17 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
     public override IEnumerable<Type> Dependencies { get { yield return typeof(IEditorGameEntitySelectionService); } }
 
     /// <summary>
+    /// How many times the samples of the target were replaced by a new build of its asset (game thread), e.g. after a property of
+    /// the terrain asset changed. Sample edits never cause one.
+    /// </summary>
+    public int DataReloadCount { get; private set; }
+
+    /// <summary>
+    /// The asset of the target terrain, once resolved (null when the target has no asset, e.g. not loaded yet).
+    /// </summary>
+    public TerrainViewModel TargetAsset => targetAsset;
+
+    /// <summary>
     /// The view model notified of target and brush changes made from the viewport.
     /// </summary>
     internal TerrainToolsViewModel ToolsViewModel { get; set; }
@@ -571,7 +582,7 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
         var undoRedo = editor.ServiceProvider.Get<IUndoRedoService>();
         if (UPath.IsNullOrEmpty(asset.Asset.DataFile))
             asset.PropertyGraph.RootNode[nameof(TerrainAsset.DataFile)].Update(asset.GetDefaultDataFile());
-        var operation = new TerrainDefinitionDataOperation(controller, editSession, grass, index, asset.Dirtiables);
+        var operation = new TerrainDefinitionDataOperation(controller, editSession, grass, index, [asset.SamplesDirtiable]);
         operation.Remove();
         undoRedo.PushOperation(operation);
         return true;
@@ -689,7 +700,7 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
             // The first edit decides where the samples are saved
             if (UPath.IsNullOrEmpty(asset.Asset.DataFile))
                 asset.PropertyGraph.RootNode[nameof(TerrainAsset.DataFile)].Update(asset.GetDefaultDataFile());
-            undoRedo.PushOperation(new TerrainStrokeOperation(controller, editSession, before, after, asset.Dirtiables));
+            undoRedo.PushOperation(new TerrainStrokeOperation(controller, editSession, before, after, [asset.SamplesDirtiable]));
             undoRedo.SetName(transaction, name);
         });
     }
@@ -713,6 +724,8 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
 
         var previous = targetData;
         targetData = data;
+        if (previous != null && data != null)
+            DataReloadCount++;
         if (data == null)
         {
             NotifyTargetChanged();
@@ -802,11 +815,12 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
         var name = target?.Entity?.Name;
         var material = targetData?.Material;
         var layers = material?.Layers.Select(x => x.Name).ToList() ?? new List<string>();
+        var materialUrl = material != null && game.Content.TryGetAssetUrl(material, out var url) ? url : null;
         var grass = target?.Grass.Select(x => x.Name).ToList() ?? new List<string>();
         var vegetation = target?.Vegetation.Select(x => x.Name).ToList() ?? new List<string>();
         var entityId = target?.Entity?.Id;
         notifiedDefinitions = string.Join("\n", grass) + "\n\n" + string.Join("\n", vegetation);
-        editor.Dispatcher.InvokeAsync(() => ToolsViewModel?.OnTargetChanged(name, entityId, layers, grass, vegetation));
+        editor.Dispatcher.InvokeAsync(() => ToolsViewModel?.OnTargetChanged(name, entityId, layers, materialUrl, grass, vegetation));
     }
 
     private void ShowOverlay(Vector2 center, in TerrainBrushSettings settings, Color4 color)

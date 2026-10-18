@@ -65,3 +65,21 @@ public class TerrainBrushPreview : OneWayValueConverter<TerrainBrushPreview>
         return bitmap;
     }
 }
+
+/// <summary>
+/// A brush of a linear <see cref="Core.Mathematics.Color3"/> (e.g. the tint of a terrain layer without texture).
+/// </summary>
+public class TerrainTintBrush : OneWayValueConverter<TerrainTintBrush>
+{
+    public override object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+    {
+        if (value is not Core.Mathematics.Color3 color)
+            return null;
+        var srgb = color.ToSRgb();
+        var brush = new SolidColorBrush(Color.FromRgb(ToByte(srgb.R), ToByte(srgb.G), ToByte(srgb.B)));
+        brush.Freeze();
+        return brush;
+    }
+
+    private static byte ToByte(float value) => (byte)Math.Clamp(MathF.Round(value * 255), 0, 255);
+}

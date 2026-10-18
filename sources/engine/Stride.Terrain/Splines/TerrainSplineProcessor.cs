@@ -88,7 +88,7 @@ public sealed class TerrainSplineProcessor : EntityProcessor<TerrainSplineCompon
 
     public override void Update(GameTime time)
     {
-        // Terrain edits move the conforming meshes; rebuild a little after the edits settle
+        // Height edits move the conforming meshes; rebuild a little after the edits settle
         var terrains = EntityManager.GetProcessor<TerrainProcessor>()?.Terrains.ToList() ?? new List<TerrainComponent>();
         foreach (var terrain in terrains)
         {
@@ -123,6 +123,9 @@ public sealed class TerrainSplineProcessor : EntityProcessor<TerrainSplineCompon
 
     private void OnTerrainChanged(object sender, TerrainDataChangedEventArgs e)
     {
+        // Only the heights move the meshes (painting and grass don't)
+        if ((e.Flags & TerrainChangeFlags.Heights) == 0)
+            return;
         terrainVersion++;
         terrainChangeDelay = 0.25f;
     }

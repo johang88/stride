@@ -224,6 +224,15 @@
       <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
     </DockPanel>
   </DataTemplate>
+  <!-- A terrain material layer: its albedo texture (or tint) with its name under it -->
+  <DataTemplate x:Key="TerrainLayerItemTemplate">
+    <StackPanel Width="60" Margin="1" ToolTip="{Binding DisplayName}">
+      <Border Width="56" Height="56" Background="{Binding Tint, Converter={tv:TerrainTintBrush}}" HorizontalAlignment="Center">
+        <Image Source="{Binding Texture.ThumbnailData.Presenter, Mode=OneWay}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+      </Border>
+      <TextBlock Text="{Binding Name}" FontSize="10" TextAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,1,0,0"/>
+    </StackPanel>
+  </DataTemplate>
   <DataTemplate x:Key="TerrainModelItemTemplate">
     <DockPanel ToolTip="{Binding Asset.Url}">
       <Border Width="24" Height="24" Margin="0,1,6,1" Background="#20FFFFFF">
@@ -355,8 +364,15 @@
         <sd:NumericTextBox Value="{Binding GrassDensity}" Minimum="0" Maximum="1" SmallChange="0.05" LargeChange="0.25" DecimalPlaces="2" Margin="0,2,0,6"/>
       </StackPanel>
       <StackPanel Visibility="{Binding ShowsTerrainLayers, Converter={sd:VisibleOrCollapsed}}">
-        <TextBlock Text="{sd:Localize Terrain layer}"/>
-        <ListBox ItemsSource="{Binding Layers}" SelectedItem="{Binding SelectedLayer}" DisplayMemberPath="DisplayName" MaxHeight="220" Margin="0,2,0,6"/>
+        <TextBlock Text="{Binding SelectedLayer.DisplayName, StringFormat=Terrain layer: {0}}" TextTrimming="CharacterEllipsis"/>
+        <ListBox ItemsSource="{Binding Layers}" SelectedItem="{Binding SelectedLayer}" ItemTemplate="{StaticResource TerrainLayerItemTemplate}"
+                 MaxHeight="300" Margin="0,2,0,6" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+          <ListBox.ItemsPanel>
+            <ItemsPanelTemplate>
+              <WrapPanel />
+            </ItemsPanelTemplate>
+          </ListBox.ItemsPanel>
+        </ListBox>
         <Button Content="{sd:Localize Fill grass from terrain layer, Context=Button}" Command="{Binding FillGrassFromLayerCommand}" Margin="0,0,0,6"
                 Visibility="{Binding IsGrassTool, Converter={sd:VisibleOrCollapsed}}"
                 ToolTip="{sd:Localize 'Sets the density of the grass layer over the whole terrain from where the terrain layer is painted (times the density)', Context=ToolTip}" />

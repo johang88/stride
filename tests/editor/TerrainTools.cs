@@ -78,6 +78,10 @@ public class TerrainTools : IUITest
             return;
         }
 
+        // Opening the scene may build the terrain more than once (a placeholder until it's compiled): count from here
+        await ctx.WaitForRendering(60);
+        var reloadsBefore = service.DataReloadCount;
+
         var raise = TerrainBrushSettings.Default;
         raise.Radius = 25;
         raise.Strength = 1;
@@ -93,6 +97,31 @@ public class TerrainTools : IUITest
         await service.SimulateStroke(new Vector3(0, 0, -20), paint, 30);
         await ctx.WaitForRendering(30);
         await ctx.Screenshot("sculpted");
+
+        // The strokes dirty the terrain asset (to save the samples) without rebuilding and reloading it (a flash and a delay)
+        await ctx.WaitForRendering(90);
+        var terrainAsset = service.TargetAsset;
+        var reloads = service.DataReloadCount - reloadsBefore;
+        var dirty = await session.Dispatcher.InvokeAsync(() => terrainAsset?.IsDirty ?? false);
+        Console.WriteLine($"TERRAIN after strokes: {reloads} reloads, asset dirty {dirty}");
+        if (reloads != 0 || !dirty)
+        {
+            ctx.Exit(8);
+            return;
+        }
+
+        // The paint tool shows the layers by their albedo textures
+        var paintTools = editor.Tools.OfType<TerrainToolsViewModel>().Single();
+        await session.Dispatcher.InvokeAsync(() => paintTools.Tool = TerrainBrushTool.Paint);
+        await ctx.WaitForRendering(30);
+        var layers = await session.Dispatcher.InvokeAsync(() => paintTools.Layers.Select(x => (x.Name, Texture: x.Texture?.Url)).ToList());
+        Console.WriteLine($"TERRAIN paint layers: {string.Join(", ", layers.Select(x => $"{x.Name} ({x.Texture ?? "no texture"})"))}");
+        await ctx.Screenshot("paint-layers");
+        if (layers.Count == 0 || layers.Any(x => x.Texture == null))
+        {
+            ctx.Exit(9);
+            return;
+        }
 
         // Undo both strokes, then redo them
         await session.Dispatcher.InvokeAsync(() => { session.ActionHistory.UndoCommand.Execute(); session.ActionHistory.UndoCommand.Execute(); });

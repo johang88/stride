@@ -29,20 +29,23 @@ using Stride.Core.Quantum;
 using Stride.Graphics;
 using Stride.Rendering;
 using Stride.Terrain;
+using Stride.Terrain.Assets;
 using Stride.Terrain.Editing;
 using Stride.Terrain.Vegetation;
 
 namespace Stride.Terrain.Editor;
 
 /// <summary>
-/// A layer of the target terrain's material.
+/// A layer of the target terrain's material, shown by its albedo texture.
 /// </summary>
 public sealed class TerrainLayerItemViewModel
 {
-    public TerrainLayerItemViewModel(int index, string name)
+    public TerrainLayerItemViewModel(int index, string name, AssetViewModel texture = null, Color3? tint = null)
     {
         Index = index;
         Name = string.IsNullOrEmpty(name) ? $"Layer {index}" : name;
+        Texture = texture;
+        Tint = tint ?? new Color3(0.5f);
     }
 
     public int Index { get; }
@@ -50,6 +53,16 @@ public sealed class TerrainLayerItemViewModel
     public string Name { get; }
 
     public string DisplayName => $"{Index}: {Name}";
+
+    /// <summary>
+    /// The texture asset of the layer's albedo (null: a flat color, or the material asset isn't known).
+    /// </summary>
+    public AssetViewModel Texture { get; }
+
+    /// <summary>
+    /// The color of a layer without albedo texture (its tint).
+    /// </summary>
+    public Color3 Tint { get; }
 }
 
 /// <summary>
@@ -69,6 +82,10 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
     private float flattenHeight;
     private float noiseScale = 8.0f;
     private TerrainLayerItemViewModel selectedLayer;
+    private List<string> targetLayerNames = new();
+    private string targetMaterialUrl;
+    private AssetViewModel watchedMaterial;
+    private bool layersRefreshQueued;
     private readonly ObservableList<TerrainLayerItemViewModel> layers = new();
     private readonly ObservableList<TerrainBrushItemViewModel> brushes = new();
     private readonly ObservableList<TerrainGrassLayerItemViewModel> grassLayers = new();
@@ -150,9 +167,12 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
     /// <remarks>The terrain tools take the mouse in the viewport while active.</remarks>
     protected override void OnIsActiveChanged()
     {
-        // Brush images may have been added to the folder meanwhile
+        // Brush images may have been added to the folder meanwhile, the material's layers changed
         if (IsActive)
+        {
             RefreshBrushes();
+            RefreshLayers();
+        }
         PushSettings();
         if (IsActive && IsVegetationTool)
             RefreshVegetationInfo();
@@ -334,6 +354,12 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
     {
         editor.Asset.PropertyGraph.Changed -= OnAssetChanged;
         editor.Asset.PropertyGraph.ItemChanged -= OnAssetChanged;
+        if (watchedMaterial != null)
+        {
+            watchedMaterial.PropertyGraph.Changed -= OnMaterialChanged;
+            watchedMaterial.PropertyGraph.ItemChanged -= OnMaterialChanged;
+            watchedMaterial = null;
+        }
         if (service != null)
         {
             service.SetToolEnabled(false);
@@ -342,10 +368,12 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         base.Destroy();
     }
 
-    internal void OnTargetChanged(string name, Guid? entityId, List<string> layerNames, List<string> grassNames, List<string> vegetationNames)
+    internal void OnTargetChanged(string name, Guid? entityId, List<string> layerNames, string materialUrl, List<string> grassNames, List<string> vegetationNames)
     {
         TargetName = name;
-        SelectedLayer = Refill(layers, layerNames, selectedLayer);
+        targetLayerNames = layerNames;
+        targetMaterialUrl = materialUrl;
+        RefreshLayers();
         targetEntityId = entityId;
         gameGrassNames = grassNames;
         gameVegetationNames = vegetationNames;
@@ -569,14 +597,66 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         editor.SelectedContent.Add(entity);
     }
 
-    // Refills a list of named items, keeping the selected index when it's still there
-    private static TerrainLayerItemViewModel Refill(ObservableList<TerrainLayerItemViewModel> items, List<string> names, TerrainLayerItemViewModel selected)
+    /// <summary>
+    /// Refills the terrain layers from the target's material asset (names and albedo textures), or from the names of the
+    /// editor game's material when the asset isn't found, keeping the selected index when it's still there.
+    /// </summary>
+    private void RefreshLayers()
     {
-        var selectedIndex = selected?.Index ?? 0;
-        items.Clear();
-        for (int i = 0; i < names.Count; i++)
-            items.Add(new TerrainLayerItemViewModel(i, names[i]));
-        return items.FirstOrDefault(x => x.Index == selectedIndex) ?? items.FirstOrDefault();
+        var material = targetMaterialUrl != null ? editor.Session.AllAssets.FirstOrDefault(x => x.Url == targetMaterialUrl) : null;
+        // Follow the material's edits (layers added, textures changed)
+        if (material != watchedMaterial)
+        {
+            if (watchedMaterial != null)
+            {
+                watchedMaterial.PropertyGraph.Changed -= OnMaterialChanged;
+                watchedMaterial.PropertyGraph.ItemChanged -= OnMaterialChanged;
+            }
+            watchedMaterial = material;
+            if (material != null)
+            {
+                material.PropertyGraph.Changed += OnMaterialChanged;
+                material.PropertyGraph.ItemChanged += OnMaterialChanged;
+            }
+        }
+
+        var items = new List<TerrainLayerItemViewModel>();
+        if (material?.Asset is TerrainMaterialAsset materialAsset)
+        {
+            for (int i = 0; i < materialAsset.Layers.Count; i++)
+            {
+                var layer = materialAsset.Layers[i];
+                var texture = layer.Albedo != null ? ContentReferenceHelper.GetReferenceTarget(editor.Session, layer.Albedo) : null;
+                items.Add(new TerrainLayerItemViewModel(i, layer.Name, texture, layer.Tint));
+            }
+            // The textures are shown by their thumbnails: get them first
+            var thumbnails = ServiceProvider.TryGet<IThumbnailService>();
+            thumbnails?.AddThumbnailAssetItems(items.Where(x => x.Texture != null && x.Texture.ThumbnailData == null).Select(x => x.Texture.AssetItem), QueuePosition.First);
+        }
+        else
+        {
+            for (int i = 0; i < targetLayerNames.Count; i++)
+                items.Add(new TerrainLayerItemViewModel(i, targetLayerNames[i]));
+        }
+
+        var selectedIndex = selectedLayer?.Index ?? 0;
+        layers.Clear();
+        layers.AddRange(items);
+        SelectedLayer = layers.FirstOrDefault(x => x.Index == selectedIndex) ?? layers.FirstOrDefault();
+    }
+
+    private void OnMaterialChanged(object sender, EventArgs e)
+    {
+        // Once for all the changes of an action
+        if (layersRefreshQueued)
+            return;
+        layersRefreshQueued = true;
+        Dispatcher.InvokeAsync(() =>
+        {
+            layersRefreshQueued = false;
+            if (!IsDestroyed)
+                RefreshLayers();
+        });
     }
 
     private void OnToolChanged()
