@@ -381,7 +381,7 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
         if (target != null)
         {
             target.ImpostorPreview = impostorPreview;
-            var definitions = string.Join("\n", target.Grass.Select(x => x.Name)) + "\n\n" + string.Join("\n", target.Vegetation.Select(x => x.Name));
+            var definitions = DefinitionNames(target);
             if (definitions != notifiedDefinitions)
                 NotifyTargetChanged();
         }
@@ -445,6 +445,7 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
                 TerrainBrushTool.Paint => new Color4(0.2f, 0.9f, 1.0f, 0.9f),
                 TerrainBrushTool.Hole => new Color4(1.0f, 0.3f, 0.2f, 0.9f),
                 TerrainBrushTool.Grass or TerrainBrushTool.Vegetation => settings.Invert ? new Color4(1.0f, 0.55f, 0.1f, 0.9f) : new Color4(0.35f, 1.0f, 0.3f, 0.9f),
+                TerrainBrushTool.Fog => settings.Invert ? new Color4(1.0f, 0.55f, 0.1f, 0.9f) : new Color4(0.8f, 0.9f, 1.0f, 0.9f),
                 _ => settings.Invert ? new Color4(1.0f, 0.55f, 0.1f, 0.9f) : new Color4(1.0f, 0.95f, 0.3f, 0.9f),
             };
             ShowOverlay(new Vector2(local.X, local.Z), settings, color);
@@ -527,6 +528,7 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
     {
         TerrainBrushTool.Paint or TerrainBrushTool.Hole => TerrainChangeFlags.Splat,
         TerrainBrushTool.Grass => TerrainChangeFlags.Grass,
+        TerrainBrushTool.Fog => TerrainChangeFlags.Fog,
         TerrainBrushTool.Vegetation => TerrainChangeFlags.None,
         _ => TerrainChangeFlags.Heights,
     };
@@ -567,12 +569,12 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
     }
 
     /// <summary>
-    /// Removes the data of a grass layer (its density) or a vegetation type (its instances) from the target, the later layers
-    /// or types moving down one, as the layer or type is removed from the terrain component: an undoable operation pushed in
-    /// the current transaction (dispatcher thread).
+    /// Removes the data of a grass or fog layer (its density) or a vegetation type (its instances) from the target, the later
+    /// layers or types moving down one, as the layer or type is removed from the terrain component: an undoable operation pushed
+    /// in the current transaction (dispatcher thread).
     /// </summary>
     /// <returns>False when the target's data can't be edited (no terrain asset).</returns>
-    public bool RemoveDefinitionData(bool grass, int index)
+    public bool RemoveDefinitionData(TerrainDefinitionKind kind, int index)
     {
         var asset = targetAsset;
         var editSession = session;
@@ -582,22 +584,23 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
         var undoRedo = editor.ServiceProvider.Get<IUndoRedoService>();
         if (UPath.IsNullOrEmpty(asset.Asset.DataFile))
             asset.PropertyGraph.RootNode[nameof(TerrainAsset.DataFile)].Update(asset.GetDefaultDataFile());
-        var operation = new TerrainDefinitionDataOperation(controller, editSession, grass, index, [asset.SamplesDirtiable]);
+        var operation = new TerrainDefinitionDataOperation(controller, editSession, kind, index, [asset.SamplesDirtiable]);
         operation.Remove();
         undoRedo.PushOperation(operation);
         return true;
     }
 
     /// <summary>
-    /// Instances placed per vegetation type of the target, and whether each grass layer has density painted.
+    /// Instances placed per vegetation type of the target, and whether each grass and fog layer has density painted.
     /// </summary>
-    public Task<(int[] Instances, bool[] GrassPainted)> GetDefinitionUsage()
+    public Task<(int[] Instances, bool[] GrassPainted, bool[] FogPainted)> GetDefinitionUsage()
     {
         return controller.InvokeAsync(() =>
         {
             var data = targetData;
             var instances = new int[target?.Vegetation.Count ?? 0];
-            var painted = new bool[TerrainData.MaxGrassLayers];
+            var grassPainted = new bool[TerrainData.MaxGrassLayers];
+            var fogPainted = new bool[TerrainData.MaxFogLayers];
             if (data != null)
             {
                 foreach (var instance in data.Vegetation)
@@ -605,10 +608,12 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
                     if ((uint)instance.Type < (uint)instances.Length)
                         instances[instance.Type]++;
                 }
-                for (int i = 0; i < painted.Length; i++)
-                    painted[i] = data.GetGrassDensity(i)?.Any(x => x != 0) == true;
+                for (int i = 0; i < grassPainted.Length; i++)
+                    grassPainted[i] = data.GetGrassDensity(i)?.Any(x => x != 0) == true;
+                for (int i = 0; i < fogPainted.Length; i++)
+                    fogPainted[i] = data.GetFogDensity(i)?.Any(x => x != 0) == true;
             }
-            return (instances, painted);
+            return (instances, grassPainted, fogPainted);
         });
     }
 
@@ -681,6 +686,7 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
             TerrainBrushTool.Paint => "Paint terrain",
             TerrainBrushTool.Hole => "Edit terrain holes",
             TerrainBrushTool.Grass => "Paint grass",
+            TerrainBrushTool.Fog => "Paint fog",
             TerrainBrushTool.Vegetation => "Place vegetation",
             _ => "Edit terrain",
         });
@@ -818,9 +824,18 @@ public sealed class EditorGameTerrainService : EditorGameMouseServiceBase, Strid
         var materialUrl = material != null && game.Content.TryGetAssetUrl(material, out var url) ? url : null;
         var grass = target?.Grass.Select(x => x.Name).ToList() ?? new List<string>();
         var vegetation = target?.Vegetation.Select(x => x.Name).ToList() ?? new List<string>();
+        var fog = target?.Fog.Select(x => x.Name).ToList() ?? new List<string>();
         var entityId = target?.Entity?.Id;
-        notifiedDefinitions = string.Join("\n", grass) + "\n\n" + string.Join("\n", vegetation);
-        editor.Dispatcher.InvokeAsync(() => ToolsViewModel?.OnTargetChanged(name, entityId, layers, materialUrl, grass, vegetation));
+        notifiedDefinitions = DefinitionNames(target);
+        editor.Dispatcher.InvokeAsync(() => ToolsViewModel?.OnTargetChanged(name, entityId, layers, materialUrl, grass, vegetation, fog));
+    }
+
+    // The grass layer, vegetation type and fog layer names of a terrain, to notice their changes
+    private static string DefinitionNames(TerrainComponent terrain)
+    {
+        if (terrain == null)
+            return "";
+        return string.Join("\n", terrain.Grass.Select(x => x.Name)) + "\n\n" + string.Join("\n", terrain.Vegetation.Select(x => x.Name)) + "\n\n" + string.Join("\n", terrain.Fog.Select(x => x.Name));
     }
 
     private void ShowOverlay(Vector2 center, in TerrainBrushSettings settings, Color4 color)

@@ -9,24 +9,34 @@ using Stride.Terrain;
 namespace Stride.Terrain.Editor;
 
 /// <summary>
-/// Undoable removal of the data of a grass layer (its density) or a vegetation type (its instances) from the edited samples,
-/// the later layers or types moving down one: goes with the removal of the layer or type from the terrain component.
+/// What a terrain component defines with data painted or placed in the terrain data.
+/// </summary>
+public enum TerrainDefinitionKind
+{
+    Grass,
+    Vegetation,
+    Fog,
+}
+
+/// <summary>
+/// Undoable removal of the data of a grass or fog layer (its density) or a vegetation type (its instances) from the edited
+/// samples, the later layers or types moving down one: goes with the removal of the layer or type from the terrain component.
 /// </summary>
 internal sealed class TerrainDefinitionDataOperation : DirtyingOperation
 {
     private readonly IEditorGameController controller;
     private readonly TerrainEditingSession session;
-    private readonly bool grass;
+    private readonly TerrainDefinitionKind kind;
     private readonly int index;
-    private byte[] removedGrass;
+    private byte[] removedDensity;
     private List<TerrainVegetationInstance> vegetationBefore;
 
-    public TerrainDefinitionDataOperation(IEditorGameController controller, TerrainEditingSession session, bool grass, int index, IEnumerable<IDirtiable> dirtiables)
+    public TerrainDefinitionDataOperation(IEditorGameController controller, TerrainEditingSession session, TerrainDefinitionKind kind, int index, IEnumerable<IDirtiable> dirtiables)
         : base(dirtiables)
     {
         this.controller = controller;
         this.session = session;
-        this.grass = grass;
+        this.kind = kind;
         this.index = index;
     }
 
@@ -35,22 +45,30 @@ internal sealed class TerrainDefinitionDataOperation : DirtyingOperation
     /// </summary>
     public void Remove() => Run(data =>
     {
-        if (grass)
+        switch (kind)
         {
-            removedGrass = data.RemoveGrassLayer(index);
-        }
-        else
-        {
-            vegetationBefore = new List<TerrainVegetationInstance>(data.Vegetation);
-            data.RemoveVegetationType(index);
+            case TerrainDefinitionKind.Grass:
+                removedDensity = data.RemoveGrassLayer(index);
+                break;
+            case TerrainDefinitionKind.Fog:
+                removedDensity = data.RemoveFogLayer(index);
+                break;
+            default:
+                vegetationBefore = new List<TerrainVegetationInstance>(data.Vegetation);
+                data.RemoveVegetationType(index);
+                break;
         }
     });
 
     protected override void Undo() => Run(data =>
     {
-        if (grass)
+        if (kind == TerrainDefinitionKind.Grass)
         {
-            data.InsertGrassLayer(index, removedGrass);
+            data.InsertGrassLayer(index, removedDensity);
+        }
+        else if (kind == TerrainDefinitionKind.Fog)
+        {
+            data.InsertFogLayer(index, removedDensity);
         }
         else if (vegetationBefore != null)
         {
@@ -64,7 +82,7 @@ internal sealed class TerrainDefinitionDataOperation : DirtyingOperation
 
     protected override void FreezeContent()
     {
-        removedGrass = null;
+        removedDensity = null;
         vegetationBefore = null;
         base.FreezeContent();
     }

@@ -31,6 +31,11 @@ public sealed class TerrainRenderObject : RenderMesh
 
     internal (bool Enabled, int Density, int Cache, int Feedback) VirtualTextureConfig;
 
+    /// <summary>
+    /// The terrain as the volumetric fog sees it (its painted fog and its sun shadows).
+    /// </summary>
+    internal Stride.Rendering.VolumetricFog.RenderFogHeightfield FogHeightfield;
+
     internal void OnDataChanged(object sender, TerrainDataChangedEventArgs e)
     {
         if ((e.Flags & TerrainChangeFlags.Heights) != 0)

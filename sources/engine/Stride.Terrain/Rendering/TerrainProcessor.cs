@@ -9,6 +9,7 @@ using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Graphics;
 using Stride.Rendering;
+using Stride.Rendering.VolumetricFog;
 using Stride.Terrain.Rendering;
 using Buffer = Stride.Graphics.Buffer;
 
@@ -31,6 +32,7 @@ public sealed class TerrainProcessor : EntityProcessor<TerrainComponent, Terrain
     private VirtualTexturing.TerrainVirtualTextureManager virtualTextures;
     private Shadows.TerrainShadowManager shadows;
     private Vegetation.TerrainVegetationProcessor vegetation;
+    private readonly List<RenderFogHeightfield> fogHeightfields = new();
 
     public TerrainProcessor() : base(typeof(TransformComponent))
     {
@@ -54,10 +56,13 @@ public sealed class TerrainProcessor : EntityProcessor<TerrainComponent, Terrain
         // The grass and vegetation of the terrains, in the same visibility group
         vegetation = new Vegetation.TerrainVegetationProcessor { VisibilityGroup = VisibilityGroup };
         EntityManager.Processors.Add(vegetation);
+        // The painted fog and the sun shadows of the terrains, for the volumetric fog
+        VisibilityGroup.Tags.Set(VolumetricFogRenderer.CurrentHeightfields, fogHeightfields);
     }
 
     protected override void OnSystemRemove()
     {
+        VisibilityGroup?.Tags.Set(VolumetricFogRenderer.CurrentHeightfields, null);
         if (vegetation != null)
             EntityManager.Processors.Remove(vegetation);
         vegetation = null;
@@ -186,10 +191,57 @@ public sealed class TerrainProcessor : EntityProcessor<TerrainComponent, Terrain
 
         virtualTextures.Active = activeVirtualTexture;
         shadows.Active = activeShadowCaster;
+        UpdateFogHeightfields(activeShadowCaster);
         foreach (var renderObject in ComponentDatas.Values)
         {
             if (renderObject.UsesVirtualTexture && renderObject.MaterialPass != null)
                 renderObject.MaterialPass.Parameters.Set(TerrainMaterialSurfaceVirtualTextureKeys.TerrainVTIsOwn, renderObject.VirtualTexture == activeVirtualTexture && activeVirtualTexture.IsReady ? 1.0f : 0.0f);
+        }
+    }
+
+    /// <summary>
+    /// Describes the visible terrains to the volumetric fog, the one casting the terrain shadows first.
+    /// </summary>
+    private void UpdateFogHeightfields(TerrainRenderObject shadowCaster)
+    {
+        fogHeightfields.Clear();
+        foreach (var (component, renderObject) in ComponentDatas)
+        {
+            var data = renderObject.Data;
+            if (!component.Enabled || renderObject.Gpu == null || data == null || renderObject.QuadTree == null || renderObject.MaterialPass == null)
+                continue;
+
+            var field = renderObject.FogHeightfield ??= new RenderFogHeightfield();
+            field.Origin = renderObject.World.TranslationVector;
+            field.Size = data.Size;
+            field.Heightmap = renderObject.Gpu.Heightmap;
+            field.HeightCellSize = data.CellSize;
+            field.MinHeight = data.MinHeight;
+            field.HeightRange = data.MaxHeight - data.MinHeight;
+            field.LayerWeights = renderObject.Gpu.FogDensity;
+            field.WeightCellSize = data.FogCellSize;
+            field.LayerCount = field.LayerWeights != null ? Math.Min(component.Fog.Count, RenderFogHeightfield.MaxLayers) : 0;
+            for (int i = 0; i < field.LayerCount; i++)
+            {
+                var layer = component.Fog[i];
+                field.Layers[i] = new RenderFogLayer
+                {
+                    Density = layer.Density,
+                    HeightMode = layer.HeightMode,
+                    Height = layer.Height,
+                    Softness = layer.Softness,
+                    Albedo = layer.Albedo,
+                    Emissive = layer.Emissive,
+                    NoiseStrength = layer.NoiseStrength,
+                };
+            }
+
+            shadows.TryGetFogShadow(renderObject, out field.SunShadow, out field.SunShadowMinHeight, out field.SunShadowHeightRange, out field.SunShadowPenumbra);
+
+            if (renderObject == shadowCaster)
+                fogHeightfields.Insert(0, field);
+            else
+                fogHeightfields.Add(field);
         }
     }
 

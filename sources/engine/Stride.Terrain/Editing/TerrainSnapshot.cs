@@ -8,7 +8,7 @@ using Stride.Core.Mathematics;
 namespace Stride.Terrain.Editing;
 
 /// <summary>
-/// The samples of some tiles of a terrain (heights, splat and grass density) and possibly its vegetation instances,
+/// The samples of some tiles of a terrain (heights, splat, grass and fog density) and possibly its vegetation instances,
 /// used to undo and redo edits.
 /// </summary>
 public sealed class TerrainSnapshot
@@ -19,8 +19,8 @@ public sealed class TerrainSnapshot
     private readonly TerrainChangeFlags channels;
     private List<TerrainVegetationInstance> vegetation;
 
-    /// <param name="channels">What the tiles capture (heights, splat, grass): an edit of one channel needs only that one.</param>
-    public TerrainSnapshot(TerrainChangeFlags channels = TerrainChangeFlags.Heights | TerrainChangeFlags.Splat | TerrainChangeFlags.Grass)
+    /// <param name="channels">What the tiles capture (heights, splat, grass, fog): an edit of one channel needs only that one.</param>
+    public TerrainSnapshot(TerrainChangeFlags channels = TerrainChangeFlags.Heights | TerrainChangeFlags.Splat | TerrainChangeFlags.Grass | TerrainChangeFlags.Fog)
     {
         this.channels = channels;
     }
@@ -31,6 +31,8 @@ public sealed class TerrainSnapshot
         public uint[] Splat;
         // Grass density of the tile per layer (null: the layer had none), in grass samples
         public byte[][] Grass;
+        // Fog density of the tile per layer (null: the layer had none), in fog samples
+        public byte[][] Fog;
     }
 
     public bool IsEmpty => tiles.Count == 0 && vegetation == null;
@@ -104,28 +106,63 @@ public sealed class TerrainSnapshot
                     Array.Copy(tile.Splat, row, data.Splat, z * data.Resolution + tileMin.X, width);
             }
 
-            GetGrassTileBounds(data, key, out var grassMin, out var grassMax);
-            var grassWidth = grassMax.X - grassMin.X + 1;
-            for (int layer = 0; layer < TerrainData.MaxGrassLayers && tile.Grass != null; layer++)
+            if (tile.Grass != null)
             {
-                var source = tile.Grass[layer];
-                // A layer the tile had no density for is cleared, unless it still has none at all
-                var target = source != null ? data.GetOrCreateGrassDensity(layer) : data.GetGrassDensity(layer);
-                if (target == null)
-                    continue;
-                for (int z = grassMin.Y; z <= grassMax.Y; z++)
+                GetLayerTileBounds(key, 2, data.GrassResolution, out var grassMin, out var grassMax);
+                for (int layer = 0; layer < TerrainData.MaxGrassLayers; layer++)
                 {
-                    if (source != null)
-                        Array.Copy(source, (z - grassMin.Y) * grassWidth, target, z * grassSize + grassMin.X, grassWidth);
-                    else
-                        Array.Clear(target, z * grassSize + grassMin.X, grassWidth);
+                    // A layer the tile had no density for is cleared, unless it still has none at all
+                    var target = tile.Grass[layer] != null ? data.GetOrCreateGrassDensity(layer) : data.GetGrassDensity(layer);
+                    RestoreLayer(tile.Grass[layer], target, grassSize, grassMin, grassMax);
+                }
+            }
+            if (tile.Fog != null)
+            {
+                GetLayerTileBounds(key, TerrainData.FogSpacing, data.FogResolution, out var fogMin, out var fogMax);
+                for (int layer = 0; layer < TerrainData.MaxFogLayers; layer++)
+                {
+                    var target = tile.Fog[layer] != null ? data.GetOrCreateFogDensity(layer) : data.GetFogDensity(layer);
+                    RestoreLayer(tile.Fog[layer], target, data.FogResolution, fogMin, fogMax);
                 }
             }
 
             min = Int2.Min(min, tileMin);
             max = Int2.Max(max, tileMax);
         }
-        data.NotifyChanged(min, max, channels & (TerrainChangeFlags.Heights | TerrainChangeFlags.Splat | TerrainChangeFlags.Grass));
+        data.NotifyChanged(min, max, channels & (TerrainChangeFlags.Heights | TerrainChangeFlags.Splat | TerrainChangeFlags.Grass | TerrainChangeFlags.Fog));
+    }
+
+    private static void RestoreLayer(byte[] source, byte[] target, int size, Int2 min, Int2 max)
+    {
+        if (target == null)
+            return;
+        var width = max.X - min.X + 1;
+        for (int z = min.Y; z <= max.Y; z++)
+        {
+            if (source != null)
+                Array.Copy(source, (z - min.Y) * width, target, z * size + min.X, width);
+            else
+                Array.Clear(target, z * size + min.X, width);
+        }
+    }
+
+    // The samples of a tile of a layer with one sample every spacing terrain samples (null where the layer has none)
+    private static byte[][] ReadLayers(Int2 key, int spacing, int size, int count, Func<int, byte[]> getLayer)
+    {
+        GetLayerTileBounds(key, spacing, size, out var min, out var max);
+        var width = max.X - min.X + 1;
+        var height = max.Y - min.Y + 1;
+        var layers = new byte[count][];
+        for (int layer = 0; layer < count; layer++)
+        {
+            if (getLayer(layer) is not { } density)
+                continue;
+            var copy = new byte[width * height];
+            for (int z = min.Y; z <= max.Y; z++)
+                Array.Copy(density, z * size + min.X, copy, (z - min.Y) * width, width);
+            layers[layer] = copy;
+        }
+        return layers;
     }
 
     private static Tile Read(TerrainData data, Int2 key, TerrainChangeFlags channels)
@@ -146,23 +183,10 @@ public sealed class TerrainSnapshot
             if (tile.Splat != null)
                 Array.Copy(data.Splat, z * data.Resolution + tileMin.X, tile.Splat, row, width);
         }
-        if ((channels & TerrainChangeFlags.Grass) == 0)
-            return tile;
-        tile.Grass = new byte[TerrainData.MaxGrassLayers][];
-
-        GetGrassTileBounds(data, key, out var grassMin, out var grassMax);
-        var grassWidth = grassMax.X - grassMin.X + 1;
-        var grassHeight = grassMax.Y - grassMin.Y + 1;
-        var grassSize = data.GrassResolution;
-        for (int layer = 0; layer < TerrainData.MaxGrassLayers; layer++)
-        {
-            if (data.GetGrassDensity(layer) is not { } density)
-                continue;
-            var copy = new byte[grassWidth * grassHeight];
-            for (int z = grassMin.Y; z <= grassMax.Y; z++)
-                Array.Copy(density, z * grassSize + grassMin.X, copy, (z - grassMin.Y) * grassWidth, grassWidth);
-            tile.Grass[layer] = copy;
-        }
+        if ((channels & TerrainChangeFlags.Grass) != 0)
+            tile.Grass = ReadLayers(key, 2, data.GrassResolution, TerrainData.MaxGrassLayers, data.GetGrassDensity);
+        if ((channels & TerrainChangeFlags.Fog) != 0)
+            tile.Fog = ReadLayers(key, TerrainData.FogSpacing, data.FogResolution, TerrainData.MaxFogLayers, data.GetFogDensity);
         return tile;
     }
 
@@ -172,11 +196,11 @@ public sealed class TerrainSnapshot
         max = Int2.Min(new Int2(min.X + TileSize - 1, min.Y + TileSize - 1), new Int2(data.Resolution - 1));
     }
 
-    // The grass samples of a tile: one every two terrain samples
-    private static void GetGrassTileBounds(TerrainData data, Int2 key, out Int2 min, out Int2 max)
+    // The samples of a tile of a layer with one sample every spacing terrain samples (grass: 2, fog: 4)
+    private static void GetLayerTileBounds(Int2 key, int spacing, int size, out Int2 min, out Int2 max)
     {
-        const int grassTile = TileSize / 2;
-        min = new Int2(key.X * grassTile, key.Y * grassTile);
-        max = Int2.Min(new Int2(min.X + grassTile - 1, min.Y + grassTile - 1), new Int2(data.GrassResolution - 1));
+        var layerTile = TileSize / spacing;
+        min = new Int2(key.X * layerTile, key.Y * layerTile);
+        max = Int2.Min(new Int2(min.X + layerTile - 1, min.Y + layerTile - 1), new Int2(size - 1));
     }
 }

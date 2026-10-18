@@ -18,6 +18,7 @@ public enum TerrainBrushTool
     [Display("Holes")] Hole,
     [Display("Paint grass")] Grass,
     [Display("Place trees")] Vegetation,
+    [Display("Paint fog")] Fog,
 }
 
 /// <summary>
@@ -83,6 +84,16 @@ public struct TerrainBrushSettings
     public float GrassDensity;
 
     /// <summary>
+    /// Fog layer painted by the fog tool.
+    /// </summary>
+    public int FogLayer;
+
+    /// <summary>
+    /// Density (0-1) the fog tool paints towards.
+    /// </summary>
+    public float FogDensity;
+
+    /// <summary>
     /// Vegetation type placed by the vegetation tool (when <see cref="VegetationTypes"/> is empty).
     /// </summary>
     public int VegetationType;
@@ -133,6 +144,7 @@ public struct TerrainBrushSettings
         Falloff = 0.6f,
         NoiseScale = 8.0f,
         GrassDensity = 1.0f,
+        FogDensity = 1.0f,
         VegetationDensity = 2.0f,
         VegetationSpacing = 3.0f,
         VegetationMinScale = 0.8f,
@@ -224,8 +236,22 @@ public static class TerrainBrush
             var grassMin = new Int2(min.X / 2, min.Y / 2);
             var grassMax = Int2.Min(new Int2((max.X + 1) / 2, (max.Y + 1) / 2), new Int2(data.GrassResolution - 1));
             beforeModify?.Invoke(new Int2(grassMin.X * 2, grassMin.Y * 2), new Int2(grassMax.X * 2, grassMax.Y * 2));
-            ApplyGrass(data, center, settings, deltaTime, grassMin, grassMax);
+            ApplyLayer(data, center, settings, deltaTime, data.GetOrCreateGrassDensity(settings.GrassLayer), data.GrassResolution, 2, settings.GrassDensity, grassMin, grassMax);
             data.NotifyChanged(new Int2(grassMin.X * 2, grassMin.Y * 2), new Int2(grassMax.X * 2, grassMax.Y * 2), TerrainChangeFlags.Grass);
+            return true;
+        }
+
+        if (settings.Tool == TerrainBrushTool.Fog)
+        {
+            if ((uint)settings.FogLayer >= TerrainData.MaxFogLayers)
+                return false;
+            // Whole fog samples (one every FogSpacing terrain samples), in terrain samples for the undo tiles
+            const int spacing = TerrainData.FogSpacing;
+            var fogMin = new Int2(min.X / spacing, min.Y / spacing);
+            var fogMax = Int2.Min(new Int2((max.X + spacing - 1) / spacing, (max.Y + spacing - 1) / spacing), new Int2(data.FogResolution - 1));
+            beforeModify?.Invoke(new Int2(fogMin.X * spacing, fogMin.Y * spacing), new Int2(fogMax.X * spacing, fogMax.Y * spacing));
+            ApplyLayer(data, center, settings, deltaTime, data.GetOrCreateFogDensity(settings.FogLayer), data.FogResolution, spacing, settings.FogDensity, fogMin, fogMax);
+            data.NotifyChanged(new Int2(fogMin.X * spacing, fogMin.Y * spacing), new Int2(fogMax.X * spacing, fogMax.Y * spacing), TerrainChangeFlags.Fog);
             return true;
         }
 
@@ -368,18 +394,17 @@ public static class TerrainBrush
         }
     }
 
-    private static void ApplyGrass(TerrainData data, Vector2 center, in TerrainBrushSettings s, float dt, Int2 min, Int2 max)
+    // Paints a density layer (grass or fog) with a sample every spacing terrain samples towards a density
+    private static void ApplyLayer(TerrainData data, Vector2 center, in TerrainBrushSettings s, float dt, byte[] density, int size, int spacing, float targetDensity, Int2 min, Int2 max)
     {
         var rate = 1 - MathF.Exp(-PaintRate * s.Strength * dt);
-        var target = s.Invert ? 0 : Math.Clamp(s.GrassDensity, 0, 1) * 255;
-        var density = data.GetOrCreateGrassDensity(s.GrassLayer);
-        var size = data.GrassResolution;
+        var target = s.Invert ? 0 : Math.Clamp(targetDensity, 0, 1) * 255;
         for (int z = min.Y; z <= max.Y; z++)
         {
             for (int x = min.X; x <= max.X; x++)
             {
-                // Grass sample (x, z) is terrain sample (2x, 2z)
-                var w = Weight(data, center, x * 2, z * 2, s) * rate;
+                // Layer sample (x, z) is terrain sample (spacing x, spacing z)
+                var w = Weight(data, center, x * spacing, z * spacing, s) * rate;
                 if (w <= 1e-4f)
                     continue;
                 ref var value = ref density[z * size + x];

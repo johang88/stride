@@ -79,7 +79,7 @@ public class TerrainTypesEditing : IUITest
             Finish(ctx);
             return;
         }
-        var (usage, painted) = await service.GetDefinitionUsage();
+        var (usage, painted, _) = await service.GetDefinitionUsage();
         Console.WriteLine($"TYPES instances per type {string.Join("/", usage)}, painted grass layers {string.Join("/", painted.Select(x => x ? 1 : 0))}");
 
         // A setting, undone
@@ -118,7 +118,7 @@ public class TerrainTypesEditing : IUITest
         var removedType = Array.FindIndex(usage, x => x > 0);
         var lastType = usage.Length - 1;
         await session.Dispatcher.InvokeAsync(() => tools.SelectedVegetationType = tools.VegetationTypes[removedType]);
-        var removed = await session.Dispatcher.InvokeTask(() => tools.RemoveDefinition(grass: false, confirm: false));
+        var removed = await session.Dispatcher.InvokeTask(() => tools.RemoveDefinition(TerrainDefinitionKind.Vegetation, confirm: false));
         var afterRemove = await WaitForUsage(service, x => x.Instances.Length == typeCount && x.Instances.Sum() == usage.Sum() - usage[removedType]);
         Console.WriteLine($"TYPES removed type {removedType}: {removed}, instances per type {string.Join("/", afterRemove.Instances)}");
         Check(removed && afterRemove.Instances.Sum() == usage.Sum() - usage[removedType]
@@ -163,7 +163,7 @@ public class TerrainTypesEditing : IUITest
             tools.Tool = TerrainBrushTool.Grass;
             tools.SelectedGrassLayer = tools.GrassLayers[removedLayer];
         });
-        var removedGrass = await session.Dispatcher.InvokeTask(() => tools.RemoveDefinition(grass: true, confirm: false));
+        var removedGrass = await session.Dispatcher.InvokeTask(() => tools.RemoveDefinition(TerrainDefinitionKind.Grass, confirm: false));
         var expected = painted.Where((_, i) => i != removedLayer).Append(false).ToArray();
         var grassAfter = await WaitForUsage(service, x => x.GrassPainted.SequenceEqual(expected));
         Console.WriteLine($"TYPES removed grass layer {removedLayer}: {removedGrass}, painted {string.Join("/", grassAfter.GrassPainted.Select(x => x ? 1 : 0))}");
@@ -180,7 +180,7 @@ public class TerrainTypesEditing : IUITest
         Finish(ctx);
     }
 
-    private static async Task<(int[] Instances, bool[] GrassPainted)> WaitForUsage(EditorGameTerrainService service, Func<(int[] Instances, bool[] GrassPainted), bool> condition)
+    private static async Task<(int[] Instances, bool[] GrassPainted, bool[] FogPainted)> WaitForUsage(EditorGameTerrainService service, Func<(int[] Instances, bool[] GrassPainted, bool[] FogPainted), bool> condition)
     {
         var usage = await service.GetDefinitionUsage();
         for (int i = 0; i < 100 && !condition(usage); i++)

@@ -13,6 +13,8 @@ using Stride.Core.Presentation.Commands;
 using Stride.Core.Presentation.ViewModels;
 using Stride.Core.Quantum;
 using Stride.Rendering;
+using Stride.Rendering.VolumetricFog;
+using Stride.Terrain.Fog;
 using Stride.Terrain.Vegetation;
 
 namespace Stride.Terrain.Editor;
@@ -36,8 +38,8 @@ public sealed class TerrainModelItemViewModel
 }
 
 /// <summary>
-/// A grass layer or vegetation type of the target terrain. When the terrain is part of the edited scene, its settings are
-/// edited on the scene asset (undoable); otherwise only its name is known (from the editor game).
+/// A grass layer, vegetation type or fog layer of the target terrain. When the terrain is part of the edited scene, its
+/// settings are edited on the scene asset (undoable); otherwise only its name is known (from the editor game).
 /// </summary>
 public abstract class TerrainDefinitionItemViewModel : DispatcherViewModel
 {
@@ -79,7 +81,7 @@ public abstract class TerrainDefinitionItemViewModel : DispatcherViewModel
     public string DisplayName => $"{Index}: {(string.IsNullOrEmpty(Name) ? "(unnamed)" : Name)}";
 
     /// <summary>
-    /// The model shown in the list (the first one).
+    /// The model shown in the list (the first one; null for a fog layer).
     /// </summary>
     public abstract TerrainModelItemViewModel Thumbnail { get; }
 
@@ -193,6 +195,37 @@ public sealed class TerrainGrassLayerItemViewModel : TerrainDefinitionItemViewMo
         var value = ((TerrainGrassLayer)Definition).Models[index];
         Tools.EditDefinitions($"Remove a plant from {Name}", () => list.Remove(value, new NodeIndex(index)));
     }
+}
+
+/// <summary>
+/// A fog layer of the target terrain (see <see cref="TerrainFogLayer"/>). Its colors are edited in the property grid of the terrain.
+/// </summary>
+public sealed class TerrainFogLayerItemViewModel : TerrainDefinitionItemViewModel
+{
+    public TerrainFogLayerItemViewModel(TerrainToolsViewModel tools, int index, TerrainFogLayer definition, IObjectNode node, string gameName)
+        : base(tools, index, definition, node, gameName)
+    {
+    }
+
+    public override TerrainModelItemViewModel Thumbnail => null;
+
+    public IReadOnlyList<FogLayerHeightMode> HeightModes { get; } = Enum.GetValues<FogLayerHeightMode>();
+
+    /// <summary>
+    /// Extinction per meter where fully painted.
+    /// </summary>
+    public float Density { get => Get<float>(nameof(TerrainFogLayer.Density)); set => Set(nameof(TerrainFogLayer.Density), Math.Clamp(value, 0.0f, 10.0f)); }
+
+    public FogLayerHeightMode HeightMode { get => Get<FogLayerHeightMode>(nameof(TerrainFogLayer.HeightMode)); set => Set(nameof(TerrainFogLayer.HeightMode), value); }
+
+    /// <summary>
+    /// Top of the fog (meters above the ground, or altitude).
+    /// </summary>
+    public float Height { get => Get<float>(nameof(TerrainFogLayer.Height)); set => Set(nameof(TerrainFogLayer.Height), Math.Clamp(value, -10000.0f, 10000.0f)); }
+
+    public float Softness { get => Get<float>(nameof(TerrainFogLayer.Softness)); set => Set(nameof(TerrainFogLayer.Softness), Math.Clamp(value, 0.01f, 1000.0f)); }
+
+    public float NoiseStrength { get => Get<float>(nameof(TerrainFogLayer.NoiseStrength)); set => Set(nameof(TerrainFogLayer.NoiseStrength), Math.Clamp(value, 0.0f, 1.0f)); }
 }
 
 /// <summary>

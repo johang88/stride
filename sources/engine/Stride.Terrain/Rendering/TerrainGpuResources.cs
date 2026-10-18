@@ -9,8 +9,9 @@ using Stride.Graphics;
 namespace Stride.Terrain.Rendering;
 
 /// <summary>
-/// GPU copies of a <see cref="TerrainData"/>: a mip-mapped R16 height map, an R32 splat map and (once the terrain has grass) an
-/// R8 grass density array with a slice per grass layer, kept in sync with region updates.
+/// GPU copies of a <see cref="TerrainData"/>: a mip-mapped R16 height map, an R32 splat map, (once the terrain has grass) an
+/// R8 grass density array with a slice per grass layer and (once it has fog) an RGBA8 fog density map with a channel per fog
+/// layer, kept in sync with region updates.
 /// </summary>
 public sealed class TerrainGpuResources : IDisposable
 {
@@ -62,12 +63,19 @@ public sealed class TerrainGpuResources : IDisposable
     /// </summary>
     public Texture GrassDensity { get; private set; }
 
+    /// <summary>
+    /// Fog density (RGBA8, one channel per fog layer, <see cref="TerrainData.FogResolution"/> texels a side), null until the
+    /// terrain has fog.
+    /// </summary>
+    public Texture FogDensity { get; private set; }
+
     public void Dispose()
     {
         Data.Changed -= OnDataChanged;
         Heightmap.Dispose();
         SplatMap.Dispose();
         GrassDensity?.Dispose();
+        FogDensity?.Dispose();
     }
 
     private void OnDataChanged(object sender, TerrainDataChangedEventArgs e) => MarkDirty(e.Min, e.Max, e.Flags);
@@ -131,6 +139,49 @@ public sealed class TerrainGpuResources : IDisposable
 
         if ((flags & TerrainChangeFlags.Grass) != 0)
             UploadGrass(commandList, min, max);
+
+        if ((flags & TerrainChangeFlags.Fog) != 0)
+            UploadFog(commandList, min, max);
+    }
+
+    private void UploadFog(CommandList commandList, Int2 min, Int2 max)
+    {
+        var size = Data.FogResolution;
+        var hasFog = false;
+        for (int layer = 0; layer < TerrainData.MaxFogLayers; layer++)
+            hasFog |= Data.GetFogDensity(layer) != null;
+        // Once created, the map follows the layers even when none is left (they can be removed)
+        if (!hasFog && FogDensity == null)
+            return;
+
+        if (FogDensity == null)
+        {
+            FogDensity = Texture.New2D(device, size, size, PixelFormat.R8G8B8A8_UNorm, TextureFlags.ShaderResource);
+            FogDensity.Name = "TerrainFogDensity";
+            min = Int2.Zero;
+            max = new Int2(Data.Resolution - 1);
+        }
+
+        // Terrain samples to fog samples, the layers interleaved
+        const int spacing = TerrainData.FogSpacing;
+        var fogMin = new Int2(min.X / spacing, min.Y / spacing);
+        var fogMax = Int2.Min(new Int2((max.X + spacing - 1) / spacing, (max.Y + spacing - 1) / spacing), new Int2(size - 1));
+        var width = fogMax.X - fogMin.X + 1;
+        var height = fogMax.Y - fogMin.Y + 1;
+        var region = new uint[width * height];
+        for (int layer = 0; layer < TerrainData.MaxFogLayers; layer++)
+        {
+            if (Data.GetFogDensity(layer) is not { } density)
+                continue;
+            var shift = layer * 8;
+            for (int z = 0; z < height; z++)
+            {
+                var source = (fogMin.Y + z) * size + fogMin.X;
+                for (int x = 0; x < width; x++)
+                    region[z * width + x] |= (uint)density[source + x] << shift;
+            }
+        }
+        FogDensity.SetData(commandList, (ReadOnlySpan<uint>)region, 0, 0, new ResourceRegion(fogMin.X, fogMin.Y, 0, fogMax.X + 1, fogMax.Y + 1, 1));
     }
 
     private void UploadGrass(CommandList commandList, Int2 min, Int2 max)

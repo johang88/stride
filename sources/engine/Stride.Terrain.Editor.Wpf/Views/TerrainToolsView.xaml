@@ -118,6 +118,17 @@
       </DrawingGroup>
     </DrawingImage.Drawing>
   </DrawingImage>
+  <DrawingImage x:Key="TerrainIcon.Fog">
+    <DrawingImage.Drawing>
+      <DrawingGroup>
+        <GeometryDrawing Brush="#00FFFFFF" Geometry="F1M0,0L16,0 16,16 0,16z" />
+        <GeometryDrawing Brush="#FF424242" Geometry="F1M0.5,15.5L5,8.5 8,12 10.5,9.5 15.5,15.5z" />
+        <GeometryDrawing Geometry="M1,3.5 C3,2 5,5 8,3.5 C11,2 13,5 15,3.5 M1,7 C3,5.5 5,8.5 8,7 C11,5.5 13,8.5 15,7 M2,10.5 C4,9 6,12 9,10.5 C11,9.5 12.5,11 14,10.5">
+          <GeometryDrawing.Pen><Pen Brush="#FF1BA1E2" Thickness="1.3" StartLineCap="Round" EndLineCap="Round" /></GeometryDrawing.Pen>
+        </GeometryDrawing>
+      </DrawingGroup>
+    </DrawingImage.Drawing>
+  </DrawingImage>
   <DrawingImage x:Key="TerrainIcon.ImportHeightmap">
     <DrawingImage.Drawing>
       <DrawingGroup>
@@ -362,6 +373,56 @@
         <TextBlock Text="{sd:Localize Painting}" FontWeight="Bold" Margin="0,6,0,2"/>
         <TextBlock Text="{sd:Localize Density painted (0-1)}"/>
         <sd:NumericTextBox Value="{Binding GrassDensity}" Minimum="0" Maximum="1" SmallChange="0.05" LargeChange="0.25" DecimalPlaces="2" Margin="0,2,0,6"/>
+      </StackPanel>
+      <StackPanel Visibility="{Binding IsFogTool, Converter={sd:VisibleOrCollapsed}}">
+        <DockPanel Margin="0,4,0,2">
+          <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" IsEnabled="{Binding CanEditDefinitions}">
+            <Button Width="26" Height="22" Padding="0" Margin="0,0,3,0" Command="{Binding AddFogLayerCommand}"
+                    ToolTip="{sd:Localize 'Add a fog layer', Context=ToolTip}">
+              <Image Source="{DynamicResource ImageAdd}" Width="16" Height="16"/>
+            </Button>
+            <Button Width="26" Height="22" Padding="0" Command="{Binding RemoveFogLayerCommand}"
+                    ToolTip="{sd:Localize 'Remove the fog layer and its painted density', Context=ToolTip}">
+              <Image Source="{DynamicResource ImageRemove}" Width="16" Height="16"/>
+            </Button>
+          </StackPanel>
+          <TextBlock Text="{sd:Localize Fog layers}" FontWeight="Bold" VerticalAlignment="Center"/>
+        </DockPanel>
+        <ListBox ItemsSource="{Binding FogLayers}" SelectedItem="{Binding SelectedFogLayer}" DisplayMemberPath="DisplayName"
+                 MaxHeight="120" Margin="0,2,0,4" ScrollViewer.HorizontalScrollBarVisibility="Disabled"/>
+        <TextBlock Text="{sd:Localize 'The terrain is not part of this scene: edit its fog layers in the scene that holds it.'}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"
+                   Visibility="{Binding CanEditDefinitions, Converter={sd:VisibleOrCollapsed}, ConverterParameter={sd:False}}"/>
+        <TextBlock Text="{sd:Localize 'No fog layer yet: add one, then paint it. The fog shows where the scene has a volumetric fog component.'}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"
+                   Visibility="{Binding FogLayers.Count, Converter={sd:Chained {sd:NumericToBool}, {sd:InvertBool}, {sd:VisibleOrCollapsed}}}"/>
+
+        <!-- The selected layer -->
+        <StackPanel DataContext="{Binding SelectedFogLayer}" Visibility="{Binding CanEdit, Converter={sd:VisibleOrCollapsed}, FallbackValue={sd:Collapsed}}" Margin="8,0,0,4">
+          <TextBlock Text="{sd:Localize Name}"/>
+          <TextBox Text="{Binding Name, UpdateSourceTrigger=LostFocus}" Margin="0,2,0,6"/>
+          <TextBlock Text="{sd:Localize 'Density (per meter, fully painted)'}" TextWrapping="Wrap"/>
+          <sd:NumericTextBox Value="{Binding Density}" Minimum="0" Maximum="10" SmallChange="0.005" LargeChange="0.05" DecimalPlaces="3" Margin="0,2,0,6"
+                             ToolTip="{sd:Localize 'Light crossing d meters of fog keeps exp(-density × d) of its intensity: 0.1 lets a third through 10 m', Context=ToolTip}"/>
+          <TextBlock Text="{sd:Localize Top}"/>
+          <ComboBox ItemsSource="{Binding HeightModes}" SelectedItem="{Binding HeightMode}" Margin="0,2,0,2">
+            <ComboBox.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding Converter={sd:EnumToDisplayName}}"/>
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+          <sd:NumericTextBox Value="{Binding Height}" Minimum="-10000" Maximum="10000" SmallChange="0.5" LargeChange="5" DecimalPlaces="1" Margin="0,2,0,6"
+                             ToolTip="{sd:Localize 'Height of the fog above the ground, or the altitude it fills the painted valleys up to (meters)', Context=ToolTip}"/>
+          <TextBlock Text="{sd:Localize Softness of the top (m)}"/>
+          <sd:NumericTextBox Value="{Binding Softness}" Minimum="0.01" Maximum="1000" SmallChange="0.5" LargeChange="2" DecimalPlaces="2" Margin="0,2,0,6"/>
+          <TextBlock Text="{sd:Localize Noise (0-1)}"/>
+          <sd:NumericTextBox Value="{Binding NoiseStrength}" Minimum="0" Maximum="1" SmallChange="0.05" LargeChange="0.25" DecimalPlaces="2" Margin="0,2,0,6"
+                             ToolTip="{sd:Localize 'How much the drifting noise of the scene fog breaks the layer into wisps', Context=ToolTip}"/>
+          <TextBlock Text="{sd:Localize 'Colors: select the terrain to edit them in the property grid.'}" TextWrapping="Wrap" Opacity="0.7" Margin="0,0,0,6"/>
+        </StackPanel>
+
+        <TextBlock Text="{sd:Localize Painting}" FontWeight="Bold" Margin="0,6,0,2"/>
+        <TextBlock Text="{sd:Localize Density painted (0-1)}"/>
+        <sd:NumericTextBox Value="{Binding FogDensity}" Minimum="0" Maximum="1" SmallChange="0.05" LargeChange="0.25" DecimalPlaces="2" Margin="0,2,0,6"/>
       </StackPanel>
       <StackPanel Visibility="{Binding ShowsTerrainLayers, Converter={sd:VisibleOrCollapsed}}">
         <TextBlock Text="{Binding SelectedLayer.DisplayName, StringFormat=Terrain layer: {0}}" TextTrimming="CharacterEllipsis"/>

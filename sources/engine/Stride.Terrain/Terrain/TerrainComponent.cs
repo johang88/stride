@@ -89,6 +89,14 @@ public sealed class TerrainComponent : ActivableEntityComponent
     public List<TerrainVegetationType> Vegetation { get; } = new();
 
     /// <summary>
+    /// The fog painted on the terrain. A layer's position is its density channel in the terrain data
+    /// (at most <see cref="TerrainData.MaxFogLayers"/>).
+    /// </summary>
+    [DataMember(90)]
+    [MemberCollection(NotNullItems = true)]
+    public List<Fog.TerrainFogLayer> Fog { get; } = new();
+
+    /// <summary>
     /// Draws the vegetation as impostors at any distance (to check them in the editor).
     /// </summary>
     [DataMemberIgnore]

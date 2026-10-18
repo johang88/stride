@@ -31,6 +31,7 @@ using Stride.Rendering;
 using Stride.Terrain;
 using Stride.Terrain.Assets;
 using Stride.Terrain.Editing;
+using Stride.Terrain.Fog;
 using Stride.Terrain.Vegetation;
 
 namespace Stride.Terrain.Editor;
@@ -90,15 +91,19 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
     private readonly ObservableList<TerrainBrushItemViewModel> brushes = new();
     private readonly ObservableList<TerrainGrassLayerItemViewModel> grassLayers = new();
     private readonly ObservableList<TerrainVegetationTypeItemViewModel> vegetationTypes = new();
+    private readonly ObservableList<TerrainFogLayerItemViewModel> fogLayers = new();
     private TerrainGrassLayerItemViewModel selectedGrassLayer;
+    private TerrainFogLayerItemViewModel selectedFogLayer;
     private TerrainVegetationTypeItemViewModel selectedVegetationType;
     // The target terrain's entity, and the grass layer and vegetation type names of its game-side component
     private Guid? targetEntityId;
     private List<string> gameGrassNames = new();
     private List<string> gameVegetationNames = new();
+    private List<string> gameFogNames = new();
     private bool canEditDefinitions;
     private bool definitionsRefreshQueued;
     private float grassDensity = 1.0f;
+    private float fogDensity = 1.0f;
     private float vegetationDensity = 2.0f;
     private float vegetationSpacing = 3.0f;
     private float vegetationMinScale = 0.8f;
@@ -125,9 +130,11 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         FillGrassFromLayerCommand = new AnonymousCommand(ServiceProvider, () => service?.FillGrassFromLayer(selectedGrassLayer?.Index ?? -1, selectedLayer?.Index ?? 0, grassDensity));
         OpenBrushFolderCommand = new AnonymousCommand(ServiceProvider, OpenBrushFolder);
         AddGrassLayerCommand = new AnonymousTaskCommand(ServiceProvider, PickGrassLayer);
-        RemoveGrassLayerCommand = new AnonymousTaskCommand(ServiceProvider, () => RemoveDefinition(grass: true));
+        RemoveGrassLayerCommand = new AnonymousTaskCommand(ServiceProvider, () => RemoveDefinition(TerrainDefinitionKind.Grass));
         AddVegetationTypesCommand = new AnonymousTaskCommand(ServiceProvider, PickVegetationTypes);
-        RemoveVegetationTypeCommand = new AnonymousTaskCommand(ServiceProvider, () => RemoveDefinition(grass: false));
+        RemoveVegetationTypeCommand = new AnonymousTaskCommand(ServiceProvider, () => RemoveDefinition(TerrainDefinitionKind.Vegetation));
+        AddFogLayerCommand = new AnonymousTaskCommand(ServiceProvider, AddFogLayerChecked);
+        RemoveFogLayerCommand = new AnonymousTaskCommand(ServiceProvider, () => RemoveDefinition(TerrainDefinitionKind.Fog));
         SelectTerrainCommand = new AnonymousCommand(ServiceProvider, SelectTerrain);
         RefreshBrushes();
 
@@ -184,7 +191,7 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
 
     public IReadOnlyList<TerrainBrushTool> Tools { get; } = Enum.GetValues<TerrainBrushTool>();
 
-    public TerrainBrushTool Tool { get => tool; set => SetValue(ref tool, value, OnToolChanged, nameof(Tool), nameof(IsPaintTool), nameof(IsFlattenTool), nameof(IsNoiseTool), nameof(IsGrassTool), nameof(IsVegetationTool), nameof(ShowsTerrainLayers), nameof(Hint)); }
+    public TerrainBrushTool Tool { get => tool; set => SetValue(ref tool, value, OnToolChanged, nameof(Tool), nameof(IsPaintTool), nameof(IsFlattenTool), nameof(IsNoiseTool), nameof(IsGrassTool), nameof(IsVegetationTool), nameof(IsFogTool), nameof(ShowsTerrainLayers), nameof(Hint)); }
 
     public bool IsPaintTool => tool == TerrainBrushTool.Paint;
 
@@ -195,6 +202,8 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
     public bool IsGrassTool => tool == TerrainBrushTool.Grass;
 
     public bool IsVegetationTool => tool == TerrainBrushTool.Vegetation;
+
+    public bool IsFogTool => tool == TerrainBrushTool.Fog;
 
     /// <summary>
     /// Whether the terrain material layers are listed (painting, and filling grass from a layer).
@@ -217,6 +226,28 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
     /// Density (0-1) the grass tool paints towards (and fills with).
     /// </summary>
     public float GrassDensity { get => grassDensity; set => SetValue(ref grassDensity, Math.Clamp(value, 0.0f, 1.0f), PushSettings); }
+
+    /// <summary>
+    /// The fog layers of the target terrain (its fog density channels).
+    /// </summary>
+    public IReadOnlyObservableList<TerrainFogLayerItemViewModel> FogLayers => fogLayers;
+
+    public TerrainFogLayerItemViewModel SelectedFogLayer { get => selectedFogLayer; set => SetValue(ref selectedFogLayer, value, PushSettings); }
+
+    /// <summary>
+    /// Density (0-1) the fog tool paints towards.
+    /// </summary>
+    public float FogDensity { get => fogDensity; set => SetValue(ref fogDensity, Math.Clamp(value, 0.0f, 1.0f), PushSettings); }
+
+    /// <summary>
+    /// Adds a fog layer.
+    /// </summary>
+    public ICommandBase AddFogLayerCommand { get; }
+
+    /// <summary>
+    /// Removes the selected fog layer and its painted density (the later layers move down one).
+    /// </summary>
+    public ICommandBase RemoveFogLayerCommand { get; }
 
     /// <summary>
     /// The vegetation types of the target terrain.
@@ -328,6 +359,7 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         TerrainBrushTool.Paint => "Drag to paint the layer, Shift to erase it. Ctrl+click picks the layer.",
         TerrainBrushTool.Hole => "Drag to cut holes, Shift to fill them.",
         TerrainBrushTool.Grass => "Drag to paint the grass layer towards the density, Shift to erase it.",
+        TerrainBrushTool.Fog => "Drag to paint the fog layer towards the density, Shift to erase it. The scene needs a volumetric fog component and the graphics compositor volumetric fog.",
         TerrainBrushTool.Vegetation => "Drag to place the selected types up to the density (Ctrl or Shift click types to place a mix), Shift to remove them.",
         _ => "",
     } + " [ and ] change the radius" + (IsCustomBrush ? ", Ctrl+[ and Ctrl+] rotate the brush." : ".");
@@ -368,8 +400,9 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         base.Destroy();
     }
 
-    internal void OnTargetChanged(string name, Guid? entityId, List<string> layerNames, string materialUrl, List<string> grassNames, List<string> vegetationNames)
+    internal void OnTargetChanged(string name, Guid? entityId, List<string> layerNames, string materialUrl, List<string> grassNames, List<string> vegetationNames, List<string> fogNames)
     {
+        gameFogNames = fogNames;
         TargetName = name;
         targetLayerNames = layerNames;
         targetMaterialUrl = materialUrl;
@@ -419,6 +452,10 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         var typeDefinitions = component?.Vegetation.Cast<object>().ToList() ?? Enumerable.Repeat<object>(null, gameVegetationNames.Count).ToList();
         SelectedVegetationType = Sync(vegetationTypes, typeDefinitions, selectedVegetationType, (i, definition) =>
             new TerrainVegetationTypeItemViewModel(this, i, (TerrainVegetationType)definition, definition != null ? nodes.GetNode(definition) : null, i < gameVegetationNames.Count ? gameVegetationNames[i] : null));
+
+        var fogDefinitions = component?.Fog.Cast<object>().ToList() ?? Enumerable.Repeat<object>(null, gameFogNames.Count).ToList();
+        SelectedFogLayer = Sync(fogLayers, fogDefinitions, selectedFogLayer, (i, definition) =>
+            new TerrainFogLayerItemViewModel(this, i, (TerrainFogLayer)definition, definition != null ? nodes.GetNode(definition) : null, i < gameFogNames.Count ? gameFogNames[i] : null));
     }
 
     private static T Sync<T>(ObservableList<T> items, List<object> definitions, T selected, Func<int, object, T> create) where T : TerrainDefinitionItemViewModel
@@ -482,10 +519,44 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
         return name.Length > 0 ? char.ToUpperInvariant(name[0]) + name[1..] : asset.Name;
     }
 
-    private IObjectNode GetDefinitionList(bool grass)
+    private IObjectNode GetDefinitionList(TerrainDefinitionKind kind)
     {
         var component = FindAssetComponent();
-        return component != null ? editor.Session.AssetNodeContainer.GetNode(component)[grass ? nameof(TerrainComponent.Grass) : nameof(TerrainComponent.Vegetation)].Target : null;
+        var member = kind switch
+        {
+            TerrainDefinitionKind.Grass => nameof(TerrainComponent.Grass),
+            TerrainDefinitionKind.Fog => nameof(TerrainComponent.Fog),
+            _ => nameof(TerrainComponent.Vegetation),
+        };
+        return component != null ? editor.Session.AssetNodeContainer.GetNode(component)[member].Target : null;
+    }
+
+    private async Task AddFogLayerChecked()
+    {
+        if (!CanEditDefinitions)
+            return;
+        if (fogLayers.Count >= TerrainData.MaxFogLayers)
+        {
+            await ServiceProvider.Get<IDialogService>().MessageBoxAsync($"A terrain has at most {TerrainData.MaxFogLayers} fog layers.", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        AddFogLayer();
+    }
+
+    /// <summary>
+    /// Adds a fog layer to the target (an undoable change of the scene) and selects it.
+    /// </summary>
+    /// <returns>Whether it was added (the target is part of the scene and has room for a layer).</returns>
+    public bool AddFogLayer(TerrainFogLayer layer = null)
+    {
+        var list = GetDefinitionList(TerrainDefinitionKind.Fog);
+        if (list == null || fogLayers.Count >= TerrainData.MaxFogLayers)
+            return false;
+        layer ??= new TerrainFogLayer { Name = fogLayers.Count == 0 ? "Ground mist" : $"Fog {fogLayers.Count + 1}" };
+        EditDefinitions($"Add fog layer {layer.Name}", () => list.Add(layer));
+        RefreshDefinitions();
+        SelectedFogLayer = fogLayers.LastOrDefault() ?? SelectedFogLayer;
+        return true;
     }
 
     private async Task PickGrassLayer()
@@ -506,7 +577,7 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
     /// <returns>Whether it was added (the target is part of the scene, has room for a layer, and models were given).</returns>
     public bool AddGrassLayer(IReadOnlyList<AssetViewModel> models)
     {
-        var list = GetDefinitionList(grass: true);
+        var list = GetDefinitionList(TerrainDefinitionKind.Grass);
         if (list == null || models.Count == 0 || grassLayers.Count >= TerrainData.MaxGrassLayers)
             return false;
 
@@ -532,7 +603,7 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
     /// <returns>Whether they were added (the target is part of the scene, and models were given).</returns>
     public bool AddVegetationTypes(IReadOnlyList<AssetViewModel> picked)
     {
-        var list = GetDefinitionList(grass: false);
+        var list = GetDefinitionList(TerrainDefinitionKind.Vegetation);
         if (list == null || picked.Count == 0)
             return false;
 
@@ -551,40 +622,57 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
     }
 
     /// <summary>
-    /// Removes the selected grass layer or vegetation type, with its data (painted density, placed instances), as one undoable
-    /// action: the later layers or types move down one, in the component and in the data.
+    /// Removes the selected grass layer, vegetation type or fog layer, with its data (painted density, placed instances), as one
+    /// undoable action: the later layers or types move down one, in the component and in the data.
     /// </summary>
-    /// <param name="grass">The selected grass layer, otherwise the selected vegetation type.</param>
+    /// <param name="kind">Which selection to remove.</param>
     /// <param name="confirm">Whether to ask first when it has data.</param>
     /// <returns>Whether it was removed.</returns>
-    public async Task<bool> RemoveDefinition(bool grass, bool confirm = true)
+    public async Task<bool> RemoveDefinition(TerrainDefinitionKind kind, bool confirm = true)
     {
-        TerrainDefinitionItemViewModel item = grass ? selectedGrassLayer : selectedVegetationType;
-        var list = GetDefinitionList(grass);
+        TerrainDefinitionItemViewModel item = kind switch
+        {
+            TerrainDefinitionKind.Grass => selectedGrassLayer,
+            TerrainDefinitionKind.Fog => selectedFogLayer,
+            _ => selectedVegetationType,
+        };
+        var list = GetDefinitionList(kind);
         if (item?.Definition == null || list == null || service == null)
             return false;
 
-        var (instances, painted) = await service.GetDefinitionUsage();
-        var usage = grass
+        var (instances, grassPainted, fogPainted) = await service.GetDefinitionUsage();
+        var painted = kind == TerrainDefinitionKind.Fog ? fogPainted : grassPainted;
+        var usage = kind != TerrainDefinitionKind.Vegetation
             ? (item.Index < painted.Length && painted[item.Index] ? " Its painted density is removed too." : "")
             : (item.Index < instances.Length && instances[item.Index] > 0 ? $" Its {instances[item.Index]:N0} placed instances are removed too." : "");
-        var kind = grass ? "grass layer" : "vegetation type";
-        if (confirm && usage.Length > 0 && await ServiceProvider.Get<IDialogService>().MessageBoxAsync($"Remove the {kind} {item.Name}?{usage}", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        var kindName = kind switch
+        {
+            TerrainDefinitionKind.Grass => "grass layer",
+            TerrainDefinitionKind.Fog => "fog layer",
+            _ => "vegetation type",
+        };
+        if (confirm && usage.Length > 0 && await ServiceProvider.Get<IDialogService>().MessageBoxAsync($"Remove the {kindName} {item.Name}?{usage}", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
             return false;
 
         var index = item.Index;
         var removed = false;
-        EditDefinitions($"Remove {kind} {item.Name}", () =>
+        var count = kind switch
+        {
+            TerrainDefinitionKind.Grass => grassLayers.Count,
+            TerrainDefinitionKind.Fog => fogLayers.Count,
+            _ => vegetationTypes.Count,
+        };
+        EditDefinitions($"Remove {kindName} {item.Name}", () =>
         {
             // Without the data, only an unused last layer or type goes (removing another would renumber the data's)
-            var last = index == (grass ? grassLayers.Count : vegetationTypes.Count) - 1;
-            if (!service.RemoveDefinitionData(grass, index) && (usage.Length > 0 || !last))
+            var last = index == count - 1;
+            if (!service.RemoveDefinitionData(kind, index) && (usage.Length > 0 || !last))
                 return;
             list.Remove(item.Definition, new NodeIndex(index));
             removed = true;
         });
         if (!removed && confirm)
-            await ServiceProvider.Get<IDialogService>().MessageBoxAsync($"The terrain data can't be edited, so the {kind} can't be removed without breaking it.", MessageBoxButton.OK, MessageBoxImage.Warning);
+            await ServiceProvider.Get<IDialogService>().MessageBoxAsync($"The terrain data can't be edited, so the {kindName} can't be removed without breaking it.", MessageBoxButton.OK, MessageBoxImage.Warning);
         RefreshDefinitions();
         return removed;
     }
@@ -740,6 +828,8 @@ public sealed class TerrainToolsViewModel : EntityHierarchyEditorToolViewModel
             Rotation = MathUtil.DegreesToRadians(rotation),
             GrassLayer = selectedGrassLayer?.Index ?? -1,
             GrassDensity = grassDensity,
+            FogLayer = selectedFogLayer?.Index ?? -1,
+            FogDensity = fogDensity,
             VegetationType = selectedVegetationType?.Index ?? -1,
             VegetationTypes = SelectedVegetationTypeItems.Count > 1
                 ? SelectedVegetationTypeItems.OfType<TerrainVegetationTypeItemViewModel>().Where(vegetationTypes.Contains).Select(x => x.Index).Order().ToArray()

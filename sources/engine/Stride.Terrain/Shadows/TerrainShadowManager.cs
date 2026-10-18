@@ -151,6 +151,20 @@ public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
         return (texture, new Vector4(position.X, position.Z, 1.0f / size, 1.0f), new Vector4(bakedMinHeight + position.Y, bakedHeightRange, MaxDistance, PenumbraScale), filter);
     }
 
+    /// <summary>
+    /// The shadows of a terrain for the volumetric fog: the texture (x = normalized lit height, y = normalized occluder distance),
+    /// the local heights of 0 and 1, and the penumbra width per unit of normalized occluder distance. False when not ready.
+    /// </summary>
+    internal bool TryGetFogShadow(TerrainRenderObject terrain, out Texture shadowTexture, out float minHeight, out float heightRange, out float penumbra)
+    {
+        var ready = IsReady && terrain == Active;
+        shadowTexture = ready ? texture : null;
+        minHeight = bakedMinHeight;
+        heightRange = bakedHeightRange;
+        penumbra = MaxDistance * PenumbraScale;
+        return ready;
+    }
+
     void IRenderViewExtension.Collect(RenderContext context)
     {
     }

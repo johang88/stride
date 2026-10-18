@@ -29,7 +29,11 @@ public enum TerrainChangeFlags
     /// The vegetation instances (the region covers the whole terrain).
     /// </summary>
     Vegetation = 8,
-    All = Heights | Splat | Grass | Vegetation,
+    /// <summary>
+    /// Fog density (the region is in terrain samples, see <see cref="TerrainData.FogResolution"/>).
+    /// </summary>
+    Fog = 16,
+    All = Heights | Splat | Grass | Vegetation | Fog,
 }
 
 /// <summary>
@@ -68,7 +72,7 @@ public struct TerrainVegetationInstance
 public readonly record struct TerrainDataChangedEventArgs(Int2 Min, Int2 Max, TerrainChangeFlags Flags);
 
 /// <summary>
-/// The height and material-weight samples of a terrain, its grass density and its vegetation instances.
+/// The height and material-weight samples of a terrain, its grass and fog density and its vegetation instances.
 /// </summary>
 /// <remarks>
 /// Samples are laid out on a square grid of <see cref="Resolution"/> x <see cref="Resolution"/> points spaced by <see cref="CellSize"/>.
@@ -81,16 +85,27 @@ public readonly record struct TerrainDataChangedEventArgs(Int2 Min, Int2 Max, Te
 [ContentSerializer(typeof(DataContentSerializer<TerrainData>))]
 public sealed class TerrainData
 {
-    private const int SerializationVersion = 2;
+    private const int SerializationVersion = 3;
 
     /// <summary>
     /// Number of grass density channels (grass layers of <see cref="TerrainComponent.Grass"/>).
     /// </summary>
     public const int MaxGrassLayers = 8;
 
+    /// <summary>
+    /// Number of fog density channels (fog layers of <see cref="TerrainComponent.Fog"/>).
+    /// </summary>
+    public const int MaxFogLayers = 4;
+
+    /// <summary>
+    /// Terrain samples per fog density sample along each side.
+    /// </summary>
+    public const int FogSpacing = 4;
+
     private ushort[] heights;
     private uint[] splat;
     private byte[][] grassDensity = new byte[MaxGrassLayers][];
+    private byte[][] fogDensity = new byte[MaxFogLayers][];
     private List<TerrainVegetationInstance> vegetation = new();
     private float minHeight;
     private float maxHeight;
@@ -206,6 +221,63 @@ public sealed class TerrainData
     }
 
     /// <summary>
+    /// Number of fog density samples along each side: one every <see cref="FogSpacing"/> terrain samples.
+    /// </summary>
+    public int FogResolution => (Resolution - 1) / FogSpacing + 1;
+
+    /// <summary>
+    /// Distance in meters between two fog density samples.
+    /// </summary>
+    public float FogCellSize => CellSize * FogSpacing;
+
+    /// <summary>
+    /// The density samples (0-255, row-major) of a fog layer, or null when nothing was painted on it.
+    /// </summary>
+    public byte[] GetFogDensity(int layer) => (uint)layer < MaxFogLayers ? fogDensity[layer] : null;
+
+    /// <summary>
+    /// The density samples of a fog layer, allocated (empty) on first use.
+    /// </summary>
+    public byte[] GetOrCreateFogDensity(int layer)
+    {
+        if ((uint)layer >= MaxFogLayers)
+            throw new ArgumentOutOfRangeException(nameof(layer));
+        return fogDensity[layer] ??= new byte[FogResolution * FogResolution];
+    }
+
+    /// <summary>
+    /// Removes the density of a fog layer and moves the later layers down one, as when the layer is removed from
+    /// <see cref="TerrainComponent.Fog"/>.
+    /// </summary>
+    /// <returns>The removed samples (null if the layer had none), for <see cref="InsertFogLayer"/>.</returns>
+    public byte[] RemoveFogLayer(int layer)
+    {
+        if ((uint)layer >= MaxFogLayers)
+            throw new ArgumentOutOfRangeException(nameof(layer));
+        var removed = fogDensity[layer];
+        Array.Copy(fogDensity, layer + 1, fogDensity, layer, MaxFogLayers - layer - 1);
+        fogDensity[MaxFogLayers - 1] = null;
+        NotifyChanged(Int2.Zero, new Int2(Resolution - 1), TerrainChangeFlags.Fog);
+        return removed;
+    }
+
+    /// <summary>
+    /// Inserts the density of a fog layer and moves the later layers up one (the last one is dropped).
+    /// </summary>
+    /// <param name="layer">The layer index.</param>
+    /// <param name="samples">The samples (<see cref="FogResolution"/> squared), or null for none.</param>
+    public void InsertFogLayer(int layer, byte[] samples)
+    {
+        if ((uint)layer >= MaxFogLayers)
+            throw new ArgumentOutOfRangeException(nameof(layer));
+        if (samples != null && samples.Length != FogResolution * FogResolution)
+            throw new ArgumentException("The samples don't match the fog resolution.", nameof(samples));
+        Array.Copy(fogDensity, layer, fogDensity, layer + 1, MaxFogLayers - layer - 1);
+        fogDensity[layer] = samples;
+        NotifyChanged(Int2.Zero, new Int2(Resolution - 1), TerrainChangeFlags.Fog);
+    }
+
+    /// <summary>
     /// Removes the instances of a vegetation type and renumbers those of the later types, as when the type is removed from
     /// <see cref="TerrainComponent.Vegetation"/>.
     /// </summary>
@@ -252,21 +324,24 @@ public sealed class TerrainData
     }
 
     /// <summary>
-    /// Creates a copy of the samples, grass and vegetation (the material reference is shared).
+    /// Creates a copy of the samples, grass, fog and vegetation (the material reference is shared).
     /// </summary>
     public TerrainData Clone()
     {
         var clone = new TerrainData(Resolution, CellSize, minHeight, maxHeight) { Material = Material };
         Array.Copy(heights, clone.heights, heights.Length);
         Array.Copy(splat, clone.splat, splat.Length);
-        CopyVegetationFrom(this, clone);
+        CopyLayersFrom(this, clone);
         return clone;
     }
 
-    private static void CopyVegetationFrom(TerrainData source, TerrainData target)
+    // Grass and fog density, vegetation instances
+    private static void CopyLayersFrom(TerrainData source, TerrainData target)
     {
         for (int layer = 0; layer < MaxGrassLayers; layer++)
             target.grassDensity[layer] = (byte[])source.grassDensity[layer]?.Clone();
+        for (int layer = 0; layer < MaxFogLayers; layer++)
+            target.fogDensity[layer] = (byte[])source.fogDensity[layer]?.Clone();
         target.vegetation = new List<TerrainVegetationInstance>(source.vegetation);
     }
 
@@ -283,7 +358,7 @@ public sealed class TerrainData
             for (int i = 0; i < heights.Length; i++)
                 heights[i] = Quantize(other.Dequantize(other.heights[i]));
         Array.Copy(other.splat, splat, splat.Length);
-        CopyVegetationFrom(other, this);
+        CopyLayersFrom(other, this);
         NotifyChanged(Int2.Zero, new Int2(Resolution - 1), TerrainChangeFlags.All);
     }
 
@@ -522,7 +597,7 @@ public sealed class TerrainData
             stream.Serialize(MemoryMarshal.AsBytes(obj.heights.AsSpan()));
             stream.Serialize(MemoryMarshal.AsBytes(obj.splat.AsSpan()));
 
-            // Grass layers that have density, then the vegetation instances
+            // Grass layers that have density, the vegetation instances, then the fog layers that have density
             var grassLayers = 0;
             for (int layer = 0; layer < MaxGrassLayers; layer++)
             {
@@ -544,6 +619,22 @@ public sealed class TerrainData
             if (mode == ArchiveMode.Deserialize)
                 obj.vegetation = new List<TerrainVegetationInstance>(new TerrainVegetationInstance[instanceCount]);
             stream.Serialize(MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(obj.vegetation)));
+
+            var fogLayers = 0;
+            for (int layer = 0; layer < MaxFogLayers; layer++)
+            {
+                if (obj.fogDensity[layer] != null)
+                    fogLayers |= 1 << layer;
+            }
+            stream.Serialize(ref fogLayers);
+            for (int layer = 0; layer < MaxFogLayers; layer++)
+            {
+                if ((fogLayers & (1 << layer)) == 0)
+                    continue;
+                if (mode == ArchiveMode.Deserialize)
+                    obj.fogDensity[layer] = new byte[obj.FogResolution * obj.FogResolution];
+                stream.Serialize(obj.fogDensity[layer].AsSpan());
+            }
         }
     }
 }

@@ -14,14 +14,15 @@ namespace Stride.Terrain;
 /// <remarks>
 /// Layout: "SDTD" magic, version, resolution, cell size, min/max height, then the heights (row-delta encoded),
 /// the packed splat samples, a mask of the grass layers that have density followed by their density samples,
-/// and the vegetation instances; each block Brotli-compressed with a length prefix.
+/// the vegetation instances, and a mask of the fog layers that have density followed by their density samples; each block
+/// Brotli-compressed with a length prefix.
 /// </remarks>
 public static class TerrainDataFile
 {
     public const string Extension = ".sdterraindata";
 
     private const uint Magic = 0x44544453; // "SDTD"
-    private const int Version = 2;
+    private const int Version = 3;
 
     public static void Write(string path, TerrainData data)
     {
@@ -79,6 +80,19 @@ public static class TerrainDataFile
 
         writer.Write(data.Vegetation.Count);
         WriteBlock(writer, MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(data.Vegetation)));
+
+        var fogLayers = 0;
+        for (int layer = 0; layer < TerrainData.MaxFogLayers; layer++)
+        {
+            if (data.GetFogDensity(layer) != null)
+                fogLayers |= 1 << layer;
+        }
+        writer.Write(fogLayers);
+        for (int layer = 0; layer < TerrainData.MaxFogLayers; layer++)
+        {
+            if (data.GetFogDensity(layer) is { } density)
+                WriteBlock(writer, density);
+        }
     }
 
     public static TerrainData Read(string path)
@@ -126,6 +140,13 @@ public static class TerrainDataFile
         var instanceCount = reader.ReadInt32();
         data.Vegetation.AddRange(new TerrainVegetationInstance[instanceCount]);
         ReadBlock(reader, MemoryMarshal.AsBytes(CollectionsMarshal.AsSpan(data.Vegetation)));
+
+        var fogLayers = reader.ReadInt32();
+        for (int layer = 0; layer < TerrainData.MaxFogLayers; layer++)
+        {
+            if ((fogLayers & (1 << layer)) != 0)
+                ReadBlock(reader, data.GetOrCreateFogDensity(layer));
+        }
         return data;
     }
 
@@ -159,26 +180,32 @@ public static class TerrainDataFile
             }
         }
 
-        // Grass density by its position (nearest sample), vegetation as is (positions are in meters)
-        var grassSize = result.GrassResolution;
+        // Grass and fog density by position (nearest sample), vegetation as is (positions are in meters)
         for (int layer = 0; layer < TerrainData.MaxGrassLayers; layer++)
         {
-            if (source.GetGrassDensity(layer) is not { } density)
-                continue;
-            var target = result.GetOrCreateGrassDensity(layer);
-            var sourceSize = source.GrassResolution;
-            for (int z = 0; z < grassSize; z++)
-            {
-                for (int x = 0; x < grassSize; x++)
-                {
-                    var sx = Math.Clamp((int)MathF.Round(x * result.GrassCellSize / source.GrassCellSize), 0, sourceSize - 1);
-                    var sz = Math.Clamp((int)MathF.Round(z * result.GrassCellSize / source.GrassCellSize), 0, sourceSize - 1);
-                    target[z * grassSize + x] = density[sz * sourceSize + sx];
-                }
-            }
+            if (source.GetGrassDensity(layer) is { } density)
+                ResampleNearest(density, source.GrassResolution, source.GrassCellSize, result.GetOrCreateGrassDensity(layer), result.GrassResolution, result.GrassCellSize);
+        }
+        for (int layer = 0; layer < TerrainData.MaxFogLayers; layer++)
+        {
+            if (source.GetFogDensity(layer) is { } density)
+                ResampleNearest(density, source.FogResolution, source.FogCellSize, result.GetOrCreateFogDensity(layer), result.FogResolution, result.FogCellSize);
         }
         result.Vegetation.AddRange(source.Vegetation);
         return result;
+    }
+
+    private static void ResampleNearest(byte[] source, int sourceSize, float sourceCellSize, byte[] target, int targetSize, float targetCellSize)
+    {
+        for (int z = 0; z < targetSize; z++)
+        {
+            for (int x = 0; x < targetSize; x++)
+            {
+                var sx = Math.Clamp((int)MathF.Round(x * targetCellSize / sourceCellSize), 0, sourceSize - 1);
+                var sz = Math.Clamp((int)MathF.Round(z * targetCellSize / sourceCellSize), 0, sourceSize - 1);
+                target[z * targetSize + x] = source[sz * sourceSize + sx];
+            }
+        }
     }
 
     private static void WriteBlock(BinaryWriter writer, ReadOnlySpan<byte> data)
