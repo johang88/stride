@@ -69,12 +69,16 @@ namespace Stride.Terrain
             return (positionWS.xz - TerrainVTRegion.xy) * TerrainVTRegion.z;
         }
 
-        // Desired (fractional) mip of the virtual texture from the screen derivatives of the virtual UV
+        // Desired (fractional) mip of the virtual texture from the screen derivatives of the virtual UV. Anisotropic: seen at a
+        // grazing angle, the mip follows the short axis of the pixel footprint (up to twice finer than the long axis would
+        // give), the anisotropic filter covering the long axis (within the page borders), so the ground stays sharp
         float TerrainVTComputeMip(float2 dVuvDx, float2 dVuvDy)
         {
             float2 dx = dVuvDx * TerrainVTParams.w;
             float2 dy = dVuvDy * TerrainVTParams.w;
-            float d = max(dot(dx, dx), dot(dy, dy));
+            float lengthX = dot(dx, dx);
+            float lengthY = dot(dy, dy);
+            float d = max(min(lengthX, lengthY), max(lengthX, lengthY) * 0.25);
             return 0.5 * log2(max(d, 1e-10)) + TerrainVTParams.y;
         }
 

@@ -93,6 +93,16 @@ namespace Stride.Terrain
             return float2(n.x * 0.8 + n.y * 0.6, -n.x * 0.6 + n.y * 0.8);
         }
 
+        // Scale of the far sample of a layer
+        static const float TerrainFarScale = 0.21;
+
+        // How much the far sample replaces the color of a layer, from the size of a pixel in texture repetitions
+        float TerrainFarAmount(float2 dUvDx, float2 dUvDy, uint layer)
+        {
+            float footprint = max(length(dUvDx), length(dUvDy));
+            return saturate((footprint - 0.004) / 0.02) * 0.55 * saturate(TerrainLayerVariations[layer].x * 2.0);
+        }
+
         float4 TerrainSampleAlbedoHeight(uint layer, float2 uv, float2 dUvDx, float2 dUvDy, float amount)
         {
             float4 value = TerrainAlbedoHeightArray.SampleGrad(TerrainLayerSampler, float3(uv, (float)layer), dUvDx, dUvDy);
@@ -100,6 +110,16 @@ namespace Stride.Terrain
             {
                 float4 variation = TerrainAlbedoHeightArray.SampleGrad(TerrainLayerSampler, float3(TerrainVariationUV(uv), (float)layer), TerrainVariationGradient(dUvDx), TerrainVariationGradient(dUvDy));
                 value = lerp(value, variation, amount);
+            }
+
+            // Far away the repetition shows as a regular pattern: the color fades towards a sample about five times larger
+            // (natural textures only: the far amount follows the tiling variation, 0 for regular patterns)
+            float far = TerrainFarAmount(dUvDx, dUvDy, layer);
+            if (far > 0.001)
+            {
+                float2 farUV = TerrainVariationUV(uv) * TerrainFarScale + float2(0.53, 0.19);
+                float3 farColor = TerrainAlbedoHeightArray.SampleGrad(TerrainLayerSampler, float3(farUV, (float)layer), TerrainVariationGradient(dUvDx) * TerrainFarScale, TerrainVariationGradient(dUvDy) * TerrainFarScale).rgb;
+                value.rgb = lerp(value.rgb, farColor, far);
             }
             return value;
         }
@@ -250,10 +270,8 @@ namespace Stride.Terrain
             }
 
             float invTotal = 1.0 / max(totalWeight, 1e-5);
-            // Large scale brightness variation (breaks the uniformity of big areas of the same layer)
-            float macro = TerrainValueNoise(localXZ * 0.031) * 0.6 + TerrainValueNoise(localXZ * 0.093 + 13.7) * 0.4;
             TerrainSurface surface;
-            surface.Albedo = albedo * invTotal * lerp(0.86, 1.12, macro);
+            surface.Albedo = TerrainMacroVariation(albedo * invTotal, localXZ);
             normalRoughness *= invTotal;
             float2 nxy = normalRoughness.xy;
             surface.NormalTS = float3(nxy, sqrt(saturate(1.0 - dot(nxy, nxy))));
@@ -261,6 +279,20 @@ namespace Stride.Terrain
             surface.Occlusion = saturate(normalRoughness.w);
             surface.Height = saturate(height * invTotal);
             return surface;
+        }
+
+        // Large scale variation of the color (breaks the uniformity of big areas of the same layer): brightness in patches of
+        // 10-30 m, and a slight drift of hue and saturation over 50-150 m (drier, warmer areas and lusher, cooler ones)
+        float3 TerrainMacroVariation(float3 albedo, float2 localXZ)
+        {
+            float brightness = TerrainValueNoise(localXZ * 0.031) * 0.6 + TerrainValueNoise(localXZ * 0.093 + 13.7) * 0.4;
+            float hue = TerrainValueNoise(localXZ * 0.0071 + 41.3) * 0.65 + TerrainValueNoise(localXZ * 0.019 + 7.9) * 0.35;
+            float3 warm = float3(1.07, 1.0, 0.86);
+            float3 cool = float3(0.93, 1.02, 1.04);
+            float3 tinted = albedo * lerp(cool, warm, smoothstep(0.25, 0.75, hue));
+            float luminance = dot(tinted, float3(0.2126, 0.7152, 0.0722));
+            float saturation = lerp(0.88, 1.1, TerrainValueNoise(localXZ * 0.011 + 77.1));
+            return max(lerp(luminance.xxx, tinted, saturation), 0.0) * lerp(0.86, 1.12, brightness);
         }
 
         // Samples a layer with a planar projection (uv and its screen derivatives in meters) and returns albedo (rgb) + height (a)
@@ -355,6 +387,16 @@ namespace Stride.Terrain
             surface.Occlusion = lerp(surface.Occlusion, saturate(normalRoughness.w), coverage);
             surface.Height = lerp(surface.Height, saturate(albedoHeight.a), coverage);
             return surface;
+        }
+
+        // Widens the highlight by the variation of the normal within the pixel (Kaplanyan & Hoffman), so the detail of
+        // distant ground doesn't sparkle as the camera moves (pixel shader only)
+        float TerrainSpecularAntiAliasing(float roughness, float3 normal)
+        {
+            float3 dndx = ddx(normal);
+            float3 dndy = ddy(normal);
+            float variance = 0.25 * (dot(dndx, dndx) + dot(dndy, dndy));
+            return sqrt(saturate(roughness * roughness + min(2.0 * variance, 0.18)));
         }
 
         // Transforms a terrain tangent space normal to local space around the macro (height field) normal

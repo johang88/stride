@@ -124,7 +124,7 @@ namespace Stride.Terrain
             streams.normalWS = TerrainTangentToLocal(normalTS, macroNormal);
             streams.matDiffuse = float4(TerrainApplyBrush(albedo, localXZ, dx, dy), 1.0);
             streams.matColorBase = streams.matDiffuse;
-            streams.matGlossiness = clamp(1.0 - roughness, 0.0, 0.9);
+            streams.matGlossiness = clamp(1.0 - TerrainSpecularAntiAliasing(roughness, streams.normalWS), 0.0, 0.9);
             streams.matAmbientOcclusion = occlusion;
         }
     };

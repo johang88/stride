@@ -88,7 +88,8 @@ internal sealed class TerrainMaterialAssetCompiler : AssetCompilerBase
         public TerrainMaterialCompileCommand(string url, TerrainMaterialCompileParameters parameters, IAssetFinder assetFinder)
             : base(url, parameters, assetFinder)
         {
-            Version = 1;
+            // 2: normalized layer heights
+            Version = 2;
         }
 
         public override IEnumerable<ObjectUrl> GetInputFiles()
@@ -205,14 +206,44 @@ internal sealed class TerrainMaterialAssetCompiler : AssetCompilerBase
             var albedo = LoadPixels(tool, sources.Albedo, true, false, size, commandContext);
             var height = LoadPixels(tool, sources.Height, false, false, size, commandContext);
             var tint = layer != null && sources.Albedo == null ? (Color)new Color4(layer.Tint.ToSRgb(), 1.0f) : new Color(128, 128, 128);
+            var heightRemap = height != null ? GetHeightRemap(height) : null;
             var pixels = new Color[size * size];
             for (int i = 0; i < pixels.Length; i++)
             {
                 var c = albedo != null ? albedo[i] : tint;
-                c.A = height != null ? height[i].R : (byte)128;
+                c.A = heightRemap != null ? heightRemap[height[i].R] : (byte)128;
                 pixels[i] = c;
             }
             return CreateImage(pixels, size, PixelFormat.R8G8B8A8_UNorm_SRgb);
+        }
+
+        /// <summary>
+        /// Stretches a height map over the whole 0-255 range (between its 0.5% and 99.5% percentiles): height maps of different
+        /// sources cover very different ranges, and layers only compete fairly in height blending with comparable heights.
+        /// </summary>
+        private static byte[] GetHeightRemap(Color[] height)
+        {
+            var histogram = new int[256];
+            foreach (var pixel in height)
+                histogram[pixel.R]++;
+            var low = FindPercentile(histogram, height.Length * 0.005);
+            var high = FindPercentile(histogram, height.Length * 0.995);
+            var remap = new byte[256];
+            for (int i = 0; i < remap.Length; i++)
+                remap[i] = high > low ? (byte)Math.Clamp((int)MathF.Round((i - low) * 255.0f / (high - low)), 0, 255) : (byte)128;
+            return remap;
+        }
+
+        private static int FindPercentile(int[] histogram, double count)
+        {
+            var sum = 0;
+            for (int i = 0; i < histogram.Length; i++)
+            {
+                sum += histogram[i];
+                if (sum >= count)
+                    return i;
+            }
+            return histogram.Length - 1;
         }
 
         private static Image BuildNormalRoughness(TextureTool tool, TerrainLayerDescription layer, TerrainLayerSources sources, int size, ICommandContext commandContext)
