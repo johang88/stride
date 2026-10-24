@@ -237,6 +237,10 @@ internal sealed class TerrainGrassVariant : IDisposable
         cullShader.IndirectBuffer = dispatchArgs;
         cullShader.ThreadNumbers = new Int3(CullThreadsPerGroup, 1, 1);
         cullShader.Draw(context, "TerrainGrass.Cull");
+        // Back to reading for the draws: on Direct3D 11 matrices still bound for writing would be unbound from the vertex
+        // shader (the draws would see no instance)
+        commandList.ResourceBarrierTransition(world, GraphicsResourceState.AllShaderResource);
+        commandList.ResourceBarrierTransition(worldInverse, GraphicsResourceState.AllShaderResource);
 
         // The visible count is the instance count of every mesh's draw (second argument)
         foreach (var arguments in meshArguments.Values)
