@@ -1,0 +1,84 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// The motion of every pixel over the shutter (pixels, +y down): the meshes' motion vectors (jitter removed), or the
+    /// camera's reprojection of the depth where none were written; and the largest motion of each 16x16 tile. A group of
+    /// 16x16 threads per tile.
+    /// </summary>
+    shader PostFxMotionTiles : ComputeShaderBase
+    {
+        stage Texture2D<float> MotionDepth;
+        stage Texture2D<float2> MotionVelocity;
+        stage RWTexture2D<float2> MotionOutput;
+        stage RWTexture2D<float2> MotionTileOutput;
+
+        cbuffer PerDispatch
+        {
+            stage int2 MotionSize;
+            // Change of the jitter since the last frame (normalized device coordinates)
+            stage float2 MotionJitterDelta;
+            // This frame's jitter (normalized device coordinates)
+            stage float2 MotionJitterNdc;
+            // Current (jittered) clip space to the world, the world to the previous frame's (unjittered) clip space
+            stage float4x4 MotionInverseViewProjection;
+            stage float4x4 MotionPreviousViewProjection;
+            // Share of the frame the shutter is open, and the longest blur (pixels)
+            stage float MotionShutter;
+            stage float MotionMaxLength;
+        };
+
+        groupshared float2 TileMotion[256];
+
+        override void Compute()
+        {
+            int2 pixel = (int2)streams.DispatchThreadId.xy;
+            uint index = streams.GroupIndex;
+            float2 motionPixels = 0.0;
+            if (all(pixel < MotionSize))
+            {
+                float2 velocity = MotionVelocity.Load(int3(pixel, 0));
+                float2 motionNdc;
+                if (velocity.x != 0.0 || velocity.y != 0.0)
+                {
+                    motionNdc = velocity - MotionJitterDelta;
+                }
+                else
+                {
+                    float2 uv = (pixel + 0.5) / (float2)MotionSize;
+                    float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+                    float depth = MotionDepth.Load(int3(pixel, 0));
+                    float4 world = mul(float4(ndc, depth, 1.0), MotionInverseViewProjection);
+                    float4 previousClip = mul(world, MotionPreviousViewProjection);
+                    motionNdc = previousClip.w > 0.0 ? (ndc - MotionJitterNdc) - previousClip.xy / previousClip.w : 0.0;
+                }
+                motionPixels = float2(motionNdc.x, -motionNdc.y) * 0.5 * MotionSize * MotionShutter;
+                float length2 = dot(motionPixels, motionPixels);
+                if (length2 > MotionMaxLength * MotionMaxLength)
+                    motionPixels *= MotionMaxLength * rsqrt(length2);
+                if (any(isnan(motionPixels)))
+                    motionPixels = 0.0;
+                MotionOutput[pixel] = motionPixels;
+            }
+
+            // The tile's longest motion
+            TileMotion[index] = motionPixels;
+            GroupMemoryBarrierWithGroupSync();
+            [unroll]
+            for (uint stride = 128; stride > 0; stride >>= 1)
+            {
+                if (index < stride)
+                {
+                    float2 other = TileMotion[index + stride];
+                    if (dot(other, other) > dot(TileMotion[index], TileMotion[index]))
+                        TileMotion[index] = other;
+                }
+                GroupMemoryBarrierWithGroupSync();
+            }
+            if (index == 0)
+                MotionTileOutput[streams.GroupId.xy] = TileMotion[0];
+        }
+    };
+}

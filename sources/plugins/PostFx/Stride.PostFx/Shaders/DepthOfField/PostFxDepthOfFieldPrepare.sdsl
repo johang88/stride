@@ -1,0 +1,70 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// The image at half resolution with its circles of confusion (alpha), and the largest of each 8x8 tile (x: the near
+    /// field's, y: any). The color of the four pixels is weighted towards the brighter ones less (no flicker from a single
+    /// bright pixel). A group of 8x8 threads per tile.
+    /// </summary>
+    shader PostFxDepthOfFieldPrepare : ComputeShaderBase, PostFxDepthOfFieldCommon, PostFxCommon
+    {
+        stage Texture2D DofScene;
+        stage Texture2D<float> DofDepth;
+        stage RWTexture2D<float4> DofHalfOutput;
+        stage RWTexture2D<float2> DofTileOutput;
+
+        cbuffer PerDispatch
+        {
+            stage int2 DofHalfSize;
+            stage int2 DofFullSize;
+        };
+
+        groupshared float2 TileCircle[64];
+
+        override void Compute()
+        {
+            int2 pixel = (int2)streams.DispatchThreadId.xy;
+            uint index = streams.GroupIndex;
+            float2 tile = 0.0;
+            if (all(pixel < DofHalfSize))
+            {
+                int2 full = min(pixel * 2, DofFullSize - 2);
+                float3 color = 0.0;
+                float weight = 0.0;
+                float nearest = 1e9;
+                float farthest = -1e9;
+                [unroll]
+                for (int i = 0; i < 4; i++)
+                {
+                    int2 tap = full + int2(i & 1, i >> 1);
+                    float3 c = DofScene.Load(int3(tap, 0)).rgb;
+                    float w = 1.0 / (1.0 + PostFxLuminance(c));
+                    color += c * w;
+                    weight += w;
+                    float circle = DofCircle(DofDepth.Load(int3(tap, 0)));
+                    nearest = min(nearest, circle);
+                    farthest = max(farthest, circle);
+                }
+                color /= weight;
+                // (the near field spreads from its edge: the nearest circle where there is one)
+                float circle = nearest < 0.0 ? nearest : farthest;
+                DofHalfOutput[pixel] = float4(any(isnan(color)) ? 0.0 : color, circle);
+                tile = float2(max(-nearest, 0.0), abs(circle));
+            }
+
+            TileCircle[index] = tile;
+            GroupMemoryBarrierWithGroupSync();
+            [unroll]
+            for (uint stride = 32; stride > 0; stride >>= 1)
+            {
+                if (index < stride)
+                    TileCircle[index] = max(TileCircle[index], TileCircle[index + stride]);
+                GroupMemoryBarrierWithGroupSync();
+            }
+            if (index == 0)
+                DofTileOutput[streams.GroupId.xy] = TileCircle[0];
+        }
+    };
+}

@@ -1,0 +1,41 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// The largest circles of confusion around each tile (the near field's reach past its edges). Groups of 8x8 threads.
+    /// </summary>
+    shader PostFxDepthOfFieldTiles : ComputeShaderBase
+    {
+        stage Texture2D<float2> DofTileSource;
+        stage RWTexture2D<float2> DofTileDilated;
+
+        cbuffer PerDispatch
+        {
+            stage int2 DofTileSize;
+            // How many tiles the largest circle spans
+            stage int DofTileReach;
+        };
+
+        override void Compute()
+        {
+            int2 tile = (int2)streams.DispatchThreadId.xy;
+            if (any(tile >= DofTileSize))
+                return;
+            float2 largest = DofTileSource.Load(int3(tile, 0));
+            for (int y = -DofTileReach; y <= DofTileReach; y++)
+            {
+                for (int x = -DofTileReach; x <= DofTileReach; x++)
+                {
+                    int2 neighbor = clamp(tile + int2(x, y), int2(0, 0), DofTileSize - 1);
+                    float2 circles = DofTileSource.Load(int3(neighbor, 0));
+                    // (a neighbour's near field reaches this tile if its circle spans the tiles between, 8 pixels each)
+                    float gap = max(max(abs(x), abs(y)) - 1, 0) * 8.0;
+                    largest.x = max(largest.x, circles.x > gap ? circles.x : 0.0);
+                }
+            }
+            DofTileDilated[tile] = largest;
+        }
+    };
+}

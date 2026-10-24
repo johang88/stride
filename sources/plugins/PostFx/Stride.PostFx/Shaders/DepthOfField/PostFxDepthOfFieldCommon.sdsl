@@ -1,0 +1,33 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// The circle of confusion of a thin lens: its radius (half resolution pixels) at a depth, negative in front of the
+    /// focus, positive behind it.
+    /// </summary>
+    shader PostFxDepthOfFieldCommon
+    {
+        cbuffer PerDispatch
+        {
+            // M33, M43 of the projection (depth to distance)
+            stage float2 DofDepthInfo;
+            // Focus distance (meters), radius at infinity (pixels), largest radius (pixels), near field scale
+            stage float4 DofLens;
+        };
+
+        stage float DofDistance(float depth)
+        {
+            return DofDepthInfo.y / (depth + DofDepthInfo.x);
+        }
+
+        stage float DofCircle(float depth)
+        {
+            float distance = DofDistance(depth);
+            float circle = DofLens.y * (1.0 - DofLens.x / max(distance, 1e-3));
+            circle *= circle < 0.0 ? DofLens.w : 1.0;
+            return clamp(circle, -DofLens.z, DofLens.z);
+        }
+    };
+}

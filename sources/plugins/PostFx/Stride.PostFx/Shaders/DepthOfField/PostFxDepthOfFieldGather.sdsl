@@ -1,0 +1,89 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// Depth of field gather at half resolution: a disc of rings over the largest circle around the pixel, the samples
+    /// spreading onto it as far as their own circle reaches (scatter as gather). The far field only takes samples as blurred
+    /// as the pixel itself (a sharp subject never smears into the background, nor the background over it); the near field
+    /// takes any that reach and keeps how much of the disc they cover (its alpha over the sharp image, premultiplied). Groups of 8x8.
+    /// </summary>
+    shader PostFxDepthOfFieldGather : ComputeShaderBase, PostFxCommon
+    {
+        stage Texture2D<float4> DofHalf;
+        stage Texture2D<float2> DofTiles;
+        stage RWTexture2D<float4> DofFarOutput;
+        stage RWTexture2D<float4> DofNearOutput;
+
+        stage SamplerState DofPointClamp
+        {
+            Filter = MIN_MAG_MIP_POINT;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        cbuffer PerDispatch
+        {
+            stage int2 DofGatherSize;
+            stage float DofGatherFrame;
+        };
+
+        override void Compute()
+        {
+            int2 pixel = (int2)streams.DispatchThreadId.xy;
+            if (any(pixel >= DofGatherSize))
+                return;
+            float2 texel = 1.0 / (float2)DofGatherSize;
+            float2 uv = (pixel + 0.5) * texel;
+            float4 center = DofHalf.Load(int3(pixel, 0));
+            float2 tile = DofTiles.Load(int3(pixel / 8, 0));
+            float radius = max(abs(center.a), tile.x);
+            if (radius < 0.5)
+            {
+                DofFarOutput[pixel] = float4(center.rgb, 0.0);
+                DofNearOutput[pixel] = 0.0;
+                return;
+            }
+
+            float farCircle = max(center.a, 0.0);
+            float3 farSum = center.rgb;
+            float farWeight = 1.0;
+            float nearCenter = saturate(-center.a + 0.5);
+            float3 nearSum = center.rgb * nearCenter;
+            float nearWeight = nearCenter;
+            float count = 1.0;
+
+            // Rings of 8, 16, 24 samples, turned a little each frame (the temporal history smooths them)
+            float turn = PostFxFrameNoise(pixel, DofGatherFrame, 13.0) * 6.2831853;
+            [unroll]
+            for (int ring = 1; ring <= 3; ring++)
+            {
+                float ringRadius = radius * ring / 3.0;
+                int ringCount = ring * 8;
+                [loop]
+                for (int i = 0; i < ringCount; i++)
+                {
+                    float angle = turn + (i + 0.5 * (ring & 1)) * 6.2831853 / ringCount;
+                    float2 offset = float2(cos(angle), sin(angle)) * ringRadius;
+                    float4 sample = DofHalf.SampleLevel(DofPointClamp, uv + offset * texel, 0);
+                    float reach = ringRadius;
+
+                    float far = saturate(min(max(sample.a, 0.0), farCircle) - reach + 1.0);
+                    farSum += sample.rgb * far;
+                    farWeight += far;
+
+                    float near = saturate(-sample.a - reach + 1.0);
+                    nearSum += sample.rgb * near;
+                    nearWeight += near;
+                    count += 1.0;
+                }
+            }
+
+            DofFarOutput[pixel] = float4(farSum / farWeight, saturate(farCircle));
+            // (premultiplied: upsampled without darkening its edges)
+            float nearAlpha = saturate(nearWeight / count * 2.0);
+            DofNearOutput[pixel] = float4(nearWeight > 0.0 ? nearSum / nearWeight * nearAlpha : 0.0, nearAlpha);
+        }
+    };
+}

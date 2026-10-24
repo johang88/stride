@@ -1,0 +1,47 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// The longest motion around each tile (its 3x3 neighbours): what can blur onto its pixels. Groups of 8x8 threads.
+    /// </summary>
+    shader PostFxMotionNeighbors : ComputeShaderBase
+    {
+        stage Texture2D<float2> NeighborSource;
+        stage RWTexture2D<float2> NeighborOutput;
+
+        cbuffer PerDispatch
+        {
+            stage int2 NeighborSize;
+        };
+
+        override void Compute()
+        {
+            int2 tile = (int2)streams.DispatchThreadId.xy;
+            if (any(tile >= NeighborSize))
+                return;
+            float2 longest = 0.0;
+            float longest2 = 0.0;
+            [unroll]
+            for (int y = -1; y <= 1; y++)
+            {
+                [unroll]
+                for (int x = -1; x <= 1; x++)
+                {
+                    int2 neighbor = clamp(tile + int2(x, y), int2(0, 0), NeighborSize - 1);
+                    float2 motion = NeighborSource.Load(int3(neighbor, 0));
+                    float motion2 = dot(motion, motion);
+                    // (a diagonal neighbour only reaches this tile if it moves towards it)
+                    bool reaches = (x == 0 || y == 0) || dot(motion, float2(-x, -y)) > 0.0;
+                    if (reaches && motion2 > longest2)
+                    {
+                        longest = motion;
+                        longest2 = motion2;
+                    }
+                }
+            }
+            NeighborOutput[tile] = longest;
+        }
+    };
+}

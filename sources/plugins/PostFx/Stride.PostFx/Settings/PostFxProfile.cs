@@ -363,7 +363,17 @@ public sealed class PostFxProfile
     [Display(Expand = ExpandRule.Once)]
     public PostFxScreenSpaceLightSettings ScreenSpaceLight { get; set; } = new();
 
-    internal PostFxSettingsGroup[] Groups => [Exposure, Bloom, Grading, Lens, AmbientOcclusion, ContactShadows, ScreenSpaceLight];
+    [DataMember(80)]
+    [NotNull]
+    [Display(Expand = ExpandRule.Once)]
+    public PostFxDepthOfFieldSettings DepthOfField { get; set; } = new();
+
+    [DataMember(90)]
+    [NotNull]
+    [Display(Expand = ExpandRule.Once)]
+    public PostFxMotionBlurSettings MotionBlur { get; set; } = new();
+
+    internal PostFxSettingsGroup[] Groups => [Exposure, Bloom, Grading, Lens, AmbientOcclusion, ContactShadows, ScreenSpaceLight, DepthOfField, MotionBlur];
 
     /// <summary>
     /// Copies the values of another profile (the override flags stay).

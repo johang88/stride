@@ -1,0 +1,86 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// Motion blur reconstruction (McGuire et al. 2012, Jimenez 2014): samples along the longest motion around the pixel,
+    /// each weighted by whether it is in front (and its own motion reaches the pixel) or behind (and the pixel's motion
+    /// reaches it), so moving objects smear over the background and over themselves, never the background over them.
+    /// Texture0 = the scene, Texture1 = the motion (pixels), Texture2 = the tiles' neighbourhood motion, Texture3 = the
+    /// depth.
+    /// </summary>
+    shader PostFxMotionBlur : ImageEffectShader, PostFxCommon
+    {
+        cbuffer PerDraw
+        {
+            stage int MotionBlurSamples;
+            stage float2 MotionBlurSize;
+            // M33, M43 of the projection (depth to distance)
+            stage float2 MotionBlurDepthInfo;
+            stage float MotionBlurFrame;
+        };
+
+        stage float BlurDistance(float2 uv)
+        {
+            float depth = Texture3.SampleLevel(PointSampler, uv, 0).r;
+            return MotionBlurDepthInfo.y / (depth + MotionBlurDepthInfo.x);
+        }
+
+        // Whether a is in front of b (soft over a few percent of the distance)
+        stage float InFront(float a, float b)
+        {
+            return saturate(1.0 - (a - b) / (0.02 * min(a, b) + 0.05));
+        }
+
+        stage float Cone(float distance, float motionLength)
+        {
+            return saturate(1.0 - distance / max(motionLength, 1e-4));
+        }
+
+        stage float Cylinder(float distance, float motionLength)
+        {
+            return 1.0 - smoothstep(0.95 * motionLength, 1.05 * motionLength + 1e-4, distance);
+        }
+
+        stage override float4 Shading()
+        {
+            float2 uv = streams.TexCoord;
+            float2 texel = 1.0 / MotionBlurSize;
+            float4 center = Texture0.SampleLevel(PointSampler, uv, 0);
+            float2 neighborhood = Texture2.SampleLevel(PointSampler, uv, 0).xy;
+            float neighborhoodLength = length(neighborhood);
+            if (neighborhoodLength < 0.5)
+                return center;
+
+            float2 centerMotion = Texture1.SampleLevel(PointSampler, uv, 0).xy;
+            float centerLength = max(length(centerMotion), 0.5);
+            float centerDistance = BlurDistance(uv);
+
+            // The pixel's own weight: the less it moves, the more it keeps itself
+            float weight = MotionBlurSamples / centerLength;
+            float3 sum = center.rgb * weight;
+
+            float jitter = PostFxFrameNoise(uv * MotionBlurSize, MotionBlurFrame, 12.0) - 0.5;
+            for (int i = 0; i < MotionBlurSamples; i++)
+            {
+                // Symmetric about the pixel, over the whole motion (the motion spans the shutter, centered on the frame)
+                float t = lerp(-0.5, 0.5, (i + 0.5 + jitter) / MotionBlurSamples);
+                float2 offset = neighborhood * t;
+                float offsetLength = length(offset);
+                float2 sampleUv = uv + offset * texel;
+                float sampleDistance = BlurDistance(sampleUv);
+                float sampleLength = max(length(Texture1.SampleLevel(PointSampler, sampleUv, 0).xy), 0.5);
+
+                float front = InFront(sampleDistance, centerDistance);
+                float back = InFront(centerDistance, sampleDistance);
+                float alpha = front * Cone(offsetLength, sampleLength * 0.5)
+                            + back * Cone(offsetLength, centerLength * 0.5)
+                            + Cylinder(offsetLength, sampleLength * 0.5) * Cylinder(offsetLength, centerLength * 0.5) * 2.0;
+                sum += Texture0.SampleLevel(LinearSampler, sampleUv, 0).rgb * alpha;
+                weight += alpha;
+            }
+            return float4(sum / weight, center.a);
+        }
+    };
+}

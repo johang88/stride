@@ -35,9 +35,10 @@ internal sealed class TemporalHistory : IDisposable
     public Vector3 PreviousEye;
 
     /// <summary>
-    /// Offsets the view's projection by the next sub-pixel jitter (from the Halton 2, 3 sequence).
+    /// Keeps the view's matrices and offsets its projection by the next sub-pixel jitter (from the Halton 2, 3 sequence,
+    /// when jittering).
     /// </summary>
-    public void ApplyJitter(RenderView view)
+    public void ApplyJitter(RenderView view, bool jitter = true)
     {
         PreviousJitterNdc = JitterNdc;
         PreviousUnjitteredViewProjection = UnjitteredViewProjection;
@@ -49,7 +50,7 @@ internal sealed class TemporalHistory : IDisposable
         UnjitteredViewProjection = view.ViewProjection;
 
         JitterIndex = (JitterIndex + 1) % JitterCount;
-        Jitter = new Vector2(Halton(JitterIndex + 1, 2) - 0.5f, Halton(JitterIndex + 1, 3) - 0.5f);
+        Jitter = jitter ? new Vector2(Halton(JitterIndex + 1, 2) - 0.5f, Halton(JitterIndex + 1, 3) - 0.5f) : Vector2.Zero;
         var size = new Vector2(Math.Max(view.ViewSize.X, 1.0f), Math.Max(view.ViewSize.Y, 1.0f));
         JitterNdc = new Vector2(Jitter.X * 2.0f / size.X, -Jitter.Y * 2.0f / size.Y);
 

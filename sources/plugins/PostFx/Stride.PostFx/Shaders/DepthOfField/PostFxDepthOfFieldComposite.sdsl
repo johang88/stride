@@ -1,0 +1,44 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// Depth of field over the full resolution image: the far field where the pixel's own circle is large enough to tell,
+    /// the near field over everything by its coverage (upsampled with a tent). Texture0 = the scene, Texture1 = the depth,
+    /// Texture2 = the far field, Texture3 = the near field (half resolution).
+    /// </summary>
+    shader PostFxDepthOfFieldComposite : ImageEffectShader, PostFxDepthOfFieldCommon
+    {
+        cbuffer PerDraw
+        {
+            // Texel of the half resolution fields
+            stage float2 DofHalfTexel;
+        };
+
+        stage float4 Tent(Texture2D field, float2 uv)
+        {
+            float2 d = DofHalfTexel * 0.5;
+            return (field.SampleLevel(LinearSampler, uv + float2(-d.x, -d.y), 0)
+                  + field.SampleLevel(LinearSampler, uv + float2(d.x, -d.y), 0)
+                  + field.SampleLevel(LinearSampler, uv + float2(-d.x, d.y), 0)
+                  + field.SampleLevel(LinearSampler, uv + float2(d.x, d.y), 0)) * 0.25;
+        }
+
+        stage override float4 Shading()
+        {
+            float2 uv = streams.TexCoord;
+            float4 sharp = Texture0.SampleLevel(PointSampler, uv, 0);
+            float circle = DofCircle(Texture1.SampleLevel(PointSampler, uv, 0).r);
+            float3 color = sharp.rgb;
+
+            float farBlend = saturate((circle - 0.25) / 0.75);
+            if (farBlend > 0.0)
+                color = lerp(color, Texture2.SampleLevel(LinearSampler, uv, 0).rgb, farBlend);
+
+            float4 near = Tent(Texture3, uv);
+            color = color * (1.0 - saturate(near.a)) + near.rgb;
+            return float4(color, sharp.a);
+        }
+    };
+}

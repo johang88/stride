@@ -141,6 +141,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
     private ExposurePass exposure;
     private FXAAEffect fxaa;
     private TemporalPass temporal;
+    private CameraEffectsPass cameraEffects;
     private ScreenSpacePass screenSpacePass;
     private readonly PostFxScreenSpace screenSpace = new();
     private readonly ContactShadowReceiverExtension contactShadowExtension = new();
@@ -222,6 +223,28 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
     public bool IndirectLight { get; set; } = true;
 
     /// <summary>
+    /// Whether the lens blurs away from its focus (where the volumes give it an amount).
+    /// </summary>
+    [DataMember(49)]
+    [DefaultValue(true)]
+    public bool DepthOfField { get; set; } = true;
+
+    /// <summary>
+    /// Whether the image blurs with the motion over the shutter (camera and objects).
+    /// </summary>
+    [DataMember(50)]
+    [DefaultValue(true)]
+    public bool MotionBlur { get; set; } = true;
+
+    /// <summary>
+    /// Samples along the motion per pixel.
+    /// </summary>
+    [DataMember(51)]
+    [DefaultValue(12)]
+    [DataMemberRange(4, 32, 1, 4, 0)]
+    public int MotionBlurSamples { get; set; } = 12;
+
+    /// <summary>
     /// Whether the bright light glows.
     /// </summary>
     [DataMember(50)]
@@ -261,7 +284,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
     [DataMemberIgnore]
     public PostFxProfile Current { get; private set; }
 
-    public bool RequiresVelocityBuffer => Antialiasing == PostFxAntialiasing.Taa;
+    public bool RequiresVelocityBuffer => Antialiasing == PostFxAntialiasing.Taa || MotionBlur;
 
     public bool RequiresNormalBuffer => false;
 
@@ -285,6 +308,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         exposure.Initialize(GraphicsDevice);
         fxaa = ToLoadAndUnload(new FXAAEffect { InputLuminanceInAlpha = true });
         temporal = new TemporalPass(ToLoadAndUnload(new ImageEffectShader("PostFxTemporal")));
+        cameraEffects = new CameraEffectsPass(Context, ToLoadAndUnload(new ImageEffectShader("PostFxMotionBlur")), ToLoadAndUnload(new ImageEffectShader("PostFxDepthOfFieldComposite")));
         screenSpacePass = new ScreenSpacePass(Context);
         contactShadowExtension.ScreenSpace = screenSpace;
         tonyMcMapface = LoadTonyMcMapface(GraphicsDevice);
@@ -320,11 +344,12 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
 
         // Temporal anti-aliasing: the frame rendered with a sub-pixel offset (after the camera set the view's matrices,
         // before anything uploads them), the meshes writing their motion
-        if (Antialiasing == PostFxAntialiasing.Taa)
+        // (motion blur reads the motion, and the matrices kept with the history)
+        if (Antialiasing == PostFxAntialiasing.Taa || MotionBlur)
         {
             EnsureMotionVectors(context);
             state.Temporal ??= new TemporalHistory();
-            state.Temporal.ApplyJitter(view);
+            state.Temporal.ApplyJitter(view, Antialiasing == PostFxAntialiasing.Taa);
         }
 
         PublishScreenSpace(context, view, state);
@@ -400,6 +425,31 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
             else
             {
                 targets.IndirectValid = false;
+            }
+        }
+
+        // The camera: depth of field, then motion blur
+        var perspective = renderContext.RenderView.Projection.M44 != 1.0f;
+        var focusing = DepthOfField && perspective && depth != null && CameraEffectsPass.HasDepthOfField(renderContext.RenderView, profile.DepthOfField, scene.ViewHeight);
+        var blurring = MotionBlur && perspective && depth != null && motion != null && state.Temporal is { HasPrevious: true } history && profile.MotionBlur.Shutter > 0.0f
+            && Vector3.Distance(history.Eye, history.PreviousEye) < 50.0f;
+        if (focusing || blurring)
+        {
+            state.CameraTargets ??= new CameraEffectsTargets();
+            state.CameraTargets.Ensure(GraphicsDevice, scene.ViewWidth, scene.ViewHeight);
+            if (focusing)
+            {
+                context.CommandList.ResetTargets();
+                var focused = NewScopedRenderTarget2D(scene.ViewWidth, scene.ViewHeight, scene.ViewFormat);
+                cameraEffects.DrawDepthOfField(context, renderContext.RenderView, state.CameraTargets, profile.DepthOfField, scene, depth, focused, frame);
+                scene = focused;
+            }
+            if (blurring)
+            {
+                context.CommandList.ResetTargets();
+                var blurred = NewScopedRenderTarget2D(scene.ViewWidth, scene.ViewHeight, scene.ViewFormat);
+                cameraEffects.DrawMotionBlur(context, renderContext.RenderView, state.CameraTargets, state.Temporal, profile.MotionBlur, scene, depth, motion, blurred, MotionBlurSamples, frame);
+                scene = blurred;
             }
         }
 
@@ -727,12 +777,15 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         public readonly PostFxProfile Profile = new();
         public Buffer Exposure;
         public TemporalHistory Temporal;
+        public CameraEffectsTargets CameraTargets;
         public ScreenSpaceTargets ScreenSpaceTargets;
 
         public void Dispose()
         {
             ScreenSpaceTargets?.Dispose();
             ScreenSpaceTargets = null;
+            CameraTargets?.Dispose();
+            CameraTargets = null;
             Exposure?.Dispose();
             Exposure = null;
             Temporal?.Dispose();
