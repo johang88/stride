@@ -79,6 +79,15 @@ namespace Stride.Rendering
         mixin StrideLighting;
 
         // -----------------------------------------------
+        // Screen-space lighting (ambient occlusion, reflections, indirect light) of opaque surfaces
+        // -----------------------------------------------
+        ShaderSource screenSpaceLighting = ForwardShadingKeys.ScreenSpaceLighting;
+        if (screenSpaceLighting != null)
+        {
+            mixin (screenSpaceLighting);
+        }
+
+        // -----------------------------------------------
         // Shading extensions (e.g. the fog of transparent surfaces: the opaque ones are fogged in a full-screen pass)
         // -----------------------------------------------
         ShaderSourceCollection shadingExtensions = ForwardShadingKeys.ShadingExtensions;

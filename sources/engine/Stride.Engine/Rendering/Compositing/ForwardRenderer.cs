@@ -423,6 +423,8 @@ namespace Stride.Rendering.Compositing
                     LightShafts?.Collect(context);
 
                     Atmosphere?.Collect(context, TransparentRenderStage);
+                    if (PostEffects is IScreenSpaceLightingEffects screenSpaceLighting)
+                        screenSpaceLighting.OpaqueRenderStage = OpaqueRenderStage;
 
                     PostEffects?.Collect(context);
                 }
@@ -532,6 +534,17 @@ namespace Stride.Rendering.Compositing
 
                 // Bake lightprobes against Z-buffer
                 BakeLightProbes(context, drawContext);
+
+                // Screen-space terms the opaque surfaces' lighting reads (ambient occlusion, contact shadows), from the depth
+                if (PostEffects is IScreenSpaceLightingEffects screenSpaceLighting)
+                {
+                    using (drawContext.PushRenderTargetsAndRestore())
+                    {
+                        var depthStencil = drawContext.CommandList.DepthStencilBuffer;
+                        drawContext.CommandList.SetRenderTargets(null, []);
+                        screenSpaceLighting.DrawAfterDepthPrepass(drawContext, depthStencil);
+                    }
+                }
             }
 
             using (drawContext.PushRenderTargetsAndRestore())

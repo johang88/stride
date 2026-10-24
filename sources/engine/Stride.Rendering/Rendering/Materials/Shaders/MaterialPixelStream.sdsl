@@ -26,6 +26,11 @@ namespace Stride.Rendering.Materials
         stage stream float  matSpecularIntensity;
         // Occlusion attributes
         stage stream float  matAmbientOcclusion;
+
+        // Light found in screen space (rgb radiance, a confidence 0-1), which the sky light blends towards: reflected (the
+        // specular direction) and indirect (diffuse) light
+        stage stream float4 screenSpaceSpecular;
+        stage stream float4 screenSpaceDiffuse;
         stage stream float  matAmbientOcclusionDirectLightingFactor;
         stage stream float  matCavity;
         stage stream float  matCavityDiffuse;
@@ -78,6 +83,8 @@ namespace Stride.Rendering.Materials
             streams.alphaRoughness = 1.0f;
 
             streams.matAmbientOcclusion = 1.0f;  // 0.0: occluded, 1.0: not occluded
+            streams.screenSpaceSpecular = 0.0f;
+            streams.screenSpaceDiffuse = 0.0f;
             streams.matAmbientOcclusionDirectLightingFactor = 0.0f;
 
             streams.matCavity = 1.0f;
@@ -92,6 +99,11 @@ namespace Stride.Rendering.Materials
             streams.matDiffuseSpecularAlphaBlend = 1.0f;
             streams.matAlphaBlendColor = 1.0f;
             streams.matAlphaDiscard = 0.1f;
+        }
+
+        // Screen-space lighting terms of the view, once the material is prepared for lighting (see ForwardShadingKeys.ScreenSpaceLighting)
+        stage void ApplyScreenSpaceLighting()
+        {
         }
 
         void PrepareMaterialForLightingAndShading()

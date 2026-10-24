@@ -32,6 +32,8 @@ namespace Stride.Rendering.Lights
             sampleDirection = float3(sampleDirection.xy, -sampleDirection.z);
 
             streams.envLightDiffuseColor = lightDiffuseColor.Compute(sampleDirection).rgb * Intensity * ambientAccessibility;
+            // Indirect light found in screen space replaces the sky's where it's trusted
+            streams.envLightDiffuseColor = lerp(streams.envLightDiffuseColor, streams.screenSpaceDiffuse.rgb, streams.screenSpaceDiffuse.a);
 
             if (streams.subsurfaceLightingAmount > 0.0)
             {
@@ -61,6 +63,8 @@ namespace Stride.Rendering.Lights
             sampleDirection = float3(sampleDirection.xy, -sampleDirection.z);
 
             streams.envLightSpecularColor = lightSpecularColor.Compute(sampleDirection).rgb * Intensity * ambientAccessibility;
+            // As do reflections found in screen space
+            streams.envLightSpecularColor = lerp(streams.envLightSpecularColor, streams.screenSpaceSpecular.rgb, streams.screenSpaceSpecular.a);
         }
     };
 }

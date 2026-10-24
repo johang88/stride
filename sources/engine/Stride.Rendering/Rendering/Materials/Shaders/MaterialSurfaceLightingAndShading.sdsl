@@ -29,6 +29,9 @@ namespace Stride.Rendering.Materials
             // Prepare the material for lighting (allows to pre-compute things which are reused during lighting computation)
             PrepareMaterialForLightingAndShading();
 
+            // Screen-space ambient occlusion, reflections and indirect light of the view (opaque surfaces)
+            ApplyScreenSpaceLighting();
+
             // Prepare shading model
             foreach (var surface in surfaces)
             {
