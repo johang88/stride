@@ -8,13 +8,13 @@
     <StridePackAssets>true</StridePackAssets>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="..\..\shared\SharedAssemblyInfo.cs">
+    <Compile Include="..\..\..\shared\SharedAssemblyInfo.cs">
       <Link>Properties\SharedAssemblyInfo.cs</Link>
     </Compile>
   </ItemGroup>
   <ItemGroup>
     <!-- Stride.Assets for the texture compression the terrain material compiler uses for its layer arrays -->
-    <ProjectReference Include="..\Stride.Assets\Stride.Assets.csproj" />
+    <ProjectReference Include="..\..\..\engine\Stride.Assets\Stride.Assets.csproj" />
     <ProjectReference Include="..\Stride.Terrain\Stride.Terrain.csproj" />
   </ItemGroup>
   <ItemGroup>

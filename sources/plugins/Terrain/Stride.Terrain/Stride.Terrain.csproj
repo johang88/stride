@@ -16,14 +16,14 @@
     <StrideCompanionProject Include="..\Stride.Terrain.Editor\Stride.Terrain.Editor.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="..\..\shared\SharedAssemblyInfo.cs">
+    <Compile Include="..\..\..\shared\SharedAssemblyInfo.cs">
       <Link>Properties\SharedAssemblyInfo.cs</Link>
     </Compile>
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Stride.Engine\Stride.Engine.csproj" />
-    <ProjectReference Include="..\Stride.Rendering\Stride.Rendering.csproj" />
-    <ProjectReference Include="..\..\plugins\BepuPhysics\Stride.BepuPhysics\Stride.BepuPhysics.csproj" />
+    <ProjectReference Include="..\..\..\engine\Stride.Engine\Stride.Engine.csproj" />
+    <ProjectReference Include="..\..\..\engine\Stride.Rendering\Stride.Rendering.csproj" />
+    <ProjectReference Include="..\..\BepuPhysics\Stride.BepuPhysics\Stride.BepuPhysics.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="BepuPhysics" />

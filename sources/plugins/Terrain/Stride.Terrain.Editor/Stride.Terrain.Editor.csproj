@@ -11,12 +11,12 @@
     <StrideCompanionProject Include="..\Stride.Terrain.Editor.Wpf\Stride.Terrain.Editor.Wpf.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="..\..\shared\SharedAssemblyInfo.cs">
+    <Compile Include="..\..\..\shared\SharedAssemblyInfo.cs">
       <Link>Properties\SharedAssemblyInfo.cs</Link>
     </Compile>
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\editor\Stride.Assets.Presentation.Wpf\Stride.Assets.Presentation.Wpf.csproj" />
+    <ProjectReference Include="..\..\..\editor\Stride.Assets.Presentation.Wpf\Stride.Assets.Presentation.Wpf.csproj" />
     <ProjectReference Include="..\Stride.Terrain.Assets\Stride.Terrain.Assets.csproj" />
     <ProjectReference Include="..\Stride.Terrain\Stride.Terrain.csproj" />
   </ItemGroup>

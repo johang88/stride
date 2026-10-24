@@ -139,16 +139,16 @@
     <ProjectReference Include="..\..\plugins\UI\Stride.UI.Editor.Wpf\Stride.UI.Editor.Wpf.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
-    <ProjectReference Include="..\..\engine\Stride.Terrain\Stride.Terrain.csproj">
+    <ProjectReference Include="..\..\plugins\Terrain\Stride.Terrain\Stride.Terrain.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
-    <ProjectReference Include="..\..\engine\Stride.Terrain.Assets\Stride.Terrain.Assets.csproj">
+    <ProjectReference Include="..\..\plugins\Terrain\Stride.Terrain.Assets\Stride.Terrain.Assets.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
-    <ProjectReference Include="..\..\engine\Stride.Terrain.Editor\Stride.Terrain.Editor.csproj">
+    <ProjectReference Include="..\..\plugins\Terrain\Stride.Terrain.Editor\Stride.Terrain.Editor.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
-    <ProjectReference Include="..\..\engine\Stride.Terrain.Editor.Wpf\Stride.Terrain.Editor.Wpf.csproj">
+    <ProjectReference Include="..\..\plugins\Terrain\Stride.Terrain.Editor.Wpf\Stride.Terrain.Editor.Wpf.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
     <ProjectReference Include="..\Stride.Assets.Presentation.Wpf\Stride.Assets.Presentation.Wpf.csproj" />

@@ -84,10 +84,6 @@
     <Project Path="../sources/engine/Stride.Native/Stride.Native.csproj" />
     <Project Path="../sources/engine/Stride.Rendering/Stride.Rendering.csproj" />
     <Project Path="../sources/engine/Stride.VirtualReality/Stride.VirtualReality.csproj" />
-    <Project Path="../sources/engine/Stride.Terrain/Stride.Terrain.csproj" />
-    <Project Path="../sources/engine/Stride.Terrain.Assets/Stride.Terrain.Assets.csproj" />
-    <Project Path="../sources/engine/Stride.Terrain.Editor/Stride.Terrain.Editor.csproj" />
-    <Project Path="../sources/engine/Stride.Terrain.Editor.Wpf/Stride.Terrain.Editor.Wpf.csproj" />
   </Folder>
   <Folder Name="/20-StrideRuntime/Stride.Shared/">
     <Project Path="../sources/shared/Stride.Core.ShellHelper/Stride.Core.ShellHelper.shproj" />
@@ -228,6 +224,12 @@
     <Project Path="../sources/plugins/SpriteStudio/Stride.SpriteStudio.Assets/Stride.SpriteStudio.Assets.csproj" />
     <Project Path="../sources/plugins/SpriteStudio/Stride.SpriteStudio.Editor/Stride.SpriteStudio.Editor.csproj" />
     <Project Path="../sources/plugins/SpriteStudio/Stride.SpriteStudio.Runtime/Stride.SpriteStudio.Runtime.csproj" />
+  </Folder>
+  <Folder Name="/80-Plugins/Terrain/">
+    <Project Path="../sources/plugins/Terrain/Stride.Terrain.Assets/Stride.Terrain.Assets.csproj" />
+    <Project Path="../sources/plugins/Terrain/Stride.Terrain.Editor/Stride.Terrain.Editor.csproj" />
+    <Project Path="../sources/plugins/Terrain/Stride.Terrain.Editor.Wpf/Stride.Terrain.Editor.Wpf.csproj" />
+    <Project Path="../sources/plugins/Terrain/Stride.Terrain/Stride.Terrain.csproj" />
   </Folder>
   <Folder Name="/80-Plugins/UI/">
     <Project Path="../sources/plugins/UI/Stride.UI.Assets/Stride.UI.Assets.csproj" />
