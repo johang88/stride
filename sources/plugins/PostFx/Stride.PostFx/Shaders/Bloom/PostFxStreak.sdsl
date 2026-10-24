@@ -1,0 +1,51 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// The horizontal streak of an anamorphic lens: the highlights (above white), in a pyramid halving the width only,
+    /// down (6 taps) and back up (tent, blended by the scatter, long). Texture0 = the level above (down) or the wider level (up), Texture1 = this level's
+    /// downsample (up).
+    /// </summary>
+    shader PostFxStreak : ImageEffectShader, PostFxCommon
+    {
+        // Size of a texel of Texture0
+        stage float2 StreakSourceTexel;
+        stage bool StreakUp;
+        stage float StreakScatter;
+        // Scene luminance shown as white: the first level down keeps only the light above it (highlights streak)
+        stage float StreakThreshold;
+        stage bool StreakFirst;
+
+        stage float3 Highlight(float3 color)
+        {
+            if (!StreakFirst)
+                return color;
+            float luminance = PostFxLuminance(color);
+            // (a soft knee over half the threshold)
+            float knee = StreakThreshold * 0.5;
+            float above = luminance - StreakThreshold;
+            float soft = clamp(above + knee, 0.0, 2.0 * knee);
+            soft = soft * soft / (4.0 * knee + 1e-5);
+            return color * max(soft, above) / max(luminance, 1e-5);
+        }
+
+        stage override float4 Shading()
+        {
+            float2 uv = streams.TexCoord;
+            float2 t = float2(StreakSourceTexel.x, 0.0);
+            if (!StreakUp)
+            {
+                float3 sum = (Highlight(Texture0.SampleLevel(LinearSampler, uv - t * 0.5, 0).rgb) + Highlight(Texture0.SampleLevel(LinearSampler, uv + t * 0.5, 0).rgb)) * 4.0
+                           + (Highlight(Texture0.SampleLevel(LinearSampler, uv - t * 1.5, 0).rgb) + Highlight(Texture0.SampleLevel(LinearSampler, uv + t * 1.5, 0).rgb)) * 3.0
+                           + (Highlight(Texture0.SampleLevel(LinearSampler, uv - t * 2.5, 0).rgb) + Highlight(Texture0.SampleLevel(LinearSampler, uv + t * 2.5, 0).rgb));
+                return float4(sum / 16.0, 1.0);
+            }
+            float3 wide = (Texture0.SampleLevel(LinearSampler, uv - t, 0).rgb + Texture0.SampleLevel(LinearSampler, uv, 0).rgb * 2.0
+                         + Texture0.SampleLevel(LinearSampler, uv + t, 0).rgb) * 0.25;
+            float3 own = Texture1.SampleLevel(LinearSampler, uv, 0).rgb;
+            return float4(lerp(own, wide, StreakScatter), 1.0);
+        }
+    };
+}

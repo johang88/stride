@@ -7,7 +7,7 @@ namespace Stride.PostFx
     /// The last full-screen pass: the scene's light becomes the displayed image. Chromatic aberration, the glow (blended:
     /// energy conserving) and lens dirt, the exposure, white balance and grading, natural vignetting, the display transform
     /// (AgX or Tony McMapface), then film grain and dithering in display space (no banding in the sky's gradients).
-    /// Texture0 = the scene (HDR), Texture1 = the glow, Texture2 = the lens dirt.
+    /// Texture0 = the scene (HDR), Texture1 = the glow, Texture2 = the lens dirt, Texture3 = the anamorphic streak.
     /// </summary>
     shader PostFxFinal : ImageEffectShader, PostFxCommon
     {
@@ -30,6 +30,9 @@ namespace Stride.PostFx
             stage float PostFxExposure;
             stage float PostFxBloomIntensity;
             stage float3 PostFxBloomTint;
+            // Strength of the anamorphic streak (of the highlights, added), and its tint
+            stage float PostFxStreakIntensity;
+            stage float3 PostFxStreakTint;
             stage float PostFxLensDirtIntensity;
             // White balance: linear sRGB to linear sRGB (rows)
             stage float4 PostFxWhiteBalance0;
@@ -145,6 +148,8 @@ namespace Stride.PostFx
             // The glow and the dirt it lights on the lens
             float3 glow = Texture1.SampleLevel(LinearSampler, uv, 0).rgb * PostFxBloomTint;
             color = lerp(color, glow, PostFxBloomIntensity);
+            if (PostFxStreakIntensity > 0.0)
+                color += Texture3.SampleLevel(LinearSampler, uv, 0).rgb * PostFxStreakTint * PostFxStreakIntensity;
             if (PostFxLensDirtIntensity > 0.0)
                 color += glow * Texture2.SampleLevel(LinearSampler, uv, 0).rgb * PostFxLensDirtIntensity;
 

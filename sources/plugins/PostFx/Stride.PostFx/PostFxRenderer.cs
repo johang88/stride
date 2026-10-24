@@ -303,7 +303,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         base.InitializeCore();
         finalShader = ToLoadAndUnload(new ImageEffectShader("PostFxFinal"));
         debugShader = ToLoadAndUnload(new ImageEffectShader("PostFxDebugView"));
-        bloom = new BloomPass(ToLoadAndUnload(new ImageEffectShader("PostFxBloomDownsample")), ToLoadAndUnload(new ImageEffectShader("PostFxBloomUpsample")));
+        bloom = new BloomPass(ToLoadAndUnload(new ImageEffectShader("PostFxBloomDownsample")), ToLoadAndUnload(new ImageEffectShader("PostFxBloomUpsample")), ToLoadAndUnload(new ImageEffectShader("PostFxStreak")));
         exposure = new ExposurePass(new ComputeEffectShader(Context) { ShaderSourceName = "PostFxHistogram" }, new ComputeEffectShader(Context) { ShaderSourceName = "PostFxExposureAdapt" });
         exposure.Initialize(GraphicsDevice);
         fxaa = ToLoadAndUnload(new FXAAEffect { InputLuminanceInAlpha = true });
@@ -454,12 +454,18 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         }
 
         Texture glow = null;
+        Texture streak = null;
         if (Bloom && (profile.Bloom.Intensity > 0.0f || profile.Bloom.LensDirtIntensity > 0.0f))
-            glow = bloom.Draw(context, (w, h, f) => NewScopedRenderTarget2D(w, h, f), scene, profile.Bloom.Scatter);
+        {
+            // (white: the scene luminance the exposure shows as 1; the automatic exposure's part isn't known here, its
+            // middle is assumed)
+            var white = MathF.Pow(2.0f, -ExposureEV(profile)) * (ExposureMode == PostFxExposureMode.Histogram ? 0.18f * MathF.Pow(2.0f, 3.0f) : 1.0f);
+            (glow, streak) = bloom.Draw(context, (w, h, f) => NewScopedRenderTarget2D(w, h, f), scene, profile.Bloom.Scatter, profile.Bloom.AnamorphicIntensity > 0.0f, white);
+        }
 
         var antialias = Antialiasing == PostFxAntialiasing.Fxaa;
         var target = antialias ? NewScopedRenderTarget2D(output.ViewWidth, output.ViewHeight, output.ViewFormat) : output;
-        DrawFinal(context, scene, glow, autoExposure, profile, target, antialias, temporalResolved ? Sharpness : 0.0f);
+        DrawFinal(context, scene, glow, streak, autoExposure, profile, target, antialias, temporalResolved ? Sharpness : 0.0f);
 
         if (antialias)
         {
@@ -486,7 +492,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         }
     }
 
-    private void DrawFinal(RenderDrawContext context, Texture scene, Texture glow, Buffer autoExposure, PostFxProfile profile, Texture target, bool lumaInAlpha, float sharpness)
+    private void DrawFinal(RenderDrawContext context, Texture scene, Texture glow, Texture streak, Buffer autoExposure, PostFxProfile profile, Texture target, bool lumaInAlpha, float sharpness)
     {
         var parameters = finalShader.Parameters;
         parameters.Set(PostFxFinalKeys.PostFxSharpness, Math.Clamp(sharpness, 0.0f, 1.0f));
@@ -498,6 +504,8 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         var bloomSettings = profile.Bloom;
         parameters.Set(PostFxFinalKeys.PostFxBloomIntensity, glow != null ? Math.Clamp(bloomSettings.Intensity, 0.0f, 1.0f) : 0.0f);
         parameters.Set(PostFxFinalKeys.PostFxBloomTint, (Vector3)bloomSettings.Tint);
+        parameters.Set(PostFxFinalKeys.PostFxStreakIntensity, streak != null ? Math.Clamp(bloomSettings.AnamorphicIntensity, 0.0f, 1.0f) : 0.0f);
+        parameters.Set(PostFxFinalKeys.PostFxStreakTint, (Vector3)bloomSettings.AnamorphicTint);
         parameters.Set(PostFxFinalKeys.PostFxLensDirtIntensity, glow != null && bloomSettings.LensDirt != null ? bloomSettings.LensDirtIntensity : 0.0f);
 
         var grading = profile.Grading;
@@ -526,6 +534,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         finalShader.SetInput(0, scene);
         finalShader.SetInput(1, glow ?? black);
         finalShader.SetInput(2, bloomSettings.LensDirt ?? black);
+        finalShader.SetInput(3, streak ?? black);
         finalShader.SetOutput(target);
         finalShader.Draw(context, "PostFx.Final");
     }
