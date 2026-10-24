@@ -87,7 +87,8 @@ namespace Stride.Atmosphere.Fog
             float amplitude = 0.5;
             int period = 4;
             [unroll]
-            for (int i = 0; i < 4; i++)
+            // (up to 16 cells across the 64 texels: finer octaves alias into a lattice that shimmers as the fog drifts)
+            for (int i = 0; i < 3; i++)
             {
                 gradient += amplitude * FogGradientNoise(uvw * period, period);
                 amplitude *= 0.5;

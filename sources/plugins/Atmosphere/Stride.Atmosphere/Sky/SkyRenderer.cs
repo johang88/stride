@@ -45,6 +45,8 @@ internal sealed class SkyRenderer : RendererCoreBase
     private Texture publishedCube;
     private int captureSize;
     private int captureFrame;
+    private Buffer previousHarmonics;
+    private bool hasHarmonics;
     private Skybox publishedSkybox;
 
     private bool lutsValid;
@@ -105,6 +107,8 @@ internal sealed class SkyRenderer : RendererCoreBase
         Ambient.Name = "AtmosphereAmbient";
         Harmonics = Buffer.New(device, 12 * 16, 0, BufferFlags.ShaderResource | BufferFlags.UnorderedAccess, PixelFormat.R32G32B32A32_Float);
         Harmonics.Name = "AtmosphereSkyHarmonics";
+        previousHarmonics = Buffer.New(device, 12 * 16, 0, BufferFlags.ShaderResource, PixelFormat.R32G32B32A32_Float);
+        previousHarmonics.Name = "AtmosphereSkyHarmonicsPrevious";
 
         transmittanceEffect = ToLoadAndUnload(new ImageEffectShader("AtmosphereTransmittanceLut"));
         multiScatterEffect = ToLoadAndUnload(new ImageEffectShader("AtmosphereMultiScatterLut"));
@@ -124,6 +128,7 @@ internal sealed class SkyRenderer : RendererCoreBase
         SkyViewLut?.Dispose();
         Ambient?.Dispose();
         Harmonics?.Dispose();
+        previousHarmonics?.Dispose();
         ambientEffect?.Dispose();
         cameraVolumeEffect?.Dispose();
         harmonicsEffect?.Dispose();
@@ -279,7 +284,12 @@ internal sealed class SkyRenderer : RendererCoreBase
         harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyCaptureCube, captureCube);
         harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyCaptureMip, (float)Math.Max(0, (int)MathF.Log2(captureSize / 16.0f)));
         harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyHarmonicsOutput, Harmonics);
+        harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyHarmonicsPrevious, previousHarmonics);
+        // (about a quarter of a second to settle at the default interval)
+        harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyHarmonicsBlend, hasHarmonics ? 0.35f : 1.0f);
         harmonicsEffect.Draw(context, "SkySphericalHarmonics");
+        commandList.Copy(Harmonics, previousHarmonics);
+        hasHarmonics = true;
 
         // The scene's sky light: set once, the textures it points at are updated in place
         var skybox = atmosphere.Skybox;

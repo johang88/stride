@@ -6,7 +6,8 @@ namespace Stride.Atmosphere
     /// <summary>
     /// Generates the tiling noise volumes of the clouds. Shape (mode 0): r = Perlin-Worley (gradient noise octaves remapped
     /// by billowy Worley octaves: wispy, connected), gba = billowy Worley octaves of 4, 8 and 16 cells per tile. Detail
-    /// (mode 1): rgb = billowy Worley octaves of 2, 4 and 8 cells, a = gradient noise.
+    /// (mode 1): rgb = billowy Worley octaves of 2, 4 and 8 cells, a = gradient noise. No octave is finer than four texels a
+    /// cell (finer ones alias into a regular lattice).
     /// </summary>
     shader CloudNoiseGenerate : ComputeShaderBase, AtmosphereNoise
     {
@@ -27,7 +28,8 @@ namespace Stride.Atmosphere
 
             if (CloudNoiseMode == 0)
             {
-                float perlin = GradientFbm(uvw, 4, 6, 3u);
+                // (octaves up to 32 cells in 128 texels: finer ones alias)
+                float perlin = GradientFbm(uvw, 4, 4, 3u);
                 float worley4 = WorleyFbm(uvw, 4, 11u);
                 float worley8 = WorleyFbm(uvw, 8, 23u);
                 float worley16 = WorleyFbm(uvw, 16, 37u);
@@ -37,7 +39,7 @@ namespace Stride.Atmosphere
             }
             else
             {
-                CloudNoiseOutput[texel] = float4(WorleyFbm(uvw, 2, 51u), WorleyFbm(uvw, 4, 63u), WorleyFbm(uvw, 8, 77u), GradientFbm(uvw, 4, 4, 91u));
+                CloudNoiseOutput[texel] = float4(WorleyFbm(uvw, 2, 51u), WorleyFbm(uvw, 4, 63u), WorleyFbm(uvw, 8, 77u), GradientFbm(uvw, 4, 3, 91u));
             }
         }
     };

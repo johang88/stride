@@ -17,6 +17,7 @@ namespace Stride.Atmosphere
             return h ^ (h >> 16);
         }
 
+        // (for non-integer inputs: integer ones repeat every few units, use NoiseHash)
         float Hash12(float2 p)
         {
             float3 p3 = frac(float3(p.xyx) * 0.1031);
@@ -131,13 +132,13 @@ namespace Stride.Atmosphere
             return saturate(sum / total * 0.5 + 0.5);
         }
 
-        // Three octaves of inverted Worley noise (billows), in [0, 1]
+        // Two octaves of inverted Worley noise (billows), in [0, 1] (the finer one at twice the base: keep it at four texels a
+        // cell or more, finer octaves alias into a regular lattice)
         float WorleyFbm(float3 uvw, int baseFrequency, uint seed)
         {
             float a = 1.0 - WorleyNoise(uvw * baseFrequency, int3(baseFrequency, baseFrequency, baseFrequency), seed);
             float b = 1.0 - WorleyNoise(uvw * baseFrequency * 2, int3(baseFrequency * 2, baseFrequency * 2, baseFrequency * 2), seed + 1u);
-            float c = 1.0 - WorleyNoise(uvw * baseFrequency * 4, int3(baseFrequency * 4, baseFrequency * 4, baseFrequency * 4), seed + 2u);
-            return a * 0.625 + b * 0.25 + c * 0.125;
+            return a * 0.7 + b * 0.3;
         }
 
         // Value noise without tiling, for the sky (moon surface, Milky Way)

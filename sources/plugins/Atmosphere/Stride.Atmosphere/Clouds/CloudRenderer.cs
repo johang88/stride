@@ -21,7 +21,7 @@ namespace Stride.Atmosphere.Clouds;
 internal sealed class CloudRenderer : RendererCoreBase
 {
     private const int ShapeSize = 128;
-    private const int DetailSize = 32;
+    private const int DetailSize = 64;
     private const int CirrusSize = 1024;
     private const int WeatherSize = 512;
 

@@ -194,7 +194,7 @@ namespace Stride.Atmosphere
             // The column: depth by type (stratus a few hundred meters, stratocumulus 700 m, cumulus 2 km, congestus
             // 4.5 km, cumulonimbus the whole layer), rising towards the middle of the cloud in a dome (towers steeply)
             float deepest = 300.0 + (CloudLowLayer.y - 300.0) * pow(saturate(type), 2.2);
-            float top = deepest * lerp(0.15, 1.0, pow(footprint, lerp(0.9, 0.4, type))) * lerp(0.8, 1.2, weather.y);
+            float top = deepest * lerp(lerp(0.4, 0.15, saturate(type * 1.5)), 1.0, pow(footprint, lerp(0.9, 0.4, type))) * lerp(0.8, 1.2, weather.y);
             // Anvils: the deepest towers spread out under the top of the layer
             float anvil = 0.0;
             if (type > 0.86)
@@ -256,19 +256,27 @@ namespace Stride.Atmosphere
             float wispy = saturate((shape.r - 0.2) * 1.6);
             float billowy = saturate((shape.g * 0.45 + shape.b * 0.33 + shape.a * 0.22 - 0.28) * 2.0);
             // Wispy stratiform clouds and bases, billowy cumuliform tops
-            float billows = saturate(type * 2.5 - 0.3) * lerp(0.75, 1.0, saturate(heightFraction * 4.0)) * (1.0 - smoothstep(0.86, 1.0, type) * smoothstep(0.75, 0.9, heightFraction));
+            float billows = saturate(type * 4.0 - 0.4) * lerp(0.75, 1.0, saturate(heightFraction * 4.0)) * (1.0 - smoothstep(0.86, 1.0, type) * smoothstep(0.75, 0.9, heightFraction));
             float noise = lerp(wispy, billowy, billows);
             // Eroded from the envelope inwards (value erosion): the edges and tops are carved, the cores stay whole
             float e = (1.0 - noise) * CloudLowShape.w;
             float density = saturate((profile - e) / max(1.0 - e, 0.05));
-            if (density <= 0.0 || !withDetail)
-                return density;
+            if (density <= 0.0)
+                return 0.0;
+            if (!withDetail)
+                return pow(density, 0.6);
 
-            // Fine detail on the edges: wisps at the base, curls (inverted) towards the billowing top
-            float3 detail = CloudDetailNoise.SampleLevel(CloudLinearWrap, p * CloudLowShape.z, NoiseMip(footprint, CloudLowShape.z, 32.0)).rgb;
-            float detailFbm = saturate((detail.r * 0.5 + detail.g * 0.3 + detail.b * 0.2 - 0.28) * 2.0);
-            float modifier = lerp(1.0 - detailFbm, detailFbm, saturate(heightFraction * 3.0)) * 0.5 * saturate(1.0 - density * 1.2);
-            return saturate((density - modifier) / (1.0 - modifier));
+            // Fine detail over the whole surface, not only the rims: wisps at the base (eroded where the noise is high),
+            // billows towards the top (eroded in the crevices between the lumps), fading out only deep inside
+            float3 detail = CloudDetailNoise.SampleLevel(CloudLinearWrap, p * CloudLowShape.z, NoiseMip(footprint, CloudLowShape.z, 64.0)).rgb;
+            float3 fuzz = CloudDetailNoise.SampleLevel(CloudLinearWrap, p * (CloudLowShape.z * 2.83) + 0.37, NoiseMip(footprint, CloudLowShape.z * 2.83, 64.0)).rgb;
+            float detailFbm = saturate(((detail.r * 0.5 + detail.g * 0.3 + detail.b * 0.2) * 0.65 + (fuzz.r * 0.5 + fuzz.g * 0.5) * 0.35 - 0.28) * 2.0);
+            // (faded out where a sample spans a sizeable part of the detail tile: its repetition would show as a lattice)
+            float detailFade = saturate(1.0 - footprint * CloudLowShape.z * 3.0);
+            float modifier = lerp(detailFbm, 1.0 - detailFbm, saturate(heightFraction * 3.0 + billows * 0.5)) * 0.75 * saturate(1.0 - density) * detailFade;
+            density = saturate((density - modifier) / (1.0 - modifier));
+            // Sharpened (thin densities raised): crisp silhouettes with soft, fine fringes, as Nubis does
+            return pow(density, 0.6);
         }
 
         /// Density of the middle layer: altostratus sheets (type 0) to fields of altocumulus cloudlets (type 1).
@@ -292,8 +300,10 @@ namespace Stride.Atmosphere
                 return 0.0;
             float toBase = saturate(h / 0.2);
             float toTop = saturate((1.0 - h) / 0.6);
-            // (never quite solid for cloudlets: the cells open gaps between them)
-            profile = saturate(field * 1.3) * toBase * toTop * toTop * lerp(1.0, 0.72, type);
+            // Cloudlets or sheet: a decisive transition (an in-between type is neither and reads as a blob)
+            float cellular = smoothstep(0.3, 0.7, type);
+            // (never quite solid for cloudlets: the cells open gaps between them; soft towards the edge of a field)
+            profile = saturate(field * 1.1) * toBase * toTop * toTop * lerp(0.8, 0.5, cellular);
 
             // Cloudlets in rows across the wind: the cells of the Worley octaves, a little stretched along the wind
             float3 p = float3(p2.x, altitude, p2.y);
@@ -302,24 +312,39 @@ namespace Stride.Atmosphere
             float across = dot(p.xz, float2(-wind.y, wind.x));
             float3 cellPosition = float3(along * 0.8, altitude * 1.5, across * 1.25) * CloudMidShape.y + float3(0.0, CloudWindHigh.z * CloudMidShape.y, 0.0);
             float4 shape = CloudShapeNoise.SampleLevel(CloudLinearWrap, cellPosition, NoiseMip(footprint, CloudMidShape.y, 128.0));
-            float cells = saturate((shape.g * 0.6 + shape.b * 0.4 - 0.3) * 2.4);
-            float sheet = saturate((shape.r * 0.7 + shape.g * 0.3 - 0.2) * 1.6);
-            float noise = lerp(sheet, cells, type);
-            float e = (1.0 - noise) * CloudMidShape.w * lerp(0.6, 1.0, type);
+            // A second lookup at an incommensurate scale, axes swapped, varies the cells and the sheet: a field spans tens of
+            // kilometres and a single tile would repeat across it as a regular lattice
+            float4 large = CloudShapeNoise.SampleLevel(CloudLinearWrap, cellPosition.zxy * 0.37 + float3(0.19, 0.53, 0.71), NoiseMip(footprint, CloudMidShape.y * 0.37, 128.0));
+            float cells = saturate((shape.g * 0.6 + shape.b * 0.4 - 0.3 + (large.g - 0.5) * 0.6) * 2.4);
+            float sheet = saturate(((shape.r * 0.7 + shape.g * 0.3) * 0.6 + large.r * 0.4 - 0.2) * 1.6);
+            float noise = lerp(sheet, cells, cellular);
+            float e = (1.0 - noise) * CloudMidShape.w * lerp(0.6, 1.0, cellular);
             float density = saturate((profile - e) / max(1.0 - e, 0.05));
-            if (density <= 0.0 || !withDetail)
-                return density;
+            if (density <= 0.0)
+                return 0.0;
+            // Sheets (altostratus) are thin veils, cloudlets (altocumulus) crisp and dense
+            float sharpness = lerp(1.0, 0.6, cellular);
+            float thickness = lerp(0.25, 1.0, cellular);
+            if (!withDetail)
+                return pow(density, sharpness) * thickness;
 
-            float3 detail = CloudDetailNoise.SampleLevel(CloudLinearWrap, p * CloudMidShape.z, NoiseMip(footprint, CloudMidShape.z, 32.0)).rgb;
-            float modifier = (1.0 - (detail.r * 0.5 + detail.g * 0.3 + detail.b * 0.2)) * 0.45 * saturate(1.0 - density * 1.3);
-            return saturate((density - modifier) / (1.0 - modifier));
+            // Lumpy cloudlets (Worley billows), sheets frayed by gradient noise (the cells of Worley noise thresholded in a
+            // thin veil are evenly spaced dots: a halftone)
+            float4 detail = CloudDetailNoise.SampleLevel(CloudLinearWrap, p * CloudMidShape.z, NoiseMip(footprint, CloudMidShape.z, 64.0));
+            float billowFbm = saturate((detail.r * 0.5 + detail.g * 0.3 + detail.b * 0.2 - 0.28) * 2.0);
+            float frayFbm = saturate((detail.a - 0.3) * 2.5);
+            // (faded out once a sample spans a fair part of a cell)
+            float detailFade = saturate(1.0 - footprint * CloudMidShape.z * 8.0);
+            float modifier = lerp(frayFbm, 1.0 - billowFbm, cellular) * 0.75 * saturate(1.0 - density) * detailFade;
+            density = saturate((density - modifier) / (1.0 - modifier));
+            return pow(density, sharpness) * thickness;
         }
 
         // Optical depth towards the light through the low layer (and the middle one above it), from steps growing geometrically
         float LightOpticalDepth(float3 position, float3 lightDirection, int steps, float footprint)
         {
             float opticalDepth = 0.0;
-            float stepLength = 40.0;
+            float stepLength = 20.0;
             float distanceAlong = 0.0;
             for (int i = 0; i < steps; i++)
             {
@@ -330,11 +355,11 @@ namespace Stride.Atmosphere
                 float profile;
                 // (the first step with detail: self-shadowing of the small lumps)
                 float sampleFootprint = max(footprint, stepLength * 0.5);
-                float density = LowDensity(samplePosition, altitude, sampleFootprint, i == 0, heightFraction, profile) * CloudLowShape.x;
+                float density = LowDensity(samplePosition, altitude, sampleFootprint, i < 2, heightFraction, profile) * CloudLowShape.x;
                 density += MidDensity(samplePosition, altitude, sampleFootprint, false, heightFraction, profile) * CloudMidShape.x;
                 opticalDepth += density * stepLength;
                 distanceAlong += stepLength * 0.5;
-                stepLength *= 1.9;
+                stepLength *= 2.2;
             }
             return opticalDepth;
         }
@@ -362,19 +387,19 @@ namespace Stride.Atmosphere
             [unroll]
             for (int octave = 1; octave < 4; octave++)
             {
-                a *= 0.35;
-                b *= 0.75;
+                a *= 0.5;
+                b *= 0.5;
                 c *= 0.5;
                 float phase = lerp(HenyeyGreenstein(0.65 * c, cosTheta), HenyeyGreenstein(-0.2 * c, cosTheta), 0.25);
                 multiple += b * phase * exp(-lightDepth * a);
             }
-            float inScatter = lerp(1.0, pow(saturate(profile * 1.5), lerp(1.2, 0.4, heightFraction)), CloudScattering.w);
-            float3 direct = light * (single + CloudScattering.y * 2.5 * inScatter * multiple);
+            float inScatter = lerp(1.0, pow(saturate(profile * 1.3), lerp(1.3, 0.5, heightFraction)), CloudScattering.w);
+            float3 direct = light * (single + CloudScattering.y * 6.0 * inScatter * multiple);
 
             // Light from around: the sky above (less of it low in a cloud, under the rest of it, and deep inside), the ground below
             float h = saturate(heightFraction);
-            float occlusion = lerp(1.0, 0.45, profile);
-            float3 ambient = (ambientTop * lerp(0.25, 1.0, sqrt(h)) + ambientBottom * (1.0 - h)) * occlusion * baseDarkening * CloudScattering.z;
+            float occlusion = lerp(1.0, 0.4, profile);
+            float3 ambient = (ambientTop * lerp(0.45, 1.0, sqrt(h)) + ambientBottom * (1.0 - h) * 0.6) * occlusion * baseDarkening * CloudScattering.z;
             return direct + ambient;
         }
 
@@ -407,9 +432,9 @@ namespace Stride.Atmosphere
 
             float type = saturate(CloudHighLayer.z + (weather.y - 0.5) * 0.4);
             // Veil (cirrostratus): smooth and milky; streaks (cirrus): fibres in bent bands
-            float veil = 0.25 + 0.75 * cirrus.z;
-            float streaks = cirrus.x * lerp(0.4, 1.0, cirrus.y);
-            float density = footprint * lerp(veil, streaks * 1.6, type);
+            float veil = (0.15 + 0.6 * cirrus.z) * lerp(0.6, 1.0, cirrus.y);
+            float streaks = cirrus.x * pow(cirrus.y, 0.8) * 1.8;
+            float density = footprint * lerp(veil, streaks, type);
             if (density <= 0.001)
                 return float4(0.0, 0.0, 0.0, 0.0);
 
@@ -458,7 +483,8 @@ namespace Stride.Atmosphere
                     float extinction = density * extinctionScale;
                     float lightDepth = LightOpticalDepth(position, CloudLightDirection, lightSteps, footprint);
                     float baseDarkening = low ? lerp(1.0, 0.55, wet * saturate(1.0 - heightFraction * 2.0)) : 1.0;
-                    float3 source = CloudSampleRadiance(LightAt(position, worldCamera), lightDepth, cosTheta, profile, heightFraction, ambientTop, ambientBottom, baseDarkening);
+                    float depth = saturate(density * 0.75 + profile * 0.35);
+                    float3 source = CloudSampleRadiance(LightAt(position, worldCamera), lightDepth, cosTheta, depth, heightFraction, ambientTop, ambientBottom, baseDarkening);
                     float stepTransmittance = exp(-extinction * dt);
                     // Energy-conserving integration over the step (scattering albedo 1)
                     scattered += transmittance * source * (1.0 - stepTransmittance);

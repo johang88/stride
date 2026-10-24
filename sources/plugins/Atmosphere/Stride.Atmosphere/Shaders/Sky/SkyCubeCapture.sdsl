@@ -41,7 +41,8 @@ namespace Stride.Atmosphere
             float3 sky = SampleSkyView(direction);
             if (CaptureClouds > 0 && direction.y > -0.02)
             {
-                float jitter = Hash12(streams.TexCoord * 1024.0 + CaptureFrame * 7.31);
+                // (the same samples every capture: a jitter changing between captures makes the light of the sky shimmer)
+                float jitter = Hash12(streams.TexCoord * 1024.0);
                 float meanDistance;
                 float4 clouds = MarchClouds(CaptureOrigin, normalize(float3(direction.x, max(direction.y, 0.0), direction.z)), CaptureOrigin, 18.0, 2, 60000.0, jitter, false, 0.04, meanDistance);
                 sky = sky * clouds.a + clouds.rgb;

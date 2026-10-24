@@ -66,10 +66,11 @@ namespace Stride.Atmosphere
             float4 farPoint = mul(float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0), CloudInvViewProjection);
             float3 direction = normalize(farPoint.xyz / farPoint.w - CloudEye);
 
-            // A random start per pixel stepping through the golden ratio sequence, one sample per round of the interleave:
-            // the samples cover the step evenly within a few rounds
-            float2 pixel = floor(uv * CloudResolution);
-            float jitter = frac(Hash12(pixel) + CloudFrame * 0.618034);
+            // A random start per pixel stepping through the golden ratio sequence, one sample per round of the interleave
+            // (the pixel is marched every fourth frame): the samples cover the step evenly within a few rounds. An integer
+            // hash: float hashes of pixel coordinates repeat every few pixels, a lattice through thin clouds.
+            uint2 pixel = (uint2)(uv * CloudResolution);
+            float jitter = frac(NoiseHash(uint3(pixel, 7u)) * (1.0 / 4294967296.0) + floor(CloudFrame * 0.25) * 0.618034);
 
             float meanDistance;
             return MarchClouds(CloudEye, direction, CloudEye, CloudSteps, CloudLightSteps, CloudMaxDistance, jitter, true, CloudPixelAngle, meanDistance);

@@ -15,6 +15,9 @@ namespace Stride.Atmosphere
         stage TextureCube SkyCaptureCube;
         stage float SkyCaptureMip;
         stage RWBuffer<float4> SkyHarmonicsOutput;
+        // The previous result and the weight of the new one (1: none kept): the sky light changes smoothly
+        stage Buffer<float4> SkyHarmonicsPrevious;
+        stage float SkyHarmonicsBlend;
 
         stage SamplerState SkyCaptureSampler
         {
@@ -108,10 +111,8 @@ namespace Stride.Atmosphere
             {
                 float4 sum = SkyHarmonicsSums[index];
                 float totalWeight = SkyHarmonicsSums[9].w;
-                if (index < 9)
-                    SkyHarmonicsOutput[index] = float4(sum.rgb * (4.0 * pi / max(totalWeight, 1e-6)), 0.0);
-                else
-                    SkyHarmonicsOutput[index] = float4(sum.rgb / max(sum.w, 1e-6), 1.0);
+                float4 result = index < 9 ? float4(sum.rgb * (4.0 * pi / max(totalWeight, 1e-6)), 0.0) : float4(sum.rgb / max(sum.w, 1e-6), 1.0);
+                SkyHarmonicsOutput[index] = lerp(SkyHarmonicsPrevious[index], result, SkyHarmonicsBlend);
             }
         }
     };

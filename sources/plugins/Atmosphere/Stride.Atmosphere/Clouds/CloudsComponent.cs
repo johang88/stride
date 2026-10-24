@@ -194,25 +194,25 @@ public sealed class LowCloudLayer
     /// Extinction per meter inside the clouds (denser: sharper, more opaque).
     /// </summary>
     [DataMember(30)]
-    [DefaultValue(0.04f)]
+    [DefaultValue(0.06f)]
     [DataMemberRange(0.001, 1, 0.001, 0.01, 4)]
-    public float Density { get; set; } = 0.04f;
+    public float Density { get; set; } = 0.06f;
 
     /// <summary>
     /// Size of the shape noise (meters): the lumps the clouds are carved from.
     /// </summary>
     [DataMember(40)]
-    [DefaultValue(3200.0f)]
+    [DefaultValue(2200.0f)]
     [DataMemberRange(100, 50000, 50, 500, 0)]
-    public float ShapeScale { get; set; } = 3200.0f;
+    public float ShapeScale { get; set; } = 2200.0f;
 
     /// <summary>
     /// Size of the detail noise (meters): the wisps and curls on the edges.
     /// </summary>
     [DataMember(50)]
-    [DefaultValue(420.0f)]
+    [DefaultValue(300.0f)]
     [DataMemberRange(10, 10000, 10, 100, 0)]
-    public float DetailScale { get; set; } = 420.0f;
+    public float DetailScale { get; set; } = 300.0f;
 
     /// <summary>
     /// How much the noise carves the clouds (0-1): 0 smooth blobs, 1 billowing, cauliflower clouds.
@@ -252,27 +252,27 @@ public sealed class MidCloudLayer
     public float BaseAltitude { get; set; } = 5200.0f;
 
     [DataMember(20)]
-    [DefaultValue(700.0f)]
+    [DefaultValue(550.0f)]
     [DataMemberRange(50, 5000, 10, 100, 0)]
-    public float Thickness { get; set; } = 700.0f;
+    public float Thickness { get; set; } = 550.0f;
 
     [DataMember(30)]
-    [DefaultValue(0.025f)]
+    [DefaultValue(0.02f)]
     [DataMemberRange(0.001, 1, 0.001, 0.01, 4)]
-    public float Density { get; set; } = 0.025f;
+    public float Density { get; set; } = 0.02f;
 
     /// <summary>
     /// Size of the cloudlets' noise (meters).
     /// </summary>
     [DataMember(40)]
-    [DefaultValue(3500.0f)]
+    [DefaultValue(2400.0f)]
     [DataMemberRange(100, 50000, 50, 500, 0)]
-    public float ShapeScale { get; set; } = 3500.0f;
+    public float ShapeScale { get; set; } = 2400.0f;
 
     [DataMember(50)]
-    [DefaultValue(500.0f)]
+    [DefaultValue(260.0f)]
     [DataMemberRange(10, 10000, 10, 100, 0)]
-    public float DetailScale { get; set; } = 500.0f;
+    public float DetailScale { get; set; } = 260.0f;
 
     [DataMember(60)]
     [DefaultValue(0.85f)]
