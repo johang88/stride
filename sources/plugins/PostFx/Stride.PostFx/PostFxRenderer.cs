@@ -142,6 +142,10 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
     private FXAAEffect fxaa;
     private TemporalPass temporal;
     private CameraEffectsPass cameraEffects;
+    private ImageEffectShader heatHaze;
+    private readonly Vector4[] heatShapes = new Vector4[MaxHeatSources];
+    private readonly Vector4[] heatParameters = new Vector4[MaxHeatSources];
+    private const int MaxHeatSources = 16;
     private ScreenSpacePass screenSpacePass;
     private readonly PostFxScreenSpace screenSpace = new();
     private readonly ContactShadowReceiverExtension contactShadowExtension = new();
@@ -245,6 +249,13 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
     public int MotionBlurSamples { get; set; } = 12;
 
     /// <summary>
+    /// Whether hot air shimmers (heat sources, hot ground).
+    /// </summary>
+    [DataMember(52)]
+    [DefaultValue(true)]
+    public bool HeatHaze { get; set; } = true;
+
+    /// <summary>
     /// Whether the bright light glows.
     /// </summary>
     [DataMember(50)]
@@ -308,6 +319,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         exposure.Initialize(GraphicsDevice);
         fxaa = ToLoadAndUnload(new FXAAEffect { InputLuminanceInAlpha = true });
         temporal = new TemporalPass(ToLoadAndUnload(new ImageEffectShader("PostFxTemporal")));
+        heatHaze = ToLoadAndUnload(new ImageEffectShader("PostFxHeatHaze"));
         cameraEffects = new CameraEffectsPass(Context, ToLoadAndUnload(new ImageEffectShader("PostFxMotionBlur")), ToLoadAndUnload(new ImageEffectShader("PostFxDepthOfFieldComposite")));
         screenSpacePass = new ScreenSpacePass(Context);
         contactShadowExtension.ScreenSpace = screenSpace;
@@ -426,6 +438,14 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
             {
                 targets.IndirectValid = false;
             }
+        }
+
+        // Hot air bending what is seen through it (after the temporal accumulation, which would smooth it away)
+        if (HeatHaze && depth != null && renderContext.RenderView.Projection.M44 != 1.0f)
+        {
+            var hazed = DrawHeatHaze(context, renderContext, state, profile, scene, depth);
+            if (hazed != null)
+                scene = hazed;
         }
 
         // The camera: depth of field, then motion blur
@@ -567,6 +587,58 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
             views.Add(view, state = new ViewState());
         state.LastFrame = frameCounter;
         return state;
+    }
+
+    /// <summary>
+    /// The heat haze of the nearest heat sources and the hot ground, or null where nothing shimmers.
+    /// </summary>
+    private Texture DrawHeatHaze(RenderDrawContext context, RenderContext renderContext, ViewState state, PostFxProfile profile, Texture scene, Texture depth)
+    {
+        var view = renderContext.RenderView;
+        Matrix.Invert(ref view.View, out var viewInverse);
+        var eye = viewInverse.TranslationVector;
+        var count = 0;
+        if (renderContext.Services.GetService<PostFxVolumes>() is { } volumes)
+        {
+            // The nearest that can be seen (by the distance to their columns)
+            foreach (var source in volumes.HeatSources.OrderBy(x => x.Entity == null ? float.MaxValue : Vector3.DistanceSquared(x.Entity.Transform.WorldMatrix.TranslationVector, eye)))
+            {
+                if (count == MaxHeatSources)
+                    break;
+                if (!source.Enabled || source.Strength <= 0.0f || source.Entity?.Scene == null)
+                    continue;
+                var position = source.Entity.Transform.WorldMatrix.TranslationVector;
+                if (Vector3.Distance(position, eye) > 150.0f + source.Height)
+                    break;
+                heatShapes[count] = new Vector4(position, source.Radius);
+                heatParameters[count] = new Vector4(source.Height, source.Strength, source.RiseSpeed, 0.0f);
+                count++;
+            }
+        }
+        var ground = profile.HeatHaze.GroundShimmer;
+        if (count == 0 && ground <= 0.0f)
+            return null;
+
+        var viewProjection = state.Temporal?.UnjitteredViewProjection is { } unjittered && unjittered != default ? unjittered : view.ViewProjection;
+        Matrix.Invert(ref viewProjection, out var inverseViewProjection);
+        var parameters = heatHaze.Parameters;
+        parameters.Set(PostFxHeatHazeKeys.HeatInverseViewProjection, inverseViewProjection);
+        parameters.Set(PostFxHeatHazeKeys.HeatCameraPosition, eye);
+        parameters.Set(PostFxHeatHazeKeys.HeatTime, (float)((renderContext.Time?.Total.TotalSeconds ?? 0.0) % 3600.0));
+        parameters.Set(PostFxHeatHazeKeys.HeatSourceShapes, heatShapes);
+        parameters.Set(PostFxHeatHazeKeys.HeatSourceParameters, heatParameters);
+        parameters.Set(PostFxHeatHazeKeys.HeatSourceCount, count);
+        parameters.Set(PostFxHeatHazeKeys.HeatGroundShimmer, ground);
+        parameters.Set(PostFxHeatHazeKeys.HeatGroundDistance, Math.Max(profile.HeatHaze.GroundDistance, 1.0f));
+        // (about 4 pixels at 1080p for a campfire)
+        var pixels = 4.0f * scene.ViewHeight / 1080.0f;
+        parameters.Set(PostFxHeatHazeKeys.HeatDisplacement, new Vector2(pixels / scene.ViewWidth, pixels / scene.ViewHeight));
+        var output = NewScopedRenderTarget2D(scene.ViewWidth, scene.ViewHeight, scene.ViewFormat);
+        heatHaze.SetInput(0, scene);
+        heatHaze.SetInput(1, depth);
+        heatHaze.SetOutput(output);
+        heatHaze.Draw(context, "PostFx.HeatHaze");
+        return output;
     }
 
     private void Resolve(RenderContext context, RenderView view, ViewState state)

@@ -122,3 +122,40 @@ public sealed class PostFxMotionBlurSettings : PostFxSettingsGroup
         MaxBlur = s.MaxBlur;
     }
 }
+
+/// <summary>
+/// Heat haze over the ground: far, grazing views shimmer (deserts, summer roads). Heat sources are components.
+/// </summary>
+[DataContract("PostFxHeatHazeSettings")]
+public sealed class PostFxHeatHazeSettings : PostFxSettingsGroup
+{
+    /// <summary>
+    /// Strength of the ground's shimmer (0: none).
+    /// </summary>
+    [DataMember(10)]
+    [DefaultValue(0.0f)]
+    [DataMemberRange(0, 2, 0.01, 0.1, 2)]
+    public float GroundShimmer { get; set; }
+
+    /// <summary>
+    /// Distance the ground's shimmer starts at (meters), full at twice it.
+    /// </summary>
+    [DataMember(20)]
+    [DefaultValue(60.0f)]
+    [DataMemberRange(1, 5000, 1, 10, 0)]
+    public float GroundDistance { get; set; } = 60.0f;
+
+    internal override void BlendTowards(PostFxSettingsGroup target, float amount)
+    {
+        var t = (PostFxHeatHazeSettings)target;
+        GroundShimmer = MathUtil.Lerp(GroundShimmer, t.GroundShimmer, amount);
+        GroundDistance = MathUtil.Lerp(GroundDistance, t.GroundDistance, amount);
+    }
+
+    internal override void CopyFrom(PostFxSettingsGroup source)
+    {
+        var s = (PostFxHeatHazeSettings)source;
+        GroundShimmer = s.GroundShimmer;
+        GroundDistance = s.GroundDistance;
+    }
+}

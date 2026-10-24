@@ -1,0 +1,131 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// Heat haze: the image seen through hot air bent by a rising noise. Each pixel's view ray is cut by the columns of the
+    /// heat sources (as far as the surface it sees), the length crossed weighting their shimmer; far, grazing rays shimmer
+    /// over hot ground. A sample is only moved to a surface behind the hot air (the foreground never smears).
+    /// Texture0 = the scene, Texture1 = the depth.
+    /// </summary>
+    shader PostFxHeatHaze : ImageEffectShader
+    {
+        cbuffer PerDraw
+        {
+            // The (unjittered) clip space to the world
+            stage float4x4 HeatInverseViewProjection;
+            stage float3 HeatCameraPosition;
+            stage float HeatTime;
+            // Base (xyz) and radius (w) of the columns, and their height, strength, rise speed
+            stage float4 HeatSourceShapes[16];
+            stage float4 HeatSourceParameters[16];
+            stage int HeatSourceCount;
+            // Strength of the ground's shimmer, and the distance it starts at (meters)
+            stage float HeatGroundShimmer;
+            stage float HeatGroundDistance;
+            // Largest displacement (uv)
+            stage float2 HeatDisplacement;
+        };
+
+        stage float Hash(float2 p)
+        {
+            return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453);
+        }
+
+        stage float ValueNoise(float2 p)
+        {
+            float2 i = floor(p);
+            float2 f = frac(p);
+            float2 u = f * f * (3.0 - 2.0 * f);
+            return lerp(lerp(Hash(i), Hash(i + float2(1, 0)), u.x), lerp(Hash(i + float2(0, 1)), Hash(i + float2(1, 1)), u.x), u.y);
+        }
+
+        // A displacement in -1..1 from two octaves of noise
+        stage float2 Shimmer(float2 p)
+        {
+            float2 a = float2(ValueNoise(p), ValueNoise(p + 17.3));
+            float2 b = float2(ValueNoise(p * 2.3 + 5.1), ValueNoise(p * 2.3 + 41.7));
+            return (a * 0.65 + b * 0.35) * 2.0 - 1.0;
+        }
+
+        stage float RayLength(float2 uv)
+        {
+            float depth = Texture1.SampleLevel(PointSampler, uv, 0).r;
+            float4 world = mul(float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0), HeatInverseViewProjection);
+            return world.w > 1e-6 ? length(world.xyz / world.w - HeatCameraPosition) : 1e9;
+        }
+
+        stage override float4 Shading()
+        {
+            float2 uv = streams.TexCoord;
+            float4 far = mul(float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.5, 1.0), HeatInverseViewProjection);
+            float3 direction = normalize(far.xyz / far.w - HeatCameraPosition);
+            float sceneLength = RayLength(uv);
+
+            float2 displacement = 0.0;
+            float entry = 1e9;
+            for (int i = 0; i < HeatSourceCount; i++)
+            {
+                float4 shape = HeatSourceShapes[i];
+                float4 parameters = HeatSourceParameters[i];
+                float3 o = HeatCameraPosition - shape.xyz;
+                // The ray in the vertical cylinder (xz), then within its height
+                float a = dot(direction.xz, direction.xz);
+                float b = dot(o.xz, direction.xz);
+                float c = dot(o.xz, o.xz) - shape.w * shape.w;
+                float discriminant = b * b - a * c;
+                if (discriminant <= 0.0 || a < 1e-6)
+                    continue;
+                float root = sqrt(discriminant);
+                float t0 = (-b - root) / a;
+                float t1 = (-b + root) / a;
+                if (abs(direction.y) > 1e-5)
+                {
+                    float ya = -o.y / direction.y;
+                    float yb = (parameters.x - o.y) / direction.y;
+                    t0 = max(t0, min(ya, yb));
+                    t1 = min(t1, max(ya, yb));
+                }
+                else if (o.y < 0.0 || o.y > parameters.x)
+                {
+                    continue;
+                }
+                t0 = max(t0, 0.0);
+                t1 = min(t1, sceneLength);
+                if (t1 <= t0)
+                    continue;
+
+                float middle = (t0 + t1) * 0.5;
+                float3 position = o + direction * middle;
+                float height = saturate(position.y / parameters.x);
+                // (strongest low in the column, gone at its top)
+                float fade = pow(1.0 - height, 1.5) * saturate(height * 8.0 + 0.2);
+                float weight = (t1 - t0) / (2.0 * shape.w) * parameters.y * fade;
+                float2 p = float2(position.x + position.z, position.y - HeatTime * parameters.z) * 5.0;
+                displacement += Shimmer(p) * weight;
+                entry = min(entry, t0);
+            }
+
+            if (HeatGroundShimmer > 0.0 && sceneLength < 1e8)
+            {
+                float weight = HeatGroundShimmer * saturate((sceneLength - HeatGroundDistance) / HeatGroundDistance) * (1.0 - saturate(abs(direction.y) * 8.0));
+                if (weight > 0.0)
+                {
+                    float2 p = float2(uv.x * 90.0, uv.y * 260.0 + HeatTime * 3.0);
+                    displacement += Shimmer(p) * weight * float2(0.4, 1.0);
+                    entry = min(entry, HeatGroundDistance);
+                }
+            }
+
+            float4 color = Texture0.SampleLevel(PointSampler, uv, 0);
+            if (all(displacement == 0.0))
+                return color;
+            float2 shifted = uv + clamp(displacement, -1.5, 1.5) * HeatDisplacement;
+            // (only what is behind the hot air is seen bent)
+            if (RayLength(shifted) < entry)
+                return color;
+            return float4(Texture0.SampleLevel(LinearSampler, shifted, 0).rgb, color.a);
+        }
+    };
+}

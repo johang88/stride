@@ -3,13 +3,14 @@
 
 using System;
 using System.Collections.Generic;
+using Stride.Core;
 using Stride.Core.Mathematics;
 using Stride.Engine;
 
 namespace Stride.PostFx;
 
 /// <summary>
-/// The post-processing volumes of the scenes, for the renderer to blend at its cameras.
+/// The post-processing volumes of the scenes, for the renderer to blend at its cameras, and the heat sources.
 /// </summary>
 public sealed class PostFxVolumes
 {
@@ -21,6 +22,22 @@ public sealed class PostFxVolumes
     /// each blends the groups it overrides by its weight.
     /// </summary>
     public List<(PostFxProfile Profile, float Weight)> Overrides { get; } = new();
+
+    internal List<PostFxHeatSourceComponent> HeatSources { get; } = new();
+
+    /// <summary>
+    /// The service of a game, created when missing.
+    /// </summary>
+    internal static PostFxVolumes GetOrCreate(IServiceRegistry services)
+    {
+        var volumes = services.GetService<PostFxVolumes>();
+        if (volumes == null)
+        {
+            volumes = new PostFxVolumes();
+            services.AddService(volumes);
+        }
+        return volumes;
+    }
 
     internal void Add(PostFxVolumeComponent volume) => volumes.Add(volume);
 
@@ -63,12 +80,7 @@ public sealed class PostFxVolumeProcessor : EntityProcessor<PostFxVolumeComponen
 
     protected override void OnSystemAdd()
     {
-        volumes = Services.GetService<PostFxVolumes>();
-        if (volumes == null)
-        {
-            volumes = new PostFxVolumes();
-            Services.AddService(volumes);
-        }
+        volumes = PostFxVolumes.GetOrCreate(Services);
     }
 
     protected override void OnEntityComponentAdding(Entity entity, PostFxVolumeComponent component, PostFxVolumeComponent data)
