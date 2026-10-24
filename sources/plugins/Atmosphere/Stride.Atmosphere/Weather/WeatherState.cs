@@ -162,7 +162,7 @@ public sealed class WeatherState
     /// </summary>
     public static WeatherState FromPreset(WeatherPreset preset) => preset switch
     {
-        WeatherPreset.Clear => new() { CloudCoverage = 0.0f, MidCloudCoverage = 0.0f, HighCloudCoverage = 0.12f, HighCloudType = 0.9f, Contrails = 0.3f, WindSpeed = 6.0f, Haze = 0.8f },
+        WeatherPreset.Clear => new() { CloudCoverage = 0.0f, MidCloudCoverage = 0.0f, HighCloudCoverage = 0.12f, HighCloudType = 0.9f, WindSpeed = 6.0f, Haze = 0.8f },
         WeatherPreset.Fair => new() { CloudCoverage = 0.22f, CloudType = 0.42f, MidCloudCoverage = 0.05f, HighCloudCoverage = 0.3f, HighCloudType = 0.85f, WindSpeed = 8.0f },
         WeatherPreset.Scattered => new() { CloudCoverage = 0.45f, CloudType = 0.55f, MidCloudCoverage = 0.25f, MidCloudType = 0.8f, HighCloudCoverage = 0.35f, WindSpeed = 10.0f },
         WeatherPreset.Towering => new() { CloudCoverage = 0.42f, CloudType = 0.88f, MidCloudCoverage = 0.15f, HighCloudCoverage = 0.45f, HighCloudType = 0.6f, WindSpeed = 12.0f, Haze = 1.3f },
@@ -170,7 +170,7 @@ public sealed class WeatherState
         WeatherPreset.Overcast => new() { CloudCoverage = 0.95f, CloudType = 0.18f, MidCloudCoverage = 0.8f, MidCloudType = 0.1f, HighCloudCoverage = 0.0f, WindSpeed = 9.0f, Haze = 1.8f, FogDensity = 1.5f },
         WeatherPreset.Storm => new() { CloudCoverage = 0.97f, CloudType = 0.8f, MidCloudCoverage = 0.95f, MidCloudType = 0.0f, HighCloudCoverage = 0.2f, HighCloudType = 0.3f, Precipitation = 1.0f, WindSpeed = 18.0f, Haze = 2.5f, FogDensity = 2.0f },
         WeatherPreset.Broken => new() { CloudCoverage = 0.25f, CloudType = 0.3f, MidCloudCoverage = 0.95f, MidCloudType = 0.55f, HighCloudCoverage = 0.25f, HighCloudType = 0.7f, WindSpeed = 11.0f, Haze = 1.2f },
-        WeatherPreset.Veiled => new() { CloudCoverage = 0.05f, CloudType = 0.4f, MidCloudCoverage = 0.0f, HighCloudCoverage = 0.97f, HighCloudType = 0.1f, Contrails = 0.8f, WindSpeed = 9.0f, Haze = 1.9f },
+        WeatherPreset.Veiled => new() { CloudCoverage = 0.05f, CloudType = 0.4f, MidCloudCoverage = 0.0f, HighCloudCoverage = 0.97f, HighCloudType = 0.1f, WindSpeed = 9.0f, Haze = 1.9f },
         WeatherPreset.Foggy => new() { CloudCoverage = 0.75f, CloudType = 0.05f, MidCloudCoverage = 0.4f, MidCloudType = 0.0f, HighCloudCoverage = 0.0f, WindSpeed = 3.0f, Haze = 3.0f, FogDensity = 4.0f },
         _ => new(),
     };
@@ -233,7 +233,7 @@ public enum WeatherPreset
     Broken,
 
     /// <summary>
-    /// A milky veil of cirrostratus with fibres and contrails, a hazy glow around the sun.
+    /// A milky veil of cirrostratus with fibres, a hazy glow around the sun.
     /// </summary>
     Veiled,
 }
