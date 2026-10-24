@@ -1,0 +1,83 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// Contact shadows: a short march from each pixel towards the light through the view's distances, for the small
+    /// shadows the shadow maps are too coarse for (grass on the ground, feet, props, creases). A step hidden behind a
+    /// surface by less than a thickness occludes (no shadow from what lies far behind). Groups of 8x8 threads.
+    /// Output: 1 lit, 0 shadowed.
+    /// </summary>
+    shader PostFxContactShadows : ComputeShaderBase, PostFxViewSpace, PostFxCommon
+    {
+        stage Texture2D<float> ContactDistance;
+        stage RWTexture2D<float> ContactOutput;
+
+        stage SamplerState ContactPointClamp
+        {
+            Filter = MIN_MAG_MIP_POINT;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        cbuffer PerDispatch
+        {
+            // Direction towards the light (view space: x right, y up, z forward)
+            stage float3 ContactLightDirection;
+            // Length of the march (meters)
+            stage float ContactLength;
+            // Thickness assumed of the surfaces (meters at one meter: grows with the distance)
+            stage float ContactThickness;
+            // Distance beyond which the contact shadows fade out (meters)
+            stage float ContactFadeDistance;
+            stage int ContactSteps;
+            stage float ContactFrame;
+        };
+
+        override void Compute()
+        {
+            int2 pixel = (int2)streams.DispatchThreadId.xy;
+            if (any(pixel >= (int2)ViewSize.xy))
+                return;
+            float2 uv = (pixel + 0.5) * ViewSize.zw;
+            float distance = ContactDistance.Load(int3(pixel, 0));
+            if (distance > ContactFadeDistance)
+            {
+                ContactOutput[pixel] = 1.0;
+                return;
+            }
+
+            float3 position = ViewPosition(uv, distance);
+            // (longer marches far away, so the shadows keep their size on screen roughly)
+            float marchLength = ContactLength * lerp(1.0, 3.0, saturate(distance / ContactFadeDistance));
+            float stepLength = marchLength / ContactSteps;
+            float jitter = PostFxFrameNoise(pixel, ContactFrame, 7.0);
+            float bias = 0.002 * distance + 0.01;
+
+            float lit = 1.0;
+            for (int i = 0; i < ContactSteps; i++)
+            {
+                float3 sample = position + ContactLightDirection * (stepLength * (i + jitter) + bias);
+                if (sample.z <= 0.05)
+                    break;
+                float2 sampleUv = ViewToUv(sample);
+                if (any(sampleUv < 0.0) || any(sampleUv > 1.0))
+                    break;
+                float scene = ContactDistance.SampleLevel(ContactPointClamp, sampleUv, 0);
+                float behind = sample.z - scene;
+                if (behind > bias && behind < ContactThickness * sample.z + 0.05)
+                {
+                    // (softer the farther along the march it was hidden)
+                    lit = saturate((float)i / ContactSteps * 0.6);
+                    break;
+                }
+            }
+
+            // Faded out far away and at the edges of the screen (the march leaves it)
+            float fade = saturate((ContactFadeDistance - distance) / (ContactFadeDistance * 0.3));
+            float2 edge = saturate(min(uv, 1.0 - uv) * 20.0);
+            ContactOutput[pixel] = lerp(1.0, lit, fade * edge.x * edge.y);
+        }
+    };
+}

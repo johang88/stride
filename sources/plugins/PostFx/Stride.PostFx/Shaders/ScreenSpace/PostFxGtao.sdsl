@@ -1,0 +1,142 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// Ground truth ambient occlusion (Jimenez et al. 2016, after Intel's XeGTAO): for a few slice directions around each
+    /// pixel, the horizons on both sides are found in the distance pyramid, and the visible arc between them integrated
+    /// against the normal (projected in the slice). The normal comes from the depth (the smaller step on each axis: no
+    /// halos at edges). The noise changes every frame: temporal anti-aliasing averages it. Groups of 8x8 threads.
+    /// </summary>
+    shader PostFxGtao : ComputeShaderBase, PostFxViewSpace, PostFxCommon
+    {
+        stage Texture2D<float> GtaoDistance;
+        stage RWTexture2D<float> GtaoOutput;
+
+        stage SamplerState GtaoPointClamp
+        {
+            Filter = MIN_MAG_MIP_POINT;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        cbuffer PerDispatch
+        {
+            // Radius (meters)
+            stage float GtaoRadius;
+            // Strength (an exponent on the visibility)
+            stage float GtaoPower;
+            stage int GtaoSlices;
+            stage int GtaoSteps;
+            stage float GtaoFrame;
+            // Pixels covered by a meter at a distance of one meter (for the radius on screen)
+            stage float GtaoPixelsPerMeter;
+        };
+
+        stage float3 PositionAt(float2 uv, float mip)
+        {
+            return ViewPosition(uv, GtaoDistance.SampleLevel(GtaoPointClamp, uv, mip));
+        }
+
+        override void Compute()
+        {
+            int2 pixel = (int2)streams.DispatchThreadId.xy;
+            if (any(pixel >= (int2)ViewSize.xy))
+                return;
+            float2 texel = ViewSize.zw;
+            float2 uv = (pixel + 0.5) * texel;
+
+            float distance = GtaoDistance.Load(int3(pixel, 0));
+            // (the sky and the far plane: nothing to occlude)
+            if (distance > 5000.0)
+            {
+                GtaoOutput[pixel] = 1.0;
+                return;
+            }
+            float3 position = ViewPosition(uv, distance);
+
+            // The normal from the neighbours: on each axis the side closer in depth (the same surface)
+            float3 left = ViewPosition(uv - float2(texel.x, 0), GtaoDistance.Load(int3(pixel - int2(1, 0), 0)));
+            float3 right = ViewPosition(uv + float2(texel.x, 0), GtaoDistance.Load(int3(pixel + int2(1, 0), 0)));
+            float3 up = ViewPosition(uv - float2(0, texel.y), GtaoDistance.Load(int3(pixel - int2(0, 1), 0)));
+            float3 down = ViewPosition(uv + float2(0, texel.y), GtaoDistance.Load(int3(pixel + int2(0, 1), 0)));
+            float3 dx = abs(right.z - position.z) < abs(position.z - left.z) ? right - position : position - left;
+            float3 dy = abs(down.z - position.z) < abs(position.z - up.z) ? down - position : position - up;
+            float3 normal = normalize(cross(dy, dx));
+            float3 viewVector = normalize(-position);
+            if (dot(normal, viewVector) < 0.0)
+                normal = -normal;
+
+            // Noise per pixel and frame: the slices turn, the steps shift
+            float sliceNoise = PostFxFrameNoise(pixel, GtaoFrame, 5.0);
+            float stepNoise = PostFxFrameNoise(pixel, GtaoFrame, 6.0);
+
+            float radiusPixels = GtaoRadius * GtaoPixelsPerMeter / distance;
+            // (too small on screen: nothing to find)
+            if (radiusPixels < 1.0)
+            {
+                GtaoOutput[pixel] = 1.0;
+                return;
+            }
+            radiusPixels = min(radiusPixels, 256.0);
+            float falloffRange = GtaoRadius * 0.6;
+            float falloffFrom = GtaoRadius - falloffRange;
+            float falloffMul = -1.0 / falloffRange;
+            float falloffAdd = falloffFrom / falloffRange + 1.0;
+
+            float visibility = 0.0;
+            const float halfPi = 1.5707963;
+            for (int slice = 0; slice < GtaoSlices; slice++)
+            {
+                float phi = (slice + sliceNoise) / GtaoSlices * 3.14159265;
+                float2 omega = float2(cos(phi), -sin(phi));
+                float3 direction = float3(cos(phi), sin(phi), 0.0);
+                float3 orthoDirection = direction - dot(direction, viewVector) * viewVector;
+                float3 axis = normalize(cross(orthoDirection, viewVector));
+                float3 projectedNormal = normal - axis * dot(normal, axis);
+                float projectedLength = length(projectedNormal);
+                float signNormal = sign(dot(orthoDirection, projectedNormal));
+                float cosNormal = saturate(dot(projectedNormal, viewVector) / max(projectedLength, 1e-4));
+                float n = signNormal * acos(cosNormal);
+                float lowCos0 = cos(n + halfPi);
+                float lowCos1 = cos(n - halfPi);
+                float horizonCos0 = lowCos0;
+                float horizonCos1 = lowCos1;
+
+                for (int step = 0; step < GtaoSteps; step++)
+                {
+                    float s = (step + stepNoise) / GtaoSteps;
+                    s = s * s;
+                    float2 offsetPixels = round(max(s * radiusPixels, step + 1.0) * omega);
+                    float2 offset = offsetPixels * texel;
+                    float mip = clamp(log2(length(offsetPixels)) - 3.3, 0.0, 4.0);
+
+                    float3 delta0 = PositionAt(uv + offset, mip) - position;
+                    float3 delta1 = PositionAt(uv - offset, mip) - position;
+                    float length0 = length(delta0);
+                    float length1 = length(delta1);
+                    float cos0 = dot(delta0 / max(length0, 1e-4), viewVector);
+                    float cos1 = dot(delta1 / max(length1, 1e-4), viewVector);
+                    float weight0 = saturate(length0 * falloffMul + falloffAdd);
+                    float weight1 = saturate(length1 * falloffMul + falloffAdd);
+                    horizonCos0 = max(horizonCos0, lerp(lowCos0, cos0, weight0));
+                    horizonCos1 = max(horizonCos1, lerp(lowCos1, cos1, weight1));
+                }
+
+                // (a little more weight to slices seen side on: less flicker)
+                projectedLength = lerp(projectedLength, 1.0, 0.05);
+                float h0 = -acos(clamp(horizonCos1, -1.0, 1.0));
+                float h1 = acos(clamp(horizonCos0, -1.0, 1.0));
+                h0 = n + clamp(h0 - n, -halfPi, halfPi);
+                h1 = n + clamp(h1 - n, -halfPi, halfPi);
+                float arc0 = (cosNormal + 2.0 * h0 * sin(n) - cos(2.0 * h0 - n)) * 0.25;
+                float arc1 = (cosNormal + 2.0 * h1 * sin(n) - cos(2.0 * h1 - n)) * 0.25;
+                visibility += projectedLength * (arc0 + arc1);
+            }
+            visibility = saturate(visibility / GtaoSlices);
+            visibility = pow(visibility, GtaoPower);
+            GtaoOutput[pixel] = max(visibility, 0.03);
+        }
+    };
+}

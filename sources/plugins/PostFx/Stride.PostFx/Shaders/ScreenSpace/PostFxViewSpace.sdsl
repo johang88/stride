@@ -1,0 +1,40 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// View space from the depth buffer (reversed, perspective): x right, y up, z the distance in front of the camera.
+    /// </summary>
+    shader PostFxViewSpace
+    {
+        cbuffer PerView
+        {
+            // 1 / M11, 1 / M22, M31, M32 of the projection (its jitter included)
+            stage float4 ViewProjectionInfo;
+            // M33, M43 of the projection
+            stage float2 ViewDepthInfo;
+            // Size of the view (pixels), and its inverse
+            stage float4 ViewSize;
+        };
+
+        // Distance in front of the camera of a depth buffer value
+        stage float ViewDistance(float depth)
+        {
+            return ViewDepthInfo.y / (depth + ViewDepthInfo.x);
+        }
+
+        stage float3 ViewPosition(float2 uv, float distance)
+        {
+            float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+            return float3((ndc + ViewProjectionInfo.zw) * ViewProjectionInfo.xy * distance, distance);
+        }
+
+        // Back to the screen: the uv of a view space position
+        stage float2 ViewToUv(float3 position)
+        {
+            float2 ndc = position.xy / (ViewProjectionInfo.xy * position.z) - ViewProjectionInfo.zw;
+            return float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+        }
+    };
+}

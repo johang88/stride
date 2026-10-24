@@ -10,7 +10,11 @@ using Stride.Core;
 using Stride.Core.Annotations;
 using Stride.Core.Mathematics;
 using Stride.Graphics;
+using Stride.Engine;
 using Stride.PostFx.Passes;
+using Stride.PostFx.ScreenSpace;
+using Stride.Rendering.Lights;
+using Stride.Rendering.Shadows;
 using Stride.Rendering;
 using Stride.Rendering.Compositing;
 using Stride.Rendering.ComputeEffect;
@@ -83,6 +87,39 @@ public enum PostFxAntialiasing
 }
 
 /// <summary>
+/// Quality of the screen-space ambient occlusion.
+/// </summary>
+public enum PostFxAmbientOcclusionQuality
+{
+    Off,
+
+    /// <summary>
+    /// Two slices of three steps.
+    /// </summary>
+    Low,
+
+    /// <summary>
+    /// Two slices of four steps.
+    /// </summary>
+    Medium,
+
+    /// <summary>
+    /// Three slices of five steps.
+    /// </summary>
+    High,
+}
+
+/// <summary>
+/// A buffer of the renderer shown instead of the image.
+/// </summary>
+public enum PostFxDebugView
+{
+    None,
+    AmbientOcclusion,
+    ContactShadows,
+}
+
+/// <summary>
 /// The post-processing of a forward renderer: automatic exposure, a physically based glow, grading and the display
 /// transform in one final pass, lens effects. The look (exposure compensation, glow, grading, lens) comes from the
 /// post-processing volumes of the scene, blended at the camera; these are the renderer's quality settings and the look
@@ -90,17 +127,22 @@ public enum PostFxAntialiasing
 /// </summary>
 [DataContract("PostFxRenderer")]
 [Display("Post-processing (PostFx)")]
-public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects
+public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScreenSpaceLightingEffects
 {
     private const int ViewTimeout = 120;
 
     private readonly Dictionary<RenderView, ViewState> views = new();
     private readonly List<RenderView> staleViews = new();
     private ImageEffectShader finalShader;
+    private ImageEffectShader debugShader;
     private BloomPass bloom;
     private ExposurePass exposure;
     private FXAAEffect fxaa;
     private TemporalPass temporal;
+    private ScreenSpacePass screenSpacePass;
+    private readonly PostFxScreenSpace screenSpace = new();
+    private readonly ContactShadowReceiverExtension contactShadowExtension = new();
+    private LightDirectionalShadowMapRenderer shadowMapRenderer;
     private Texture tonyMcMapface;
     private Texture black;
     private int frame;
@@ -148,6 +190,20 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects
     public float Exposure { get; set; }
 
     /// <summary>
+    /// Quality of the ambient occlusion (from the depth prepass, on the light from around: the sky, the probes).
+    /// </summary>
+    [DataMember(45)]
+    [DefaultValue(PostFxAmbientOcclusionQuality.Medium)]
+    public PostFxAmbientOcclusionQuality AmbientOcclusion { get; set; } = PostFxAmbientOcclusionQuality.Medium;
+
+    /// <summary>
+    /// Whether the main directional light casts contact shadows (from the depth prepass).
+    /// </summary>
+    [DataMember(46)]
+    [DefaultValue(true)]
+    public bool ContactShadows { get; set; } = true;
+
+    /// <summary>
     /// Whether the bright light glows.
     /// </summary>
     [DataMember(50)]
@@ -176,6 +232,12 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects
     public float ExposureOffset { get; set; }
 
     /// <summary>
+    /// A buffer shown instead of the image (not saved).
+    /// </summary>
+    [DataMemberIgnore]
+    public PostFxDebugView DebugView { get; set; }
+
+    /// <summary>
     /// The look of the last view drawn (the volumes blended at its camera).
     /// </summary>
     [DataMemberIgnore]
@@ -187,15 +249,26 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects
 
     public bool RequiresSpecularRoughnessBuffer => false;
 
+    /// <inheritdoc/>
+    [DataMemberIgnore]
+    public RenderStage OpaqueRenderStage
+    {
+        get => screenSpace.OpaqueStage;
+        set => screenSpace.OpaqueStage = value;
+    }
+
     protected override void InitializeCore()
     {
         base.InitializeCore();
         finalShader = ToLoadAndUnload(new ImageEffectShader("PostFxFinal"));
+        debugShader = ToLoadAndUnload(new ImageEffectShader("PostFxDebugView"));
         bloom = new BloomPass(ToLoadAndUnload(new ImageEffectShader("PostFxBloomDownsample")), ToLoadAndUnload(new ImageEffectShader("PostFxBloomUpsample")));
         exposure = new ExposurePass(new ComputeEffectShader(Context) { ShaderSourceName = "PostFxHistogram" }, new ComputeEffectShader(Context) { ShaderSourceName = "PostFxExposureAdapt" });
         exposure.Initialize(GraphicsDevice);
         fxaa = ToLoadAndUnload(new FXAAEffect { InputLuminanceInAlpha = true });
         temporal = new TemporalPass(ToLoadAndUnload(new ImageEffectShader("PostFxTemporal")));
+        screenSpacePass = new ScreenSpacePass(Context);
+        contactShadowExtension.ScreenSpace = screenSpace;
         tonyMcMapface = LoadTonyMcMapface(GraphicsDevice);
         black = Texture.New2D(GraphicsDevice, 1, 1, PixelFormat.R8G8B8A8_UNorm, new byte[] { 0, 0, 0, 0 });
     }
@@ -205,6 +278,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects
         foreach (var state in views.Values)
             state.Dispose();
         views.Clear();
+        shadowMapRenderer?.RemoveReceiverExtension(contactShadowExtension);
         exposure?.Dispose();
         tonyMcMapface?.Dispose();
         black?.Dispose();
@@ -220,6 +294,11 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects
             return;
         var state = GetState(view, context.RenderSystem.FrameCounter);
         Resolve(context, view, state);
+
+        // The screen-space lighting of the opaque surfaces
+        screenSpace.Enabled = AmbientOcclusion != PostFxAmbientOcclusionQuality.Off || ContactShadows;
+        if (screenSpace.Enabled)
+            EnsureScreenSpaceFeatures(context);
 
         // Temporal anti-aliasing: the frame rendered with a sub-pixel offset (after the camera set the view's matrices,
         // before anything uploads them), the meshes writing their motion
@@ -294,6 +373,19 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects
             fxaa.SetInput(0, target);
             fxaa.SetOutput(output);
             fxaa.Draw(context);
+        }
+
+        var debugTexture = DebugView switch
+        {
+            PostFxDebugView.AmbientOcclusion => state.ScreenSpaceTargets?.AmbientOcclusion,
+            PostFxDebugView.ContactShadows => state.ScreenSpaceTargets?.ContactShadows,
+            _ => null,
+        };
+        if (debugTexture != null)
+        {
+            debugShader.SetInput(0, debugTexture);
+            debugShader.SetOutput(output);
+            debugShader.Draw(context, "PostFx.DebugView");
         }
     }
 
@@ -426,6 +518,109 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects
         return result;
     }
 
+    /// <inheritdoc/>
+    public void DrawAfterDepthPrepass(RenderDrawContext context, Texture depthStencil)
+    {
+        var renderContext = context.RenderContext;
+        var view = renderContext.RenderView;
+        if (!screenSpace.Enabled || view == null || depthStencil == null)
+            return;
+        // (orthographic views have no distances to march in)
+        if (view.Projection.M44 == 1.0f)
+            return;
+
+        var frameCounter = renderContext.RenderSystem.FrameCounter;
+        var state = GetState(view, frameCounter);
+        if (state.ResolvedFrame != frameCounter)
+            Resolve(renderContext, view, state);
+        var profile = state.Profile;
+
+        state.ScreenSpaceTargets ??= new ScreenSpaceTargets();
+        var targets = state.ScreenSpaceTargets;
+        targets.Ensure(GraphicsDevice, depthStencil.ViewWidth, depthStencil.ViewHeight);
+        screenSpacePass.DrawPyramid(context, view, targets, depthStencil);
+
+        if (!screenSpace.Views.TryGetValue(view, out var data))
+            screenSpace.Views.Add(view, data = new ScreenSpaceViewData());
+        data.Frame = frameCounter;
+        data.ScreenSize = new Vector4(targets.Pyramid.Width, targets.Pyramid.Height, 1.0f / targets.Pyramid.Width, 1.0f / targets.Pyramid.Height);
+        data.PreviousViewProjection = state.Temporal?.HasPrevious == true ? state.Temporal.PreviousUnjitteredViewProjection : view.ViewProjection;
+
+        var occlusion = profile.AmbientOcclusion;
+        data.AmbientOcclusion = null;
+        if (AmbientOcclusion != PostFxAmbientOcclusionQuality.Off && occlusion.Intensity > 0.0f)
+        {
+            var (slices, steps) = AmbientOcclusion switch
+            {
+                PostFxAmbientOcclusionQuality.Low => (2, 3),
+                PostFxAmbientOcclusionQuality.Medium => (2, 4),
+                _ => (3, 5),
+            };
+            screenSpacePass.DrawAmbientOcclusion(context, view, targets, occlusion, slices, steps, frame);
+            data.AmbientOcclusion = targets.AmbientOcclusion;
+            data.AmbientOcclusionStrength = Math.Clamp(occlusion.Intensity, 0.0f, 2.0f);
+        }
+
+        var contact = profile.ContactShadows;
+        data.ContactShadows = null;
+        data.ContactLight = null;
+        if (ContactShadows && contact.Intensity > 0.0f && FindMainLight(renderContext) is { } light)
+        {
+            screenSpacePass.DrawContactShadows(context, view, targets, contact, -Vector3.Normalize(light.Direction), 16, frame);
+            data.ContactShadows = targets.ContactShadows;
+            data.ContactLight = light;
+            data.ContactShadowStrength = Math.Clamp(contact.Intensity, 0.0f, 1.0f);
+        }
+    }
+
+    /// <summary>
+    /// The brightest directional light with shadows: the one contact shadows are traced for.
+    /// </summary>
+    private static RenderLight FindMainLight(RenderContext context)
+    {
+        var lights = SceneInstance.GetCurrent(context)?.GetProcessor<LightProcessor>()?.Lights;
+        if (lights == null)
+            return null;
+        RenderLight best = null;
+        var bestLuminance = 0.0f;
+        foreach (var light in lights)
+        {
+            if (light.Type is not LightDirectional { Shadow.Enabled: true })
+                continue;
+            var color = light.Color;
+            var luminance = 0.2126f * color.R + 0.7152f * color.G + 0.0722f * color.B;
+            if (luminance > bestLuminance)
+            {
+                bestLuminance = luminance;
+                best = light;
+            }
+        }
+        return best;
+    }
+
+    /// <summary>
+    /// Adds the screen-space lighting of the opaque surfaces and the contact shadows to the render system.
+    /// </summary>
+    private void EnsureScreenSpaceFeatures(RenderContext context)
+    {
+        foreach (var feature in context.RenderSystem.RenderFeatures)
+        {
+            if (feature is not MeshRenderFeature meshes)
+                continue;
+            if (meshes.RenderFeatures.OfType<PostFxScreenSpaceRenderFeature>().FirstOrDefault() is { } existing)
+                existing.ScreenSpace = screenSpace;
+            else
+                meshes.RenderFeatures.Add(new PostFxScreenSpaceRenderFeature { ScreenSpace = screenSpace });
+
+            if (shadowMapRenderer == null)
+            {
+                var lighting = meshes.RenderFeatures.OfType<ForwardLightingRenderFeature>().FirstOrDefault();
+                shadowMapRenderer = (lighting?.ShadowMapRenderer as ShadowMapRenderer)?.Renderers.OfType<LightDirectionalShadowMapRenderer>().FirstOrDefault();
+                shadowMapRenderer?.AddReceiverExtension(contactShadowExtension);
+            }
+        }
+    }
+
     /// <summary>
     /// Adds the motion vectors of the meshes to the render system if its compositor lacks them.
     /// </summary>
@@ -466,9 +661,12 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects
         public readonly PostFxProfile Profile = new();
         public Buffer Exposure;
         public TemporalHistory Temporal;
+        public ScreenSpaceTargets ScreenSpaceTargets;
 
         public void Dispose()
         {
+            ScreenSpaceTargets?.Dispose();
+            ScreenSpaceTargets = null;
             Exposure?.Dispose();
             Exposure = null;
             Temporal?.Dispose();

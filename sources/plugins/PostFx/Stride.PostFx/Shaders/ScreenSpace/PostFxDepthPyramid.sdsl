@@ -1,0 +1,41 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// The view's distance pyramid for the screen-space passes: level 0 the distance of each pixel from the depth buffer,
+    /// the next ones the closest of each 2x2 (occluders aren't lost at a distance). Groups of 8x8 threads.
+    /// </summary>
+    shader PostFxDepthPyramid : ComputeShaderBase, PostFxViewSpace
+    {
+        stage Texture2D<float> PyramidSource;
+        stage RWTexture2D<float> PyramidOutput;
+
+        cbuffer PerDispatch
+        {
+            // Size of the level written
+            stage int2 PyramidSize;
+            // Whether the source is the depth buffer (else the level above)
+            stage bool PyramidFromDepth;
+        };
+
+        override void Compute()
+        {
+            int2 texel = (int2)streams.DispatchThreadId.xy;
+            if (any(texel >= PyramidSize))
+                return;
+            if (PyramidFromDepth)
+            {
+                PyramidOutput[texel] = ViewDistance(PyramidSource.Load(int3(texel, 0)));
+                return;
+            }
+            int2 source = texel * 2;
+            float a = PyramidSource.Load(int3(source, 0));
+            float b = PyramidSource.Load(int3(source + int2(1, 0), 0));
+            float c = PyramidSource.Load(int3(source + int2(0, 1), 0));
+            float d = PyramidSource.Load(int3(source + int2(1, 1), 0));
+            PyramidOutput[texel] = min(min(a, b), min(c, d));
+        }
+    };
+}

@@ -1,0 +1,40 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// Smooths the ambient occlusion over 4x4 pixels within each surface (weighted by the relative difference of distance:
+    /// no bleeding across edges). Groups of 8x8 threads.
+    /// </summary>
+    shader PostFxGtaoDenoise : ComputeShaderBase, PostFxViewSpace
+    {
+        stage Texture2D<float> DenoiseSource;
+        stage Texture2D<float> DenoiseDistance;
+        stage RWTexture2D<float> DenoiseOutput;
+
+        override void Compute()
+        {
+            int2 pixel = (int2)streams.DispatchThreadId.xy;
+            if (any(pixel >= (int2)ViewSize.xy))
+                return;
+            float center = DenoiseDistance.Load(int3(pixel, 0));
+            float sum = 0.0;
+            float weight = 0.0;
+            [unroll]
+            for (int y = -2; y <= 1; y++)
+            {
+                [unroll]
+                for (int x = -2; x <= 1; x++)
+                {
+                    int2 tap = clamp(pixel + int2(x, y), int2(0, 0), (int2)ViewSize.xy - 1);
+                    float distance = DenoiseDistance.Load(int3(tap, 0));
+                    float w = saturate(1.0 - abs(distance - center) / (center * 0.05 + 0.02));
+                    sum += DenoiseSource.Load(int3(tap, 0)) * w;
+                    weight += w;
+                }
+            }
+            DenoiseOutput[pixel] = weight > 0.0 ? sum / weight : DenoiseSource.Load(int3(pixel, 0));
+        }
+    };
+}

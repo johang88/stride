@@ -1,0 +1,74 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// The screen-space lighting terms of the view on an opaque surface (a mixin of the forward shading, see
+    /// ForwardShadingKeys.ScreenSpaceLighting): ambient occlusion on the light from around (the sky, the probes), and the
+    /// reflected and indirect light found on screen the frame before (reprojected), which the sky light blends towards.
+    /// </summary>
+    shader PostFxScreenSpaceLighting : MaterialPixelShadingStream, ShaderBaseStream, PositionStream4
+    {
+        rgroup PerView.PostFxScreenSpace
+        {
+            stage Texture2D PostFxAmbientOcclusion;
+            stage Texture2D PostFxReflections;
+            stage Texture2D PostFxIndirect;
+        }
+
+        cbuffer PerView.PostFxScreenSpace
+        {
+            // Size of the view (pixels), and its inverse
+            stage float4 PostFxScreenSize;
+            // World to the previous frame's clip space (for the reflections and indirect light traced then)
+            stage float4x4 PostFxPreviousViewProjection;
+            stage float PostFxAmbientOcclusionStrength;
+            stage float PostFxReflectionStrength;
+            stage float PostFxIndirectStrength;
+        }
+
+        stage SamplerState PostFxScreenLinear
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        stage override void ApplyScreenSpaceLighting()
+        {
+            base.ApplyScreenSpaceLighting();
+            float2 uv = streams.ShadingPosition.xy * PostFxScreenSize.zw;
+
+            if (PostFxAmbientOcclusionStrength > 0.0)
+            {
+                float occlusion = PostFxAmbientOcclusion.SampleLevel(PostFxScreenLinear, uv, 0).r;
+                streams.matAmbientOcclusion *= lerp(1.0, occlusion, PostFxAmbientOcclusionStrength);
+            }
+
+            if (PostFxReflectionStrength > 0.0 || PostFxIndirectStrength > 0.0)
+            {
+                // Where this surface was on screen the frame before
+                float4 previousClip = mul(float4(streams.PositionWS.xyz, 1.0), PostFxPreviousViewProjection);
+                float2 previousUv = float2(previousClip.x / previousClip.w * 0.5 + 0.5, 0.5 - previousClip.y / previousClip.w * 0.5);
+                float2 edge = saturate(min(previousUv, 1.0 - previousUv) * 16.0);
+                float onScreen = previousClip.w > 0.0 ? edge.x * edge.y : 0.0;
+
+                if (PostFxReflectionStrength > 0.0)
+                {
+                    // (blurrier for rough surfaces: the reflections' mips; fading out where the sky's cube is as good)
+                    float roughness = streams.alphaRoughness;
+                    float mip = saturate(sqrt(roughness) * 1.4) * 5.0;
+                    float4 reflection = PostFxReflections.SampleLevel(PostFxScreenLinear, previousUv, mip);
+                    float confidence = reflection.a * onScreen * PostFxReflectionStrength * saturate(1.0 - (roughness - 0.45) * 3.0);
+                    streams.screenSpaceSpecular = float4(reflection.rgb, saturate(confidence));
+                }
+                if (PostFxIndirectStrength > 0.0)
+                {
+                    float4 indirect = PostFxIndirect.SampleLevel(PostFxScreenLinear, previousUv, 0);
+                    streams.screenSpaceDiffuse = float4(indirect.rgb * streams.matAmbientOcclusion, saturate(indirect.a * onScreen * PostFxIndirectStrength));
+                }
+            }
+        }
+    };
+}
