@@ -1,0 +1,35 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// One level up the bloom pyramid: the wider level below, upsampled with a 3x3 tent, blended into this level's own
+    /// (scatter: the share of the wider glow). Blending rather than adding keeps the glow's energy that of the image.
+    /// Texture0 = the wider level (already accumulated), Texture1 = this level's downsample.
+    /// </summary>
+    shader PostFxBloomUpsample : ImageEffectShader
+    {
+        // Size of a texel of the wider level
+        stage float2 BloomSourceTexel;
+        stage float BloomScatter;
+
+        stage override float4 Shading()
+        {
+            float2 uv = streams.TexCoord;
+            float2 t = BloomSourceTexel;
+            float3 wide = Texture0.SampleLevel(LinearSampler, uv, 0).rgb * 4.0;
+            wide += (Texture0.SampleLevel(LinearSampler, uv + float2(-t.x, 0), 0).rgb
+                   + Texture0.SampleLevel(LinearSampler, uv + float2( t.x, 0), 0).rgb
+                   + Texture0.SampleLevel(LinearSampler, uv + float2(0, -t.y), 0).rgb
+                   + Texture0.SampleLevel(LinearSampler, uv + float2(0,  t.y), 0).rgb) * 2.0;
+            wide += Texture0.SampleLevel(LinearSampler, uv + float2(-t.x, -t.y), 0).rgb
+                  + Texture0.SampleLevel(LinearSampler, uv + float2( t.x, -t.y), 0).rgb
+                  + Texture0.SampleLevel(LinearSampler, uv + float2(-t.x,  t.y), 0).rgb
+                  + Texture0.SampleLevel(LinearSampler, uv + float2( t.x,  t.y), 0).rgb;
+            wide /= 16.0;
+            float3 own = Texture1.SampleLevel(LinearSampler, uv, 0).rgb;
+            return float4(lerp(own, wide, BloomScatter), 1.0);
+        }
+    };
+}

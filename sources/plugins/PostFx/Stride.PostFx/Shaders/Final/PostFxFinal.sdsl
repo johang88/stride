@@ -1,0 +1,196 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// The last full-screen pass: the scene's light becomes the displayed image. Chromatic aberration, the glow (blended:
+    /// energy conserving) and lens dirt, the exposure, white balance and grading, natural vignetting, the display transform
+    /// (AgX or Tony McMapface), then film grain and dithering in display space (no banding in the sky's gradients).
+    /// Texture0 = the scene (HDR), Texture1 = the glow, Texture2 = the lens dirt.
+    /// </summary>
+    shader PostFxFinal : ImageEffectShader, PostFxCommon
+    {
+        // Tony McMapface (Tomasz Stachowiak): a 48^3 volume indexed by stimulus / (stimulus + 1)
+        stage Texture3D<float4> PostFxTonyMcMapface;
+        // x = the automatic exposure (linear; 1 without it)
+        stage StructuredBuffer<float4> PostFxAutoExposure;
+
+        stage SamplerState PostFxLinearClamp
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+            AddressW = Clamp;
+        };
+
+        cbuffer PerFrame
+        {
+            // Linear exposure (the renderer's, the game's offset and the volumes' compensation)
+            stage float PostFxExposure;
+            stage float PostFxBloomIntensity;
+            stage float3 PostFxBloomTint;
+            stage float PostFxLensDirtIntensity;
+            // White balance: linear sRGB to linear sRGB (rows)
+            stage float4 PostFxWhiteBalance0;
+            stage float4 PostFxWhiteBalance1;
+            stage float4 PostFxWhiteBalance2;
+            stage float3 PostFxFilter;
+            stage float PostFxContrast;
+            stage float3 PostFxShadows;
+            stage float PostFxSaturation;
+            stage float3 PostFxHighlights;
+            stage float PostFxVignette;
+            // Width / height of the image
+            stage float PostFxAspect;
+            stage float PostFxChromaticAberration;
+            stage float PostFxGrain;
+            stage float PostFxGrainResponse;
+            stage float PostFxFrame;
+            // 0 AgX, 1 AgX punchy, 2 Tony McMapface, 3 clamp
+            stage int PostFxDisplayTransform;
+            // Whether the target stores sRGB (the hardware encodes) or display values directly
+            stage bool PostFxTargetSrgb;
+            stage bool PostFxDither;
+            // Whether the alpha channel holds the luma (for FXAA)
+            stage bool PostFxLumaInAlpha;
+            // Sharpening of the scene (after temporal anti-aliasing), and the size of its texels
+            stage float PostFxSharpness;
+            stage float2 PostFxSceneTexel;
+        };
+
+        // AgX (Troy Sobotka), in the minimal form of Benjamin Wrensch: an inset into a wider gamut, a log2 encoding over
+        // 16.5 stops, a sigmoid, and the outset back
+        stage float3 AgXInset(float3 c)
+        {
+            return float3(dot(c, float3(0.842479062253094, 0.0784335999999992, 0.0792237451477643)),
+                          dot(c, float3(0.0423282422610123, 0.878468636469772, 0.0791661274605434)),
+                          dot(c, float3(0.0423756549057051, 0.0784336, 0.879142973793104)));
+        }
+
+        stage float3 AgXOutset(float3 c)
+        {
+            return float3(dot(c, float3(1.19687900512017, -0.0980208811401368, -0.0990297440797205)),
+                          dot(c, float3(-0.0528968517574562, 1.15190312990417, -0.0989611768448433)),
+                          dot(c, float3(-0.0529716355144438, -0.0980434501171241, 1.15107367264116)));
+        }
+
+        stage float3 AgXContrast(float3 x)
+        {
+            float3 x2 = x * x;
+            float3 x4 = x2 * x2;
+            return 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232;
+        }
+
+        stage float3 AgX(float3 color, bool punchy)
+        {
+            const float minimumEV = -12.47393;
+            const float maximumEV = 4.026069;
+            float3 c = AgXInset(max(color, 1e-10));
+            c = clamp(log2(c), minimumEV, maximumEV);
+            c = (c - minimumEV) / (maximumEV - minimumEV);
+            c = AgXContrast(c);
+            if (punchy)
+            {
+                // The "punchy" look (ASC CDL): more contrast and saturation
+                float luma = PostFxLuminance(c);
+                c = pow(max(c, 0.0), 1.35);
+                c = luma + 1.4 * (c - luma);
+            }
+            c = AgXOutset(c);
+            // (back to linear display values)
+            return pow(saturate(c), 2.2);
+        }
+
+        stage float3 TonyMcMapface(float3 color)
+        {
+            float3 encoded = color / (color + 1.0);
+            const float size = 48.0;
+            float3 uvw = encoded * ((size - 1.0) / size) + 0.5 / size;
+            return PostFxTonyMcMapface.SampleLevel(PostFxLinearClamp, uvw, 0).rgb;
+        }
+
+        stage override float4 Shading()
+        {
+            float2 uv = streams.TexCoord;
+            float2 fromCenter = uv - 0.5;
+            float2 aspectCenter = fromCenter * float2(PostFxAspect, 1.0);
+            float radius2 = dot(aspectCenter, aspectCenter);
+
+            float3 color;
+            if (PostFxChromaticAberration > 0.0)
+            {
+                // Lateral aberration: red and blue magnified apart, growing towards the edges
+                float2 shift = fromCenter * radius2 * PostFxChromaticAberration * 0.025;
+                color.r = Texture0.SampleLevel(LinearSampler, uv - shift, 0).r;
+                color.g = Texture0.SampleLevel(LinearSampler, uv, 0).g;
+                color.b = Texture0.SampleLevel(LinearSampler, uv + shift, 0).b;
+            }
+            else
+            {
+                color = Texture0.SampleLevel(PointSampler, uv, 0).rgb;
+            }
+            if (PostFxSharpness > 0.0)
+            {
+                // Unsharp mask over the four neighbours, within their range (no halos)
+                float3 n = Texture0.SampleLevel(PointSampler, uv + float2(0, -PostFxSceneTexel.y), 0).rgb;
+                float3 s = Texture0.SampleLevel(PointSampler, uv + float2(0, PostFxSceneTexel.y), 0).rgb;
+                float3 e = Texture0.SampleLevel(PointSampler, uv + float2(PostFxSceneTexel.x, 0), 0).rgb;
+                float3 w = Texture0.SampleLevel(PointSampler, uv + float2(-PostFxSceneTexel.x, 0), 0).rgb;
+                float3 low = min(color, min(min(n, s), min(e, w)));
+                float3 high = max(color, max(max(n, s), max(e, w)));
+                color = clamp(color + (color * 4.0 - n - s - e - w) * PostFxSharpness * 0.25, low, high);
+            }
+
+            // The glow and the dirt it lights on the lens
+            float3 glow = Texture1.SampleLevel(LinearSampler, uv, 0).rgb * PostFxBloomTint;
+            color = lerp(color, glow, PostFxBloomIntensity);
+            if (PostFxLensDirtIntensity > 0.0)
+                color += glow * Texture2.SampleLevel(LinearSampler, uv, 0).rgb * PostFxLensDirtIntensity;
+
+            color *= PostFxExposure * PostFxAutoExposure[0].x;
+
+            // Grading, on the exposed scene
+            color = float3(dot(color, PostFxWhiteBalance0.xyz), dot(color, PostFxWhiteBalance1.xyz), dot(color, PostFxWhiteBalance2.xyz));
+            color = max(color, 0.0) * PostFxFilter;
+            const float middleGrey = 0.18;
+            color = middleGrey * pow(max(color / middleGrey, 1e-6), PostFxContrast);
+            float luma = PostFxLuminance(color);
+            color = max(luma + (color - luma) * PostFxSaturation, 0.0);
+            // (shadows below middle grey, highlights above, by stops)
+            float stops = log2(max(luma, 1e-6) / middleGrey);
+            color *= lerp(PostFxShadows, 1.0, smoothstep(-4.0, 0.0, stops)) * lerp(1.0, PostFxHighlights, smoothstep(0.0, 4.0, stops));
+
+            // Natural vignetting: the light falls with the angle off the axis (cos^4 law)
+            float falloff = 1.0 / (1.0 + radius2 * PostFxVignette * 1.6);
+            color *= falloff * falloff;
+
+            float3 display;
+            if (PostFxDisplayTransform == 2)
+                display = TonyMcMapface(color);
+            else if (PostFxDisplayTransform == 3)
+                display = saturate(color);
+            else
+                display = AgX(color, PostFxDisplayTransform == 1);
+
+            // Film grain and dithering, on the display values
+            float2 pixel = streams.ShadingPosition.xy;
+            float3 encoded = PostFxLinearToSrgb(display);
+            if (PostFxGrain > 0.0)
+            {
+                float grain = PostFxFrameNoise(pixel, PostFxFrame, 1.0) + PostFxFrameNoise(pixel, PostFxFrame, 2.0) - 1.0;
+                float response = 1.0 - PostFxGrainResponse * sqrt(saturate(PostFxLuminance(encoded)));
+                encoded += grain * PostFxGrain * 0.12 * response;
+            }
+            if (PostFxDither)
+            {
+                // Triangular noise of one step of an 8 bit target
+                float dither = PostFxFrameNoise(pixel, PostFxFrame, 3.0) - PostFxFrameNoise(pixel, PostFxFrame, 4.0);
+                encoded += dither / 255.0;
+            }
+            encoded = saturate(encoded);
+            float alpha = PostFxLumaInAlpha ? PostFxLuminance(encoded) : 1.0;
+            return float4(PostFxTargetSrgb ? PostFxSrgbToLinear(encoded) : encoded, alpha);
+        }
+    };
+}

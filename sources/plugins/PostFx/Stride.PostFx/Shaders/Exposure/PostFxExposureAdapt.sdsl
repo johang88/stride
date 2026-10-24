@@ -1,0 +1,80 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// The automatic exposure from the luminance histogram: the average log luminance between two percentiles (the darkest
+    /// half and the brightest highlights left out), clamped to the volumes' range, adapted over time (faster towards a
+    /// brighter scene). One group of 128 threads.
+    /// Output (kept between frames): x = linear exposure, y = the adapted log2 luminance, z = 1 once initialized.
+    /// </summary>
+    shader PostFxExposureAdapt : ComputeShaderBase
+    {
+        stage Buffer<uint> PostFxAdaptBins;
+        stage RWStructuredBuffer<float4> PostFxAdaptExposure;
+
+        cbuffer PerDispatch
+        {
+            // x = log2 luminance of the first bin, y = of the last
+            stage float2 PostFxAdaptRange;
+            // x = lowest, y = highest log2 average luminance adapted to
+            stage float2 PostFxAdaptClamp;
+            // x = speed towards brighter (EV/s), y = towards darker, z = elapsed seconds
+            stage float3 PostFxAdaptSpeed;
+            // Fraction of the pixels left out at the dark end, at the bright end
+            stage float2 PostFxAdaptPercentiles;
+        };
+
+        groupshared float PostFxCounts[128];
+
+        override void Compute()
+        {
+            uint index = streams.GroupIndex;
+            PostFxCounts[index] = (float)PostFxAdaptBins[index];
+            GroupMemoryBarrierWithGroupSync();
+
+            if (index != 0)
+                return;
+
+            float total = 0.0;
+            for (uint i = 0; i < 128; i++)
+                total += PostFxCounts[i];
+
+            float4 state = PostFxAdaptExposure[0];
+            float target = state.y;
+            if (total > 0.0)
+            {
+                float low = total * PostFxAdaptPercentiles.x;
+                float high = total * (1.0 - PostFxAdaptPercentiles.y);
+                float below = 0.0;
+                float sum = 0.0;
+                float weight = 0.0;
+                for (uint j = 0; j < 128; j++)
+                {
+                    // The part of the bin between the two percentiles
+                    float count = PostFxCounts[j];
+                    float from = max(below, low);
+                    float to = min(below + count, high);
+                    float inside = max(to - from, 0.0);
+                    float logLuminance = lerp(PostFxAdaptRange.x, PostFxAdaptRange.y, j / 127.0);
+                    sum += logLuminance * inside;
+                    weight += inside;
+                    below += count;
+                }
+                if (weight > 0.0)
+                    target = clamp(sum / weight, PostFxAdaptClamp.x, PostFxAdaptClamp.y);
+            }
+
+            float adapted = target;
+            if (state.z > 0.5)
+            {
+                float speed = target > state.y ? PostFxAdaptSpeed.x : PostFxAdaptSpeed.y;
+                adapted = state.y + (target - state.y) * (1.0 - exp(-PostFxAdaptSpeed.z * speed));
+            }
+            // Middle grey (0.18) at the adapted average
+            float exposure = 0.18 / exp2(adapted);
+            PostFxAdaptExposure[0] = float4(exposure, adapted, 1.0, 0.0);
+        }
+    };
+}

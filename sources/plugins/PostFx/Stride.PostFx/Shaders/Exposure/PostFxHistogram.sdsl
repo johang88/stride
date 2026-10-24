@@ -1,0 +1,53 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// Histogram of the scene's luminance (log2, 128 bins over PostFxHistogramRange) for the automatic exposure, from
+    /// every fourth pixel along each axis, weighted towards the center of the image (center-weighted metering).
+    /// Groups of 16x16 threads; the histogram is cleared beforehand.
+    /// </summary>
+    shader PostFxHistogram : ComputeShaderBase, PostFxCommon
+    {
+        stage Texture2D PostFxHistogramScene;
+        stage RWBuffer<uint> PostFxHistogramBins;
+
+        cbuffer PerDispatch
+        {
+            // Size of the scene (pixels)
+            stage int2 PostFxHistogramSize;
+            // x = log2 luminance of the first bin, y = of the last
+            stage float2 PostFxHistogramRange;
+        };
+
+        groupshared uint PostFxBins[128];
+
+        override void Compute()
+        {
+            uint index = streams.GroupIndex;
+            if (index < 128)
+                PostFxBins[index] = 0;
+            GroupMemoryBarrierWithGroupSync();
+
+            uint2 pixel = streams.DispatchThreadId.xy * 4 + 2;
+            if (all(pixel < (uint2)PostFxHistogramSize))
+            {
+                float luminance = PostFxLuminance(PostFxHistogramScene.Load(int3(pixel, 0)).rgb);
+                // (black and invalid pixels left out: they would drag the exposure up)
+                if (luminance > 1e-5 && luminance < 1e6)
+                {
+                    float t = saturate((log2(luminance) - PostFxHistogramRange.x) / (PostFxHistogramRange.y - PostFxHistogramRange.x));
+                    uint bin = min((uint)(t * 127.0 + 0.5), 127u);
+                    float2 fromCenter = (pixel + 0.5) / (float2)PostFxHistogramSize - 0.5;
+                    float weight = lerp(1.0, 0.25, saturate(length(fromCenter) * 1.6));
+                    InterlockedAdd(PostFxBins[bin], (uint)(weight * 64.0));
+                }
+            }
+            GroupMemoryBarrierWithGroupSync();
+
+            if (index < 128 && PostFxBins[index] > 0)
+                InterlockedAdd(PostFxHistogramBins[index], PostFxBins[index]);
+        }
+    };
+}

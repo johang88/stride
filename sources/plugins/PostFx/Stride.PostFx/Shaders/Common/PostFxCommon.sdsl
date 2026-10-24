@@ -1,0 +1,39 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// Helpers of the post-processing passes: luminance, sRGB encoding, noise.
+    /// </summary>
+    shader PostFxCommon
+    {
+        stage float PostFxLuminance(float3 color)
+        {
+            return dot(color, float3(0.2126, 0.7152, 0.0722));
+        }
+
+        stage float3 PostFxLinearToSrgb(float3 color)
+        {
+            color = max(color, 0.0);
+            return color <= 0.0031308 ? color * 12.92 : 1.055 * pow(color, 1.0 / 2.4) - 0.055;
+        }
+
+        stage float3 PostFxSrgbToLinear(float3 color)
+        {
+            return color <= 0.04045 ? color / 12.92 : pow((color + 0.055) / 1.055, 2.4);
+        }
+
+        // Interleaved gradient noise (Jimenez 2014): a well spread value per pixel, in [0, 1)
+        stage float PostFxGradientNoise(float2 pixel)
+        {
+            return frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
+        }
+
+        // A different noise each frame: the pixel moved along the R2 sequence
+        stage float PostFxFrameNoise(float2 pixel, float frame, float salt)
+        {
+            return PostFxGradientNoise(pixel + float2(0.7548776662, 0.5698402910) * (frame * 113.0 + salt * 41.0));
+        }
+    };
+}

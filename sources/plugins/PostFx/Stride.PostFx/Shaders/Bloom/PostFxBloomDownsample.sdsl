@@ -1,0 +1,73 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// One level down the bloom pyramid: a 13-tap filter (Jimenez 2014, "Next Generation Post Processing in Call of Duty:
+    /// Advanced Warfare"), five overlapping boxes. The first level weights each box by its brightness (Karis average): a
+    /// single very bright pixel, the sun's disk, can't make the whole glow flicker.
+    /// Texture0 = the level above.
+    /// </summary>
+    shader PostFxBloomDownsample : ImageEffectShader, PostFxCommon
+    {
+        // Size of a texel of the source
+        stage float2 BloomSourceTexel;
+        // Whether this is the first level (from the scene): Karis average, and the scene's NaNs and infinities removed
+        stage bool BloomFirstLevel;
+
+        stage float3 Tap(float2 uv)
+        {
+            return Texture0.SampleLevel(LinearSampler, uv, 0).rgb;
+        }
+
+        stage float KarisWeight(float3 box)
+        {
+            return 1.0 / (1.0 + PostFxLuminance(box));
+        }
+
+        stage override float4 Shading()
+        {
+            float2 uv = streams.TexCoord;
+            float2 t = BloomSourceTexel;
+            float3 a = Tap(uv + t * float2(-2, -2));
+            float3 b = Tap(uv + t * float2( 0, -2));
+            float3 c = Tap(uv + t * float2( 2, -2));
+            float3 d = Tap(uv + t * float2(-1, -1));
+            float3 e = Tap(uv + t * float2( 1, -1));
+            float3 f = Tap(uv + t * float2(-2,  0));
+            float3 g = Tap(uv);
+            float3 h = Tap(uv + t * float2( 2,  0));
+            float3 i = Tap(uv + t * float2(-1,  1));
+            float3 j = Tap(uv + t * float2( 1,  1));
+            float3 k = Tap(uv + t * float2(-2,  2));
+            float3 l = Tap(uv + t * float2( 0,  2));
+            float3 m = Tap(uv + t * float2( 2,  2));
+
+            float3 center = (d + e + i + j) * 0.25;
+            float3 topLeft = (a + b + f + g) * 0.25;
+            float3 topRight = (b + c + g + h) * 0.25;
+            float3 bottomLeft = (f + g + k + l) * 0.25;
+            float3 bottomRight = (g + h + l + m) * 0.25;
+
+            float3 result;
+            if (BloomFirstLevel)
+            {
+                float wc = KarisWeight(center) * 0.5;
+                float w0 = KarisWeight(topLeft) * 0.125;
+                float w1 = KarisWeight(topRight) * 0.125;
+                float w2 = KarisWeight(bottomLeft) * 0.125;
+                float w3 = KarisWeight(bottomRight) * 0.125;
+                result = (center * wc + topLeft * w0 + topRight * w1 + bottomLeft * w2 + bottomRight * w3) / (wc + w0 + w1 + w2 + w3);
+                // (the half precision pyramid would turn a NaN or an infinity into a black block)
+                result = clamp(result, 0.0, 60000.0);
+                result = isnan(result) ? 0.0 : result;
+            }
+            else
+            {
+                result = center * 0.5 + (topLeft + topRight + bottomLeft + bottomRight) * 0.125;
+            }
+            return float4(result, 1.0);
+        }
+    };
+}

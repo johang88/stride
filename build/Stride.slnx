@@ -225,6 +225,9 @@
     <Project Path="../sources/plugins/SpriteStudio/Stride.SpriteStudio.Editor/Stride.SpriteStudio.Editor.csproj" />
     <Project Path="../sources/plugins/SpriteStudio/Stride.SpriteStudio.Runtime/Stride.SpriteStudio.Runtime.csproj" />
   </Folder>
+  <Folder Name="/80-Plugins/PostFx/">
+    <Project Path="../sources/plugins/PostFx/Stride.PostFx/Stride.PostFx.csproj" />
+  </Folder>
   <Folder Name="/80-Plugins/Atmosphere/">
     <Project Path="../sources/plugins/Atmosphere/Stride.Atmosphere.Editor/Stride.Atmosphere.Editor.csproj" />
     <Project Path="../sources/plugins/Atmosphere/Stride.Atmosphere/Stride.Atmosphere.csproj" />

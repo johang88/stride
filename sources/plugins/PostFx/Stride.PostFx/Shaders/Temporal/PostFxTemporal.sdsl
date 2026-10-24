@@ -1,0 +1,180 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// Temporal anti-aliasing: each frame renders with a different sub-pixel jitter, and is accumulated into a history
+    /// reprojected by the motion of each pixel. The history is fetched with a Catmull-Rom filter (sharp), clipped to the
+    /// spread of the current neighbourhood in YCoCg (no ghosting), and blended on exposed, luma weighted values (no flicker
+    /// of bright pixels). Motion comes from the motion vectors of the meshes (jitter removed), or, where none were written
+    /// (the sky, other renderers), from the depth and the camera.
+    /// Texture0 = the scene (jittered), Texture1 = depth, Texture2 = motion vectors, Texture3 = the history.
+    /// </summary>
+    shader PostFxTemporal : ImageEffectShader, PostFxCommon
+    {
+        // x = linear exposure from the automatic exposure (1 without it)
+        stage StructuredBuffer<float4> PostFxTemporalAutoExposure;
+
+        cbuffer PerFrame
+        {
+            // Size of a texel of the scene, of the output (and the history)
+            stage float2 TemporalInputTexel;
+            stage float2 TemporalOutputTexel;
+            // This frame's jitter (pixels of the scene, +y down)
+            stage float2 TemporalJitter;
+            // This frame's jitter minus the previous one's (normalized device coordinates)
+            stage float2 TemporalJitterDelta;
+            // Current (jittered) clip space to the world, the world to the previous (unjittered) clip space
+            stage float4x4 TemporalInverseViewProjection;
+            stage float4x4 TemporalPreviousViewProjection;
+            stage float TemporalExposure;
+            // Weight of the new frame (lower: smoother, slower to follow)
+            stage float TemporalBlend;
+            // 0 when there's no valid history (first frame, camera cut)
+            stage float TemporalHistoryValid;
+        };
+
+        stage SamplerState TemporalLinearClamp
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        stage float3 ToYCoCg(float3 c)
+        {
+            return float3(c.r * 0.25 + c.g * 0.5 + c.b * 0.25, c.r * 0.5 - c.b * 0.5, -c.r * 0.25 + c.g * 0.5 - c.b * 0.25);
+        }
+
+        stage float3 FromYCoCg(float3 c)
+        {
+            return float3(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z);
+        }
+
+        // Exposed and compressed (Karis): the brightest pixels don't dominate the filters
+        stage float3 Compress(float3 c, float exposure)
+        {
+            c *= exposure;
+            return c / (1.0 + PostFxLuminance(c));
+        }
+
+        stage float3 Decompress(float3 c, float exposure)
+        {
+            c = c / max(1.0 - PostFxLuminance(c), 1e-4);
+            return c / exposure;
+        }
+
+        // Catmull-Rom of the history in 5 bilinear taps (the corners left out)
+        stage float3 SampleHistory(float2 uv)
+        {
+            float2 position = uv / TemporalOutputTexel;
+            float2 center = floor(position - 0.5) + 0.5;
+            float2 f = position - center;
+            float2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+            float2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+            float2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+            float2 w3 = f * f * (-0.5 + 0.5 * f);
+            float2 w12 = w1 + w2;
+            float2 tc0 = (center - 1.0) * TemporalOutputTexel;
+            float2 tc3 = (center + 2.0) * TemporalOutputTexel;
+            float2 tc12 = (center + w2 / w12) * TemporalOutputTexel;
+            float3 result = Texture3.SampleLevel(TemporalLinearClamp, float2(tc12.x, tc0.y), 0).rgb * (w12.x * w0.y)
+                          + Texture3.SampleLevel(TemporalLinearClamp, float2(tc0.x, tc12.y), 0).rgb * (w0.x * w12.y)
+                          + Texture3.SampleLevel(TemporalLinearClamp, float2(tc12.x, tc12.y), 0).rgb * (w12.x * w12.y)
+                          + Texture3.SampleLevel(TemporalLinearClamp, float2(tc3.x, tc12.y), 0).rgb * (w3.x * w12.y)
+                          + Texture3.SampleLevel(TemporalLinearClamp, float2(tc12.x, tc3.y), 0).rgb * (w12.x * w3.y);
+            float total = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+            return max(result / total, 0.0);
+        }
+
+        stage override float4 Shading()
+        {
+            float2 uv = streams.TexCoord;
+            float exposure = TemporalExposure * PostFxTemporalAutoExposure[0].x;
+            int2 pixel = (int2)(uv / TemporalInputTexel);
+
+            // The neighbourhood: its moments (for the clip), the reconstruction of the pixel at its unjittered center, and
+            // the closest depth (its motion: edges move with the object in front)
+            float3 mean = 0.0;
+            float3 squares = 0.0;
+            float3 current = 0.0;
+            float currentWeight = 0.0;
+            float closestDepth = 0.0;
+            int2 closest = pixel;
+            [unroll]
+            for (int y = -1; y <= 1; y++)
+            {
+                [unroll]
+                for (int x = -1; x <= 1; x++)
+                {
+                    int2 tap = pixel + int2(x, y);
+                    float3 c = Compress(Texture0.Load(int3(tap, 0)).rgb, exposure);
+                    c = isnan(c) ? 0.0 : c;
+                    float3 ycocg = ToYCoCg(c);
+                    mean += ycocg;
+                    squares += ycocg * ycocg;
+                    // (a sample's scene position is its center minus the jitter)
+                    float2 d = float2(x, y) - TemporalJitter;
+                    float w = exp(-2.29 * dot(d, d));
+                    current += c * w;
+                    currentWeight += w;
+                    // (reversed depth: the closest has the largest value)
+                    float depth = Texture1.Load(int3(tap, 0)).r;
+                    if (depth > closestDepth)
+                    {
+                        closestDepth = depth;
+                        closest = tap;
+                    }
+                }
+            }
+            mean /= 9.0;
+            float3 deviation = sqrt(max(squares / 9.0 - mean * mean, 0.0));
+            current /= currentWeight;
+
+            // Where the pixel was
+            float2 motion = Texture2.Load(int3(closest, 0)).xy;
+            float2 previousUv;
+            if (motion.x != 0.0 || motion.y != 0.0)
+            {
+                motion -= TemporalJitterDelta;
+                previousUv = uv - float2(motion.x, -motion.y) * 0.5;
+            }
+            else
+            {
+                // No motion vector: a static surface (or the sky), reprojected by the camera
+                float2 closestUv = (closest + 0.5) * TemporalInputTexel;
+                float4 world = mul(float4(closestUv.x * 2.0 - 1.0, 1.0 - closestUv.y * 2.0, closestDepth, 1.0), TemporalInverseViewProjection);
+                float4 previousClip = mul(world, TemporalPreviousViewProjection);
+                float2 previousNdc = previousClip.xy / previousClip.w;
+                float2 currentNdc = float2(closestUv.x * 2.0 - 1.0, 1.0 - closestUv.y * 2.0);
+                // (the history is unjittered: the point's current unjittered position is its pixel minus the jitter)
+                float2 jitterNdc = float2(TemporalJitter.x, -TemporalJitter.y) * TemporalInputTexel * 2.0;
+                float2 cameraMotion = (currentNdc - jitterNdc) - previousNdc;
+                previousUv = uv - float2(cameraMotion.x, -cameraMotion.y) * 0.5;
+            }
+
+            bool inside = all(previousUv > 0.0) && all(previousUv < 1.0);
+            if (TemporalHistoryValid < 0.5 || !inside)
+                return float4(Decompress(current, exposure), 1.0);
+
+            float3 history = Compress(SampleHistory(previousUv), exposure);
+
+            // Clip the history towards the neighbourhood's spread (in YCoCg, along the line to its mean)
+            float3 historyYCoCg = ToYCoCg(history);
+            float3 extent = deviation * 1.25 + 1e-4;
+            float3 offset = historyYCoCg - mean;
+            float3 ratio = abs(offset / extent);
+            float clipAmount = max(ratio.x, max(ratio.y, ratio.z));
+            if (clipAmount > 1.0)
+                historyYCoCg = mean + offset / clipAmount;
+            history = FromYCoCg(historyYCoCg);
+
+            // Faster to follow in motion (the history is resampled, and blurs) and where the history was rejected
+            float pixelsMoved = length((uv - previousUv) / TemporalOutputTexel);
+            float blend = saturate(TemporalBlend + pixelsMoved * 0.02 + saturate(clipAmount - 1.0) * 0.1);
+            float3 result = lerp(history, current, blend);
+            return float4(Decompress(result, exposure), 1.0);
+        }
+    };
+}
