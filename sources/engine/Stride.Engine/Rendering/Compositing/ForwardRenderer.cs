@@ -437,8 +437,6 @@ namespace Stride.Rendering.Compositing
                         shadowMapRenderStage.Output = new RenderOutputDescription(PixelFormat.None, PixelFormat.D32_Float);
                 }
             }
-
-            PostEffects?.Collect(context);
         }
 
         protected static PixelFormat ComputeNonMSAADepthFormat(PixelFormat format)

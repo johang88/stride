@@ -347,6 +347,10 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         if (view == null)
             return;
         var state = GetState(view, context.RenderSystem.FrameCounter);
+        // (once a frame: the jitter and the matrices kept for the next frame)
+        if (state.CollectedFrame == context.RenderSystem.FrameCounter)
+            return;
+        state.CollectedFrame = context.RenderSystem.FrameCounter;
         Resolve(context, view, state);
 
         // The screen-space lighting of the opaque surfaces
@@ -859,6 +863,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         public Buffer Exposure;
         public TemporalHistory Temporal;
         public CameraEffectsTargets CameraTargets;
+        public int CollectedFrame = -1;
         public ScreenSpaceTargets ScreenSpaceTargets;
 
         public void Dispose()
