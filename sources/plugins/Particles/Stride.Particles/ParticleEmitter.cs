@@ -361,14 +361,15 @@ namespace Stride.Particles
         public ShapeBuilder ShapeBuilder { get; set; } = new ShapeBuilderBillboard();
 
         /// <summary>
-        /// The <see cref="ParticleMaterial"/> may update the vertex buffer, and it also applies the <see cref="Effect"/> required for rendering
+        /// The <see cref="ParticleMaterial"/> may update the vertex buffer, and it also applies the <see cref="Effect"/> required for rendering.
+        /// Without one the emitter simulates its particles but draws nothing (for particles used by other systems, e.g. volumetric smoke).
         /// </summary>
         /// <userdoc>
-        /// Material defines what effects, textures, coloring and other techniques are used when rendering the particles.
+        /// Material defines what effects, textures, coloring and other techniques are used when rendering the particles. None: the
+        /// particles aren't drawn (only simulated, e.g. for volumetric smoke).
         /// </userdoc>
         [DataMember(50)]
         [Display("Material")]
-        [NotNull]
         public ParticleMaterial Material { get; set; } = new ParticleMaterialComputeColor();
 
         /// <summary>

@@ -13,7 +13,11 @@ namespace Stride.Particles.Rendering
             if (TransparentRenderStage != null && ((RenderGroupMask)(1U << (int)renderObject.RenderGroup) & RenderGroup) != 0)
             {
                 var renderParticleEmitter = (RenderParticleEmitter)renderObject;
-                var effectName = renderParticleEmitter.ParticleEmitter.Material.EffectName;
+                // An emitter without a material simulates but draws nothing (its particles feed other systems, e.g. volumetric smoke)
+                var material = renderParticleEmitter.ParticleEmitter.Material;
+                if (material == null)
+                    return;
+                var effectName = material.EffectName;
 
                 renderObject.ActiveRenderStages[TransparentRenderStage.Index] = new ActiveRenderStage(effectName);
             }

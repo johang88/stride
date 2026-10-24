@@ -158,6 +158,14 @@ namespace Stride.Particles.Rendering
             foreach (var renderObject in RenderObjects)
             {
                 var renderParticleEmitter = (RenderParticleEmitter)renderObject;
+                // (no material: never drawn)
+                if (renderParticleEmitter.ParticleEmitter.Material == null)
+                {
+                    renderParticleEmitter.HasVertexBufferChanged = false;
+                    renderParticleEmitter.VertexSize = 0;
+                    renderParticleEmitter.VertexCount = 0;
+                    continue;
+                }
                 renderParticleEmitter.ParticleEmitter.PrepareForDraw(out renderParticleEmitter.HasVertexBufferChanged,
                     out renderParticleEmitter.VertexSize, out renderParticleEmitter.VertexCount);
 
@@ -299,7 +307,8 @@ namespace Stride.Particles.Rendering
             foreach (var renderObject in RenderObjects)
             {
                 var renderParticleEmitter = (RenderParticleEmitter)renderObject;
-                Context.StreamingManager?.StreamResources(renderParticleEmitter.ParticleEmitter.Material.Parameters);
+                if (renderParticleEmitter.ParticleEmitter.Material is { } material)
+                    Context.StreamingManager?.StreamResources(material.Parameters);
             }
 
             // Per view - this code was moved here from Prepare(...) so that we can apply the correct Viewport
