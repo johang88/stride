@@ -114,7 +114,8 @@ namespace Stride.Rendering.Lights
             base.UpdateLayout(compositionName);
             ShadowGroup?.UpdateLayout(compositionName);
 
-            if (LightLastCount != LightCurrentCount) // TODO: PERFORMANCE: Why do these two values differ all the time even if no lights have been added/removed?
+            // (or the shadow shader changed: receiver extensions added or removed)
+            if (LightLastCount != LightCurrentCount || ShadowGroup is LightShadowMapShaderGroupDataBase { IsShaderOutdated: true }) // TODO: PERFORMANCE: Why do these two values differ all the time even if no lights have been added/removed?
             {
                 ShadowGroup?.UpdateLightCount(LightLastCount, LightCurrentCount);
                 UpdateLightCount();

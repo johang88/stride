@@ -1,0 +1,44 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Aerial perspective volume (32x32x32) aligned with the view frustum: the light scattered towards the camera in rgb, the
+    /// mean transmittance in alpha, slices distributed quadratically over 32 * AerialPerspectiveKmPerSlice kilometers.
+    /// </summary>
+    shader AtmosphereCameraVolume : ComputeShaderBase, AtmosphereCommon
+    {
+        stage RWTexture3D<float4> CameraVolumeOutput;
+        stage float4x4 CameraVolumeInvViewProjection;
+        stage float3 CameraVolumeEye;
+        stage float AerialPerspectiveKmPerSlice;
+
+        override void Compute()
+        {
+            uint3 id = streams.DispatchThreadId;
+            const float sliceCount = 32.0;
+
+            float2 uv = (float2(id.xy) + 0.5) / sliceCount;
+            float4 farPoint = mul(float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.5, 1.0), CameraVolumeInvViewProjection);
+            float3 direction = normalize(farPoint.xyz / farPoint.w - CameraVolumeEye);
+            float3 position = AtmosphereCameraPosition;
+
+            float slice = (float(id.z) + 0.5) / sliceCount;
+            slice = slice * slice * sliceCount;
+
+            float tMax = slice * AerialPerspectiveKmPerSlice;
+            float3 end = position + tMax * direction;
+            if (length(end) <= AtmosphereBottomRadius + PlanetRadiusOffset)
+            {
+                end = normalize(end) * (AtmosphereBottomRadius + PlanetRadiusOffset + 0.001);
+                direction = normalize(end - position);
+                tMax = length(end - position);
+            }
+
+            float3 transmittance;
+            float3 L = IntegrateScatteredLuminance(position, direction, max(1.0, (float(id.z) + 1.0) * 2.0), false, 0.0, 0.0, tMax, false, transmittance);
+            CameraVolumeOutput[id] = float4(L, dot(transmittance, float3(1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0)));
+        }
+    };
+}

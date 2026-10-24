@@ -27,6 +27,11 @@ namespace Stride.Rendering.Shadows
         /// </summary>
         protected virtual string FilterMemberName { get; } = "PerDraw.Lighting";
 
+        /// <summary>
+        /// Whether <see cref="ShadowShader"/> must be rebuilt (<see cref="UpdateLightCount"/>) although the light count didn't change.
+        /// </summary>
+        public virtual bool IsShaderOutdated => false;
+
         public virtual void ApplyShader(ShaderMixinSource mixin)
         {
             mixin.CloneFrom(ShadowShader);

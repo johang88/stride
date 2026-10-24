@@ -2,6 +2,8 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using System;
+using System.Collections.Generic;
+using Stride.Core;
 using Stride.Core.Collections;
 using Stride.Core.Mathematics;
 using Stride.Engine;
@@ -95,9 +97,36 @@ namespace Stride.Rendering.Shadows
             return shadowType;
         }
 
+        /// <summary>
+        /// Shadows combined with those of the shadow maps (a terrain's shadows, cloud shadows...), in the order their shaders are
+        /// mixed in. Changes rebuild the shaders of the lights.
+        /// </summary>
+        [DataMemberIgnore]
+        public IReadOnlyList<IDirectionalShadowReceiverExtension> ReceiverExtensions => receiverExtensions;
+
+        private readonly List<IDirectionalShadowReceiverExtension> receiverExtensions = new();
+        private int receiverExtensionsVersion;
+
+        /// <summary>
+        /// Adds shadows combined with those of the shadow maps (nothing if it is already there).
+        /// </summary>
+        public void AddReceiverExtension(IDirectionalShadowReceiverExtension extension)
+        {
+            if (receiverExtensions.Contains(extension))
+                return;
+            receiverExtensions.Add(extension);
+            receiverExtensionsVersion++;
+        }
+
+        public void RemoveReceiverExtension(IDirectionalShadowReceiverExtension extension)
+        {
+            if (receiverExtensions.Remove(extension))
+                receiverExtensionsVersion++;
+        }
+
         public override ILightShadowMapShaderGroupData CreateShaderGroupData(LightShadowType shadowType)
         {
-            return new ShaderGroupData(shadowType);
+            return new ShaderGroupData(this, shadowType);
         }
 
         public override bool CanRenderLight(IDirectLight light)
@@ -491,6 +520,10 @@ namespace Stride.Rendering.Shadows
             protected Texture shadowMapTexture;
             protected Vector2 shadowMapTextureSize;
             protected Vector2 shadowMapTextureTexelSize;
+            private readonly LightDirectionalShadowMapRenderer renderer;
+            private readonly List<IDirectionalShadowReceiverParameters> extensionParameters = new();
+            private int extensionsVersion = -1;
+            private string compositionName;
             protected ObjectParameterKey<Texture> shadowMapTextureKey;
             protected ValueParameterKey<float> cascadeSplitsKey;
             protected ValueParameterKey<Matrix> worldToShadowCascadeUVsKey;
@@ -506,10 +539,14 @@ namespace Stride.Rendering.Shadows
             /// </summary>
             /// <param name="shadowType">Type of the shadow.</param>
             /// <param name="lightCountMax">The light count maximum.</param>
-            public ShaderGroupData(LightShadowType shadowType) : base(shadowType)
+            public ShaderGroupData(LightDirectionalShadowMapRenderer renderer, LightShadowType shadowType) : base(shadowType)
             {
+                this.renderer = renderer;
                 cascadeCount = 1 << ((int)(shadowType & LightShadowType.CascadeMask) - 1);
             }
+
+            // Extensions added or removed since the shader was built
+            public override bool IsShaderOutdated => renderer != null && ShadowShader != null && extensionsVersion != renderer.receiverExtensionsVersion;
 
             protected override string FilterMemberName { get; } = "PerView.Lighting";
 
@@ -521,6 +558,9 @@ namespace Stride.Rendering.Shadows
 
             public override void UpdateLayout(string compositionKey)
             {
+                compositionName = compositionKey;
+                foreach (var extension in extensionParameters)
+                    extension.UpdateLayout(compositionKey);
                 shadowMapTextureKey = ShadowMapKeys.ShadowMapTexture.ComposeWith(compositionKey);
                 shadowMapTextureSizeKey = ShadowMapKeys.TextureSize.ComposeWith(compositionKey);
                 shadowMapTextureTexelSizeKey = ShadowMapKeys.TextureTexelSize.ComposeWith(compositionKey);
@@ -535,6 +575,25 @@ namespace Stride.Rendering.Shadows
             public override void UpdateLightCount(int lightLastCount, int lightCurrentCount)
             {
                 base.UpdateLightCount(lightLastCount, lightCurrentCount);
+
+                // The extensions' shaders after the receiver's (each combines base.ComputeShadow with its own shadows)
+                if (renderer != null)
+                {
+                    if (extensionsVersion != renderer.receiverExtensionsVersion)
+                    {
+                        extensionsVersion = renderer.receiverExtensionsVersion;
+                        extensionParameters.Clear();
+                        foreach (var extension in renderer.receiverExtensions)
+                        {
+                            var extensionParameter = extension.CreateParameters();
+                            if (compositionName != null)
+                                extensionParameter.UpdateLayout(compositionName);
+                            extensionParameters.Add(extensionParameter);
+                        }
+                    }
+                    foreach (var extension in renderer.receiverExtensions)
+                        ShadowShader.Mixins.Add(extension.CreateShaderSource());
+                }
 
                 Array.Resize(ref cascadeSplits, cascadeCount * lightCurrentCount);
                 Array.Resize(ref worldToShadowCascadeUV, cascadeCount * lightCurrentCount);
@@ -590,6 +649,9 @@ namespace Stride.Rendering.Shadows
                 parameters.Set(depthRangesKey, depthRanges);  ///////////////////////////////////////////////////
                 parameters.Set(depthBiasesKey, depthBiases);
                 parameters.Set(offsetScalesKey, offsetScales);
+
+                foreach (var extension in extensionParameters)
+                    extension.ApplyViewParameters(context, parameters, currentLights);
             }
         }
 

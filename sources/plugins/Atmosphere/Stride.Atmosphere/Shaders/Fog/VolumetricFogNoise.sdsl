@@ -1,0 +1,105 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere.Fog
+{
+    /// <summary>
+    /// Generates the tiling 3D noise that breaks up the fog density: gradient noise octaves blended with inverted Worley
+    /// noise (billowy wisps), each octave tiling over the texture.
+    /// </summary>
+    shader VolumetricFogNoise : ComputeShaderBase
+    {
+        stage RWTexture3D<float> FogNoiseOutput;
+
+        cbuffer PerDispatch
+        {
+            // Texels along each side
+            stage int FogNoiseSize;
+        };
+
+        uint FogHash(int3 p)
+        {
+            uint h = (uint)(p.x * 73856093) ^ (uint)(p.y * 19349663) ^ (uint)(p.z * 83492791);
+            h = (h ^ (h >> 16)) * 0x45d9f3b;
+            h = (h ^ (h >> 16)) * 0x45d9f3b;
+            return h ^ (h >> 16);
+        }
+
+        float3 FogRandom3(int3 p)
+        {
+            uint h = FogHash(p);
+            return float3(h & 0x3ff, (h >> 10) & 0x3ff, (h >> 20) & 0x3ff) / 1023.0;
+        }
+
+        // Gradient noise in [-1, 1] with cells tiling every period cells
+        float FogGradientNoise(float3 p, int period)
+        {
+            int3 cell = (int3)floor(p);
+            float3 f = p - cell;
+            float3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+            float result = 0.0;
+            float values[8];
+            [unroll]
+            for (int i = 0; i < 8; i++)
+            {
+                int3 corner = int3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+                float3 gradient = normalize(FogRandom3((cell + corner + period) % period) * 2.0 - 1.0 + 1e-4);
+                values[i] = dot(gradient, f - corner);
+            }
+            float x00 = lerp(values[0], values[1], u.x);
+            float x10 = lerp(values[2], values[3], u.x);
+            float x01 = lerp(values[4], values[5], u.x);
+            float x11 = lerp(values[6], values[7], u.x);
+            result = lerp(lerp(x00, x10, u.y), lerp(x01, x11, u.y), u.z);
+            return result * 1.6;
+        }
+
+        // Distance to the nearest feature point (0-1) with cells tiling every period cells
+        float FogWorley(float3 p, int period)
+        {
+            int3 cell = (int3)floor(p);
+            float3 f = p - cell;
+            float nearest = 1.0;
+            for (int z = -1; z <= 1; z++)
+            {
+                for (int y = -1; y <= 1; y++)
+                {
+                    for (int x = -1; x <= 1; x++)
+                    {
+                        int3 offset = int3(x, y, z);
+                        float3 feature = offset + FogRandom3((cell + offset + period) % period + 1024);
+                        nearest = min(nearest, length(feature - f));
+                    }
+                }
+            }
+            return saturate(nearest);
+        }
+
+        override void Compute()
+        {
+            int3 texel = (int3)streams.DispatchThreadId;
+            if (any(texel >= FogNoiseSize))
+                return;
+
+            float3 uvw = (texel + 0.5) / FogNoiseSize;
+
+            float gradient = 0.0;
+            float amplitude = 0.5;
+            int period = 4;
+            [unroll]
+            for (int i = 0; i < 4; i++)
+            {
+                gradient += amplitude * FogGradientNoise(uvw * period, period);
+                amplitude *= 0.5;
+                period *= 2;
+            }
+
+            float worley = 0.625 * (1.0 - FogWorley(uvw * 4, 4)) + 0.25 * (1.0 - FogWorley(uvw * 8, 8)) + 0.125 * (1.0 - FogWorley(uvw * 16, 16));
+
+            // Gradient noise remapped by the Worley cells: soft billows with wispy edges
+            float value = saturate(gradient * 0.5 + 0.5);
+            value = saturate((value - (1.0 - worley)) / max(worley, 1e-3) * 0.5 + value * 0.5);
+            FogNoiseOutput[texel] = value;
+        }
+    };
+}

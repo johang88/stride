@@ -1,0 +1,50 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere.Fog
+{
+    /// <summary>
+    /// Functions shared by the volumetric fog passes: the depth distribution of the froxel slices and the phase function.
+    /// </summary>
+    /// <remarks>
+    /// Grid parameters: x = B, y = log2(far * B + 1), z = far (the fog volume distance), w = slice count. Slice coordinate
+    /// w (0-1) is at view depth ((far * B + 1)^w - 1) / B: nearly linear up to about 1 / B meters, exponential beyond.
+    /// </remarks>
+    shader VolumetricFogCommon
+    {
+        stage float FogSliceToDepth(float w, float4 grid)
+        {
+            return (exp2(w * grid.y) - 1.0) / grid.x;
+        }
+
+        stage float FogDepthToSlice(float depth, float4 grid)
+        {
+            return log2(max(depth, 0.0) * grid.x + 1.0) / grid.y;
+        }
+
+        // Phase function: cosTheta between the direction the light travels and the direction it scatters to. Henyey-Greenstein with
+        // anisotropy g, blended towards isotropic by multipleScattering (light bouncing around in thick fog loses its direction)
+        stage float FogPhase(float cosTheta, float g, float multipleScattering)
+        {
+            float g2 = g * g;
+            float denominator = max(1.0 + g2 - 2.0 * g * cosTheta, 1e-4);
+            float henyeyGreenstein = (1.0 - g2) / (4.0 * 3.14159265 * denominator * sqrt(denominator));
+            return lerp(henyeyGreenstein, 1.0 / (4.0 * 3.14159265), multipleScattering);
+        }
+
+        // Height fog optical depth along a ray from origin over segment (world space): density * exp(-falloff * (y - baseHeight))
+        stage float FogHeightOpticalDepth(float3 origin, float3 segment, float density, float falloff, float baseHeight)
+        {
+            float x = falloff * segment.y;
+            // (1 - exp(-x)) / x, with its series near 0 where the division loses precision
+            float factor = abs(x) > 1e-3 ? (1.0 - exp(-x)) / x : 1.0 - 0.5 * x;
+            return density * exp(-falloff * (origin.y - baseHeight)) * factor * length(segment);
+        }
+
+        // Interleaved gradient noise (Jimenez 2014), to dither the slice lookups per pixel
+        stage float FogDither(float2 pixel)
+        {
+            return frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
+        }
+    };
+}

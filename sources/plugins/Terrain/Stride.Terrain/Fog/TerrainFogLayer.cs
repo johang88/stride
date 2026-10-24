@@ -5,7 +5,7 @@ using System.ComponentModel;
 using Stride.Core;
 using Stride.Core.Annotations;
 using Stride.Core.Mathematics;
-using Stride.Rendering.VolumetricFog;
+using Stride.Atmosphere.Fog;
 
 namespace Stride.Terrain.Fog;
 

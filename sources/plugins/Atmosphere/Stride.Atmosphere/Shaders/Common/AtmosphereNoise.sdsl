@@ -1,0 +1,178 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Hashes and noises evaluated in shaders (the sky's stars and moon, the generated cloud textures), tiling where a
+    /// period is given.
+    /// </summary>
+    shader AtmosphereNoise
+    {
+        uint NoiseHash(uint3 p)
+        {
+            uint h = p.x * 73856093u ^ p.y * 19349663u ^ p.z * 83492791u;
+            h = (h ^ (h >> 16)) * 0x45d9f3bu;
+            h = (h ^ (h >> 16)) * 0x45d9f3bu;
+            return h ^ (h >> 16);
+        }
+
+        float Hash12(float2 p)
+        {
+            float3 p3 = frac(float3(p.xyx) * 0.1031);
+            p3 += dot(p3, p3.yzx + 33.33);
+            return frac((p3.x + p3.y) * p3.z);
+        }
+
+        float2 Hash22(float2 p)
+        {
+            float3 p3 = frac(float3(p.xyx) * float3(0.1031, 0.1030, 0.0973));
+            p3 += dot(p3, p3.yzx + 33.33);
+            return frac((p3.xx + p3.yz) * p3.zy);
+        }
+
+        // Three values in [0, 1] for an integer cell (its coordinates wrapped by the caller)
+        float3 NoiseRandom3(int3 cell, uint seed)
+        {
+            uint h = NoiseHash((uint3)(cell + 4096) + seed * uint3(1013u, 7919u, 104729u));
+            return float3(h & 0x3ffu, (h >> 10) & 0x3ffu, (h >> 20) & 0x3ffu) / 1023.0;
+        }
+
+        // Gradient (Perlin) noise in about [-1, 1], tiling every period cells
+        float GradientNoise(float3 p, int3 period, uint seed)
+        {
+            int3 cell = (int3)floor(p);
+            float3 f = p - cell;
+            float3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+            float values[8];
+            [unroll]
+            for (int i = 0; i < 8; i++)
+            {
+                int3 corner = int3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+                int3 wrapped = ((cell + corner) % period + period) % period;
+                float3 gradient = normalize(NoiseRandom3(wrapped, seed) * 2.0 - 1.0 + 1e-4);
+                values[i] = dot(gradient, f - corner);
+            }
+            float x00 = lerp(values[0], values[1], u.x);
+            float x10 = lerp(values[2], values[3], u.x);
+            float x01 = lerp(values[4], values[5], u.x);
+            float x11 = lerp(values[6], values[7], u.x);
+            return lerp(lerp(x00, x10, u.y), lerp(x01, x11, u.y), u.z) * 1.6;
+        }
+
+        // Distance to the nearest feature point (cellular / Worley noise, 0 at the points, about 1 between), tiling every period cells
+        float WorleyNoise(float3 p, int3 period, uint seed)
+        {
+            int3 cell = (int3)floor(p);
+            float3 f = p - cell;
+            float nearest = 1.0;
+            [loop]
+            for (int z = -1; z <= 1; z++)
+            {
+                for (int y = -1; y <= 1; y++)
+                {
+                    for (int x = -1; x <= 1; x++)
+                    {
+                        int3 offset = int3(x, y, z);
+                        int3 wrapped = ((cell + offset) % period + period) % period;
+                        float3 feature = offset + NoiseRandom3(wrapped, seed + 17u);
+                        float3 d = feature - f;
+                        nearest = min(nearest, dot(d, d));
+                    }
+                }
+            }
+            return saturate(sqrt(nearest));
+        }
+
+        // Cellular noise (as WorleyNoise) that also gives a random value (0-1) of the nearest feature's cell
+        float WorleyNoiseCell(float3 p, int3 period, uint seed, out float cellValue)
+        {
+            int3 cell = (int3)floor(p);
+            float3 f = p - cell;
+            float nearest = 1.0;
+            cellValue = 0.0;
+            [loop]
+            for (int z = -1; z <= 1; z++)
+            {
+                for (int y = -1; y <= 1; y++)
+                {
+                    for (int x = -1; x <= 1; x++)
+                    {
+                        int3 offset = int3(x, y, z);
+                        int3 wrapped = ((cell + offset) % period + period) % period;
+                        float3 random = NoiseRandom3(wrapped, seed + 17u);
+                        float3 d = offset + random - f;
+                        float distanceSquared = dot(d, d);
+                        if (distanceSquared < nearest)
+                        {
+                            nearest = distanceSquared;
+                            cellValue = NoiseRandom3(wrapped, seed + 29u).x;
+                        }
+                    }
+                }
+            }
+            return saturate(sqrt(nearest));
+        }
+
+        // Octaves of gradient noise in [0, 1], the first of baseFrequency cells per tile
+        float GradientFbm(float3 uvw, int baseFrequency, int octaves, uint seed)
+        {
+            float sum = 0.0;
+            float amplitude = 0.5;
+            float total = 0.0;
+            int frequency = baseFrequency;
+            for (int i = 0; i < octaves; i++)
+            {
+                sum += amplitude * GradientNoise(uvw * frequency, int3(frequency, frequency, frequency), seed + i);
+                total += amplitude;
+                amplitude *= 0.5;
+                frequency *= 2;
+            }
+            return saturate(sum / total * 0.5 + 0.5);
+        }
+
+        // Three octaves of inverted Worley noise (billows), in [0, 1]
+        float WorleyFbm(float3 uvw, int baseFrequency, uint seed)
+        {
+            float a = 1.0 - WorleyNoise(uvw * baseFrequency, int3(baseFrequency, baseFrequency, baseFrequency), seed);
+            float b = 1.0 - WorleyNoise(uvw * baseFrequency * 2, int3(baseFrequency * 2, baseFrequency * 2, baseFrequency * 2), seed + 1u);
+            float c = 1.0 - WorleyNoise(uvw * baseFrequency * 4, int3(baseFrequency * 4, baseFrequency * 4, baseFrequency * 4), seed + 2u);
+            return a * 0.625 + b * 0.25 + c * 0.125;
+        }
+
+        // Value noise without tiling, for the sky (moon surface, Milky Way)
+        float ValueNoise3(float3 p)
+        {
+            float3 i = floor(p);
+            float3 f = p - i;
+            f = f * f * (3.0 - 2.0 * f);
+            float n000 = Hash12(i.xy + i.z * 37.0);
+            float n100 = Hash12(i.xy + float2(1.0, 0.0) + i.z * 37.0);
+            float n010 = Hash12(i.xy + float2(0.0, 1.0) + i.z * 37.0);
+            float n110 = Hash12(i.xy + float2(1.0, 1.0) + i.z * 37.0);
+            float n001 = Hash12(i.xy + (i.z + 1.0) * 37.0);
+            float n101 = Hash12(i.xy + float2(1.0, 0.0) + (i.z + 1.0) * 37.0);
+            float n011 = Hash12(i.xy + float2(0.0, 1.0) + (i.z + 1.0) * 37.0);
+            float n111 = Hash12(i.xy + float2(1.0, 1.0) + (i.z + 1.0) * 37.0);
+            return lerp(lerp(lerp(n000, n100, f.x), lerp(n010, n110, f.x), f.y), lerp(lerp(n001, n101, f.x), lerp(n011, n111, f.x), f.y), f.z);
+        }
+
+        float ValueFbm3(float3 p, int octaves)
+        {
+            float sum = 0.0;
+            float amplitude = 0.5;
+            for (int i = 0; i < octaves; i++)
+            {
+                sum += amplitude * ValueNoise3(p);
+                p = p * 2.03 + float3(1.7, 9.2, 3.1);
+                amplitude *= 0.5;
+            }
+            return sum / (1.0 - pow(0.5, octaves));
+        }
+
+        float Remap(float value, float low, float high, float newLow, float newHigh)
+        {
+            return newLow + (value - low) / (high - low) * (newHigh - newLow);
+        }
+    };
+}

@@ -9,7 +9,7 @@ using Stride.Core.Mathematics;
 using Stride.Engine;
 using Stride.Graphics;
 using Stride.Rendering;
-using Stride.Rendering.VolumetricFog;
+using Stride.Atmosphere.Fog;
 using Stride.Terrain.Rendering;
 using Buffer = Stride.Graphics.Buffer;
 

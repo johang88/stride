@@ -1,0 +1,255 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// The sky seen from the camera: the sky-view look-up table, the sun disk and its aureole, the moon lit by the sun (its
+    /// phase follows), the stars and the Milky Way turning around the celestial pole, and the faint glow of the night sky.
+    /// Directions are world directions.
+    /// </summary>
+    shader SkyCommon : AtmosphereCommon, AtmosphereNoise
+    {
+        stage Texture2D SkyViewLut;
+
+        stage SamplerState SkyViewSampler
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Wrap;
+            AddressV = Clamp;
+        };
+
+        stage float SunAngularRadius;
+        // Luminance at the center of the disk above the atmosphere
+        stage float3 SunDiskLuminance;
+        stage float MoonAngularRadius;
+        stage float3 MoonDiskLuminance;
+        // Peak luminance of the stars (faded in by the night)
+        stage float StarIntensity;
+        // Angular size of a pixel (radians), to keep each star's light at any resolution
+        stage float StarAngularSize;
+        // World directions to the celestial frame (rotating with the sidereal time)
+        stage float4x4 StarRotation;
+        stage float SkyTime;
+        // Radiance of the moonless night sky (airglow, unresolved starlight); zero by day
+        stage float3 NightSkyGlow;
+
+        static const float SkyViewLutWidth = 256.0;
+        static const float SkyViewLutHeight = 144.0;
+
+        float3 SkyViewUvToDirection(float2 uv, float viewHeight)
+        {
+            float v = FromSubUvsToUnit(uv.y, SkyViewLutHeight);
+            float h = viewHeight - AtmosphereBottomRadius;
+            float vHorizon = sqrt(max(h * (2.0 * AtmosphereBottomRadius + h), 0.0));
+            float beta = acos(vHorizon / viewHeight);
+            float zenithHorizonAngle = AtmospherePi - beta;
+
+            float viewZenithAngle;
+            if (v < 0.5)
+            {
+                float coord = 1.0 - 2.0 * v;
+                viewZenithAngle = zenithHorizonAngle * (1.0 - coord * coord);
+            }
+            else
+            {
+                float coord = v * 2.0 - 1.0;
+                viewZenithAngle = zenithHorizonAngle + beta * coord * coord;
+            }
+
+            float azimuth = uv.x * 2.0 * AtmospherePi;
+            float sinZenith = sin(viewZenithAngle);
+            return float3(sinZenith * cos(azimuth), cos(viewZenithAngle), sinZenith * sin(azimuth));
+        }
+
+        float2 SkyViewDirectionToUv(float3 direction, float viewHeight)
+        {
+            float h = viewHeight - AtmosphereBottomRadius;
+            float vHorizon = sqrt(max(h * (2.0 * AtmosphereBottomRadius + h), 0.0));
+            float beta = acos(vHorizon / viewHeight);
+            float zenithHorizonAngle = AtmospherePi - beta;
+            float viewZenithAngle = acos(clamp(direction.y, -1.0, 1.0));
+
+            float v;
+            if (viewZenithAngle < zenithHorizonAngle)
+            {
+                float coord = 1.0 - sqrt(max(1.0 - viewZenithAngle / zenithHorizonAngle, 0.0));
+                v = coord * 0.5;
+            }
+            else
+            {
+                v = sqrt(max((viewZenithAngle - zenithHorizonAngle) / beta, 0.0)) * 0.5 + 0.5;
+            }
+
+            float u = frac(atan2(direction.z, direction.x) / (2.0 * AtmospherePi));
+            return float2(u, FromUnitToSubUvs(v, SkyViewLutHeight));
+        }
+
+        // The sky behind everything (no sun or moon disks, no stars)
+        float3 SampleSkyView(float3 direction)
+        {
+            float2 uv = SkyViewDirectionToUv(direction, length(AtmosphereCameraPosition));
+            // The night sky glows faintly on its own, brighter towards the horizon (a longer path through the glowing layer)
+            float glow = lerp(2.2, 1.0, saturate(direction.y * 2.5)) * saturate(direction.y * 8.0 + 0.6);
+            return SkyViewLut.SampleLevel(SkyViewSampler, uv, 0).rgb + NightSkyGlow * glow;
+        }
+
+        // Transmittance from the camera to space along a direction (zero below the horizon)
+        float3 ViewTransmittanceToSpace(float3 direction)
+        {
+            return GetLightTransmittance(AtmosphereCameraPosition, direction);
+        }
+
+        float3 SunDisk(float3 direction)
+        {
+            float cosAngle = dot(direction, AtmosphereSunDirection);
+            if (cosAngle < cos(SunAngularRadius * 1.02))
+                return float3(0.0, 0.0, 0.0);
+
+            float angle = acos(clamp(cosAngle, -1.0, 1.0));
+            float r = saturate(angle / SunAngularRadius);
+            float mu = sqrt(saturate(1.0 - r * r));
+            // Limb darkening
+            float3 limb = pow(float3(mu, mu, mu), float3(0.48, 0.55, 0.72));
+            float edge = saturate((SunAngularRadius - angle) / (SunAngularRadius * 0.08));
+            return SunDiskLuminance * limb * edge;
+        }
+
+        // Aureole: light the haze scatters forward close to the disk, a bright core and a wide halo
+        float3 SunGlow(float3 direction)
+        {
+            float cosAngle = dot(direction, AtmosphereSunDirection);
+            if (cosAngle < 0.95)
+                return float3(0.0, 0.0, 0.0);
+            float angle = acos(clamp(cosAngle, -1.0, 1.0));
+            float solidAngle = AtmospherePi * SunAngularRadius * SunAngularRadius;
+            const float w1 = 0.022;
+            const float w2 = 0.09;
+            float glow = 0.035 * exp(-angle / w1) / (6.2831853 * w1 * w1) + 0.02 * exp(-angle / w2) / (6.2831853 * w2 * w2);
+            return SunDiskLuminance * solidAngle * glow;
+        }
+
+        float3 MoonDisk(float3 direction)
+        {
+            float cosAngle = dot(direction, AtmosphereMoonDirection);
+            if (cosAngle < cos(MoonAngularRadius))
+                return float3(0.0, 0.0, 0.0);
+
+            float3 w = AtmosphereMoonDirection;
+            float3 referenceUp = abs(w.y) < 0.99 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
+            float3 u = normalize(cross(referenceUp, w));
+            float3 v = cross(w, u);
+            float2 p = float2(dot(direction, u), dot(direction, v)) / sin(MoonAngularRadius);
+            float r2 = dot(p, p);
+            if (r2 >= 1.0)
+                return float3(0.0, 0.0, 0.0);
+
+            float z = sqrt(1.0 - r2);
+            float3 normal = normalize(p.x * u + p.y * v - z * w);
+
+            // Albedo: dark maria and small craters, fixed to the side facing the planet
+            float3 local = float3(p, z);
+            float maria = smoothstep(0.48, 0.62, ValueFbm3(local * 2.3 + float3(4.1, 1.7, 0.3), 4));
+            float craters = ValueFbm3(local * 11.0 + float3(1.3, 7.1, 2.9), 3);
+            float albedo = 1.0 - 0.45 * maria - 0.18 * craters;
+
+            // A little flatter than Lambert, like the lunar regolith; earthshine on the dark side
+            float lit = pow(saturate(dot(normal, AtmosphereSunDirection)), 0.7);
+            float edge = saturate((1.0 - sqrt(r2)) * 40.0);
+            return MoonDiskLuminance * albedo * (lit + 0.015) * edge;
+        }
+
+        float3 MoonGlow(float3 direction)
+        {
+            float angle = acos(clamp(dot(direction, AtmosphereMoonDirection), -1.0, 1.0));
+            float solidAngle = AtmospherePi * MoonAngularRadius * MoonAngularRadius;
+            const float w = 0.035;
+            return MoonDiskLuminance * solidAngle * 0.15 * exp(-angle / w) / (6.2831853 * w * w);
+        }
+
+        float3 StarField(float3 worldDirection)
+        {
+            float3 d = mul(float4(worldDirection, 0.0), StarRotation).xyz;
+            float3 ad = abs(d);
+            float face;
+            float2 uv;
+            if (ad.x >= ad.y && ad.x >= ad.z)
+            {
+                face = d.x > 0.0 ? 0.0 : 1.0;
+                uv = d.yz / ad.x;
+            }
+            else if (ad.y >= ad.z)
+            {
+                face = d.y > 0.0 ? 2.0 : 3.0;
+                uv = d.xz / ad.y;
+            }
+            else
+            {
+                face = d.z > 0.0 ? 4.0 : 5.0;
+                uv = d.xy / ad.z;
+            }
+
+            const float gridSize = 300.0;
+            float2 g = (uv * 0.5 + 0.5) * gridSize;
+            float2 cell = floor(g);
+            float cellAngle = (2.0 / gridSize) / pow(1.0 + dot(uv, uv), 0.75);
+            float sigma = max(StarAngularSize * 0.65, 1e-6);
+            // Each star keeps its light as pixels get smaller: the peak rises as its footprint shrinks
+            float footprint = clamp(pow(0.0012 / max(StarAngularSize, 1e-5), 2.0), 0.25, 8.0);
+
+            float3 sum = float3(0.0, 0.0, 0.0);
+            for (float y = -1.0; y <= 1.0; y += 1.0)
+            {
+                for (float x = -1.0; x <= 1.0; x += 1.0)
+                {
+                    float2 c = cell + float2(x, y);
+                    float2 seed = c + float2(face * 1013.0, face * 719.0);
+                    float h = Hash12(seed);
+                    if (h < 0.16)
+                    {
+                        float2 star = c + 0.1 + 0.8 * Hash22(seed * 1.37 + float2(17.1, 3.3));
+                        float angle = length(g - star) * cellAngle;
+                        float magnitude = Hash12(seed + float2(3.7, 91.1));
+                        float brightness = (0.02 + 0.35 * pow(magnitude, 6.0) + 6.0 * pow(magnitude, 40.0)) * footprint;
+                        float temperature = Hash12(seed + float2(41.3, 7.9));
+                        float3 tint = lerp(float3(0.65, 0.78, 1.25), float3(1.3, 0.95, 0.65), temperature * temperature);
+                        float twinkle = 1.0 + 0.4 * sin(SkyTime * (3.0 + 7.0 * h) + magnitude * 60.0);
+                        sum += tint * brightness * twinkle * exp(-(angle * angle) / (2.0 * sigma * sigma));
+                    }
+                }
+            }
+
+            // Milky Way: a noisy band with dust lanes
+            float3 galacticNormal = normalize(float3(0.25, 0.55, 0.8));
+            float band = dot(d, galacticNormal);
+            float glow = exp(-band * band / (2.0 * 0.13 * 0.13));
+            float clouds = ValueFbm3(d * 5.0, 4);
+            float fine = ValueFbm3(d * 23.0 + float3(3.1, 1.3, 7.7), 3);
+            float dust = exp(-pow(band - 0.03 + 0.05 * (clouds - 0.5), 2.0) / (2.0 * 0.025 * 0.025)) * smoothstep(0.35, 0.65, fine);
+            float milkyWay = glow * (0.35 + clouds) * (0.6 + 0.8 * fine) * (1.0 - 0.75 * dust);
+            sum += float3(1.0, 0.93, 0.85) * milkyWay * 0.012;
+
+            return sum * StarIntensity;
+        }
+
+        // The sun, the moon and the stars above the atmosphere towards a direction (dimmed by the atmosphere by the caller)
+        float3 Celestial(float3 direction)
+        {
+            float3 celestial = SunDisk(direction) + SunGlow(direction);
+            if (any(MoonDiskLuminance > 0.0))
+                celestial += MoonDisk(direction) + MoonGlow(direction);
+            if (StarIntensity > 0.0)
+                celestial += StarField(direction);
+            return celestial;
+        }
+
+        /// The sky towards a world direction, as seen from the camera.
+        float3 SkyRadiance(float3 direction, bool includeCelestial)
+        {
+            float3 sky = SampleSkyView(direction);
+            if (includeCelestial)
+                sky += Celestial(direction) * ViewTransmittanceToSpace(direction);
+            return sky;
+        }
+    };
+}

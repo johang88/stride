@@ -1,0 +1,118 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Projects the sky capture onto order 3 spherical harmonics convolved with the cosine lobe, in the conventions of
+    /// Stride's skybox lighting (SphericalHarmonicsBufferEnvironmentColor: coefficients premultiplied by their basis
+    /// constants, cube directions).
+    /// Output: [0-8] = the coefficients, [9] = the radiance averaged over the sphere, [10] = over the upper hemisphere (world),
+    /// [11] = over the lower one. One group of 128 threads.
+    /// </summary>
+    shader SkySphericalHarmonics : ComputeShaderBase
+    {
+        stage TextureCube SkyCaptureCube;
+        stage float SkyCaptureMip;
+        stage RWBuffer<float4> SkyHarmonicsOutput;
+
+        stage SamplerState SkyCaptureSampler
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+            AddressW = Clamp;
+        };
+
+        groupshared float4 SkyHarmonicsSums[128 * 12];
+
+        float3 CubeFaceDirection(int face, float u, float v)
+        {
+            if (face == 0) return float3(1.0, -v, -u);
+            if (face == 1) return float3(-1.0, -v, u);
+            if (face == 2) return float3(u, 1.0, v);
+            if (face == 3) return float3(u, -1.0, -v);
+            if (face == 4) return float3(u, -v, 1.0);
+            return float3(-u, -v, -1.0);
+        }
+
+        override void Compute()
+        {
+            const float pi = 3.14159265358979;
+            const int n = 16;
+            uint index = streams.GroupIndex;
+
+            float3 sums[9];
+            [unroll]
+            for (int k = 0; k < 9; k++)
+                sums[k] = 0.0;
+            float4 all = 0.0;
+            float4 upper = 0.0;
+            float4 lower = 0.0;
+
+            // Squared basis constants (Stride's coefficients are premultiplied by the signed constants, which square them)
+            // times the cosine lobe's bands (1, 2/3, 1/4)
+            float b0 = 1.0 / (4.0 * pi);
+            float b1 = 3.0 / (4.0 * pi) * (2.0 / 3.0);
+            float b4 = 15.0 / (4.0 * pi) * 0.25;
+            float b6 = 5.0 / (16.0 * pi) * 0.25;
+            float b8 = 15.0 / (16.0 * pi) * 0.25;
+
+            for (int texel = index; texel < 6 * n * n; texel += 128)
+            {
+                int face = texel / (n * n);
+                int pixel = texel % (n * n);
+                float u = ((pixel % n) + 0.5) / n * 2.0 - 1.0;
+                float v = ((pixel / n) + 0.5) / n * 2.0 - 1.0;
+                float distanceSquared = 1.0 + u * u + v * v;
+                float weight = 4.0 / (sqrt(distanceSquared) * distanceSquared);
+                float3 d = normalize(CubeFaceDirection(face, u, v));
+                float3 radiance = SkyCaptureCube.SampleLevel(SkyCaptureSampler, d, SkyCaptureMip).rgb * weight;
+
+                sums[0] += radiance * b0;
+                sums[1] += radiance * b1 * d.y;
+                sums[2] += radiance * b1 * d.z;
+                sums[3] += radiance * b1 * d.x;
+                sums[4] += radiance * b4 * d.y * d.x;
+                sums[5] += radiance * b4 * d.y * d.z;
+                sums[6] += radiance * b6 * (3.0 * d.z * d.z - 1.0);
+                sums[7] += radiance * b4 * d.x * d.z;
+                sums[8] += radiance * b8 * (d.x * d.x - d.y * d.y);
+                all += float4(radiance, weight);
+                // (world y is cube y)
+                if (d.y >= 0.0)
+                    upper += float4(radiance, weight);
+                else
+                    lower += float4(radiance, weight);
+            }
+
+            [unroll]
+            for (int j = 0; j < 9; j++)
+                SkyHarmonicsSums[index * 12 + j] = float4(sums[j], 0.0);
+            SkyHarmonicsSums[index * 12 + 9] = all;
+            SkyHarmonicsSums[index * 12 + 10] = upper;
+            SkyHarmonicsSums[index * 12 + 11] = lower;
+            GroupMemoryBarrierWithGroupSync();
+
+            for (uint stride = 64; stride > 0; stride >>= 1)
+            {
+                if (index < stride)
+                {
+                    for (int c = 0; c < 12; c++)
+                        SkyHarmonicsSums[index * 12 + c] += SkyHarmonicsSums[(index + stride) * 12 + c];
+                }
+                GroupMemoryBarrierWithGroupSync();
+            }
+
+            if (index < 12)
+            {
+                float4 sum = SkyHarmonicsSums[index];
+                float totalWeight = SkyHarmonicsSums[9].w;
+                if (index < 9)
+                    SkyHarmonicsOutput[index] = float4(sum.rgb * (4.0 * pi / max(totalWeight, 1e-6)), 0.0);
+                else
+                    SkyHarmonicsOutput[index] = float4(sum.rgb / max(sum.w, 1e-6), 1.0);
+            }
+        }
+    };
+}

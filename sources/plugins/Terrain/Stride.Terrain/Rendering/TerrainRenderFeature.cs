@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using Stride.Core;
 using Stride.Core.Storage;
@@ -75,7 +76,8 @@ public sealed class TerrainRenderFeature : SubRenderFeature
 
             viewNodes.Clear();
             // Its terrain shadows already darken what its directional shadow maps would: casting there too would only add their hard edges
-            if (view is ShadowMapRenderView { ShadowMapTexture.Renderer: TerrainDirectionalShadowMapRenderer } && terrainShadows is { IsReady: true } && terrainShadows.Active == terrain)
+            if (view is ShadowMapRenderView { ShadowMapTexture.Renderer: LightDirectionalShadowMapRenderer directional } && terrainShadows is { IsReady: true } && terrainShadows.Active == terrain
+                && directional.ReceiverExtensions.OfType<TerrainShadowReceiverExtension>().Any())
             {
                 terrain.ViewNodes[view] = new TerrainRenderObject.NodeRange { Offset = nodes.Count, Count = 0 };
                 continue;

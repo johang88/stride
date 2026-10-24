@@ -1,0 +1,34 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Rendering.Skyboxes
+{
+    /// <summary>
+    /// Diffuse environment lighting from order 3 spherical harmonics held in a GPU buffer (9 float4, the coefficients
+    /// premultiplied by their basis constants as for SphericalHarmonicsEnvironmentColor), for skies computed on the GPU.
+    /// </summary>
+    shader SphericalHarmonicsBufferEnvironmentColor : IComputeEnvironmentColor
+    {
+        rgroup PerView.Lighting
+        {
+            stage Buffer<float4> SphericalHarmonicsBuffer;
+        }
+
+        override float4 Compute(float3 direction)
+        {
+            float x = direction.x;
+            float y = direction.y;
+            float z = direction.z;
+            float3 color = SphericalHarmonicsBuffer[0].rgb
+                + SphericalHarmonicsBuffer[1].rgb * y
+                + SphericalHarmonicsBuffer[2].rgb * z
+                + SphericalHarmonicsBuffer[3].rgb * x
+                + SphericalHarmonicsBuffer[4].rgb * (y * x)
+                + SphericalHarmonicsBuffer[5].rgb * (y * z)
+                + SphericalHarmonicsBuffer[6].rgb * (3.0 * z * z - 1.0)
+                + SphericalHarmonicsBuffer[7].rgb * (x * z)
+                + SphericalHarmonicsBuffer[8].rgb * (x * x - y * y);
+            return float4(max(color, 0.0), 1.0);
+        }
+    };
+}

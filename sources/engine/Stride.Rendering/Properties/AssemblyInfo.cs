@@ -7,3 +7,4 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("Stride.Assets.Presentation.Wpf" + Stride.PublicKeys.Default)]
 [assembly: InternalsVisibleTo("Stride.Engine.Tests" + Stride.PublicKeys.Default)]
 [assembly: InternalsVisibleTo("Stride.Terrain" + Stride.PublicKeys.Default)]
+[assembly: InternalsVisibleTo("Stride.Atmosphere" + Stride.PublicKeys.Default)]

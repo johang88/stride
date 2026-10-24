@@ -15,7 +15,6 @@ using Stride.Rendering.Images;
 using Stride.Rendering.Lights;
 using Stride.Rendering.Shadows;
 using Stride.Rendering.SubsurfaceScattering;
-using Stride.Rendering.VolumetricFog;
 using Stride.VirtualReality;
 
 namespace Stride.Rendering.Compositing
@@ -92,10 +91,10 @@ namespace Stride.Rendering.Compositing
         public LightShafts LightShafts { get; set; }
 
         /// <summary>
-        /// Volumetric fog: the fog of the scene (its volumetric fog component, fog volumes and painted fog) lit in a froxel grid.
+        /// The sky and the participating media of the scene (atmosphere, clouds, fog, smoke), drawn behind and over the surfaces.
         /// </summary>
         /// <remarks>Not drawn in virtual reality.</remarks>
-        public VolumetricFogRenderer VolumetricFog { get; set; }
+        public IAtmosphereRenderer Atmosphere { get; set; }
 
         /// <summary>
         /// Virtual Reality related settings
@@ -423,7 +422,7 @@ namespace Stride.Rendering.Compositing
 
                     LightShafts?.Collect(context);
 
-                    VolumetricFog?.Collect(context, TransparentRenderStage);
+                    Atmosphere?.Collect(context, TransparentRenderStage);
 
                     PostEffects?.Collect(context);
                 }
@@ -510,9 +509,9 @@ namespace Stride.Rendering.Compositing
             foreach (var extension in renderSystem.ViewExtensions)
                 extension.Draw(context, drawContext);
 
-            // Light the fog grid (after the shadow maps, before the surfaces that sample it)
+            // The sky lighting and the media volumes (after the shadow maps, before the surfaces that sample them)
             if (eyeCount == 1)
-                VolumetricFog?.DrawVolume(drawContext);
+                Atmosphere?.Prepare(drawContext);
 
             // Z Prepass
             var lightProbes = LightProbes && GBufferRenderStage != null;
@@ -566,14 +565,14 @@ namespace Stride.Rendering.Compositing
                     }
                 }
 
-                // Fog the opaque surfaces and the sky (the transparent ones fog themselves)
-                if (VolumetricFog != null && eyeCount == 1)
+                // The sky behind the opaque surfaces, the media over them (the transparent ones apply the media themselves)
+                if (Atmosphere != null && eyeCount == 1)
                 {
                     var fogColorIndex = OpaqueRenderStage?.OutputValidator.Find(typeof(ColorTargetSemantic)) ?? -1;
                     if (fogColorIndex >= 0 && fogColorIndex < drawContext.CommandList.RenderTargetCount)
                     {
                         var depthStencilBuffer = drawContext.CommandList.DepthStencilBuffer;
-                        VolumetricFog.Apply(drawContext, drawContext.CommandList.RenderTargets[fogColorIndex], depthStencilBuffer);
+                        Atmosphere.Draw(drawContext, drawContext.CommandList.RenderTargets[fogColorIndex], depthStencilBuffer);
                         // Subsurface scattering left the depth buffer read-only for the transparent stage
                         if (depthStencilSRV != null && depthStencilBuffer != null)
                             drawContext.CommandList.ResourceBarrierTransition(depthStencilBuffer, BarrierLayout.DepthStencilRead);
@@ -964,7 +963,7 @@ namespace Stride.Rendering.Compositing
         protected override void Destroy()
         {
             PostEffects?.Dispose();
-            VolumetricFog?.Dispose();
+            Atmosphere?.Dispose();
             depthStencilROCached?.Dispose();
         }
 

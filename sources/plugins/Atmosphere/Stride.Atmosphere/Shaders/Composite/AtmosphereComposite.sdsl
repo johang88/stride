@@ -1,0 +1,104 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Draws the sky (with its sun, moon, stars and clouds) where nothing was rendered, and the media over everything: the
+    /// atmosphere's aerial perspective over the surfaces, the fog (froxel volume, then the height fog) over both.
+    /// Drawn with a blend of (One, SourceAlpha): the output color is the light added, its alpha the transmittance of the
+    /// background (0 on the sky, which replaces it). Texture0 = depth buffer, Texture1 = resolved clouds.
+    /// </summary>
+    shader AtmosphereComposite : ImageEffectShader, SkyCommon, VolumetricFogApplyBase
+    {
+        cbuffer PerDraw
+        {
+            // 1 / M11, 1 / M22, M31, M32 of the projection
+            stage float4 CompositeProjection;
+            // M33, M43 of the (reversed depth) projection: view depth = M43 / (depth + M33)
+            stage float2 CompositeDepth;
+            stage float4x4 CompositeViewInverse;
+            stage float2 CompositeTargetSize;
+            // The clouds' (unjittered) view projection and their buffer's size; z = 1 when there are clouds
+            stage float4x4 CompositeCloudViewProjection;
+            stage float3 CompositeCloudSize;
+            // 1 when the sky is drawn (an atmosphere in the scene)
+            stage float CompositeSky;
+        };
+
+        stage SamplerState CompositePointSampler
+        {
+            Filter = MIN_MAG_MIP_POINT;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        // The resolved clouds towards a world direction: bilinear over the texels that aren't missing (behind geometry)
+        float4 SampleClouds(float3 direction)
+        {
+            float4 cloudClip = mul(float4(FogApplyEye + direction * 100000.0, 1.0), CompositeCloudViewProjection);
+            float2 cloudUv = float2(cloudClip.x / cloudClip.w * 0.5 + 0.5, 0.5 - cloudClip.y / cloudClip.w * 0.5);
+            float2 position = cloudUv * CompositeCloudSize.xy - 0.5;
+            float2 origin = floor(position);
+            float2 fraction = position - origin;
+            float4 cloud = float4(0.0, 0.0, 0.0, 0.0);
+            float weight = 0.0;
+            [unroll]
+            for (int j = 0; j < 2; j++)
+            {
+                [unroll]
+                for (int i = 0; i < 2; i++)
+                {
+                    float4 c = Texture1.SampleLevel(CompositePointSampler, (origin + float2(i, j) + 0.5) / CompositeCloudSize.xy, 0);
+                    float w = (i == 1 ? fraction.x : 1.0 - fraction.x) * (j == 1 ? fraction.y : 1.0 - fraction.y);
+                    if (c.a >= 0.0)
+                    {
+                        cloud += c * w;
+                        weight += w;
+                    }
+                }
+            }
+            return weight > 0.0 ? cloud / weight : float4(0.0, 0.0, 0.0, 1.0);
+        }
+
+        stage override float4 Shading()
+        {
+            float2 uv = streams.TexCoord;
+            float zBuffer = Texture0.SampleLevel(CompositePointSampler, uv, 0).r;
+            float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+            float3 directionVS = float3((ndc + CompositeProjection.zw) * CompositeProjection.xy, -1.0);
+            float dither = FogDither(uv * CompositeTargetSize);
+
+            // The sky (reversed depth: the far plane is at 0)
+            if (zBuffer <= 0.0)
+            {
+                float3 direction = normalize(mul(directionVS, (float3x3)CompositeViewInverse));
+                float3 sky = float3(0.0, 0.0, 0.0);
+                float skyAlpha = 1.0;
+                if (CompositeSky > 0.0)
+                {
+                    sky = SkyRadiance(direction, true);
+                    if (CompositeCloudSize.z > 0.0)
+                    {
+                        float4 clouds = SampleClouds(direction);
+                        sky = sky * clouds.a + clouds.rgb;
+                    }
+                    skyAlpha = 0.0;
+                }
+
+                // Fog over the sky, as if it were at the far plane
+                if (FogApplySunDirection.w > 0.0)
+                {
+                    float depth = FogApplySunDirection.w;
+                    float4 fog = EvaluateFog(uv, depth, mul(directionVS * depth, (float3x3)CompositeViewInverse), dither, false);
+                    return float4(sky * fog.a + fog.rgb, skyAlpha * fog.a);
+                }
+                return float4(sky, skyAlpha);
+            }
+
+            float viewDepth = CompositeDepth.y / (zBuffer + CompositeDepth.x);
+            float3 ray = mul(directionVS * viewDepth, (float3x3)CompositeViewInverse);
+            return EvaluateFog(uv, viewDepth, ray, dither, true);
+        }
+    };
+}

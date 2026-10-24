@@ -1,0 +1,56 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Top-down map of the transmittance of the light through the clouds around the camera: each texel marches from the
+    /// ground at sea level up along the light through the low and middle layers (without the fine detail).
+    /// </summary>
+    shader CloudShadowMap : ComputeShaderBase, CloudCommon
+    {
+        stage RWTexture2D<float> CloudShadowOutput;
+
+        cbuffer PerDispatch
+        {
+            // xy = world XZ of the map's corner, z = world size, w = texels along a side
+            stage float4 CloudShadowRect;
+            stage float3 CloudShadowEye;
+        };
+
+        override void Compute()
+        {
+            int2 texel = (int2)streams.DispatchThreadId.xy;
+            if (any(texel >= (int)CloudShadowRect.w))
+                return;
+
+            float2 xz = CloudShadowRect.xy + (texel + 0.5) / CloudShadowRect.w * CloudShadowRect.z;
+            float3 L = CloudLightDirection;
+            if (L.y < 0.01)
+            {
+                CloudShadowOutput[texel] = 1.0;
+                return;
+            }
+
+            float3 ground = float3(xz.x, AtmosphereSeaLevel, xz.y);
+            float tStart = RayAltitude(ground, L, CloudLowLayer.x - 400.0, true);
+            float tEnd = RayAltitude(ground, L, max(CloudLowLayer.x + CloudLowLayer.y, CloudMidLayer.x + CloudMidLayer.y), true);
+            const float steps = 24.0;
+            float dt = (tEnd - tStart) / steps;
+            float opticalDepth = 0.0;
+            for (float i = 0.0; i < steps; i += 1.0)
+            {
+                float3 position = ground + L * (tStart + (i + 0.5) * dt);
+                float altitude = CloudAltitude(position);
+                float heightFraction;
+                float profile;
+                float density = LowDensity(position, altitude, 150.0, false, heightFraction, profile) * CloudLowShape.x;
+                density += MidDensity(position, altitude, 150.0, false, heightFraction, profile) * CloudMidShape.x;
+                opticalDepth += density * dt;
+            }
+            // Light scattered on through the clouds keeps some brightness under even deep ones (multiple scattering)
+            float transmittance = max(exp(-opticalDepth), 0.18 * exp(-opticalDepth * 0.08));
+            CloudShadowOutput[texel] = transmittance;
+        }
+    };
+}

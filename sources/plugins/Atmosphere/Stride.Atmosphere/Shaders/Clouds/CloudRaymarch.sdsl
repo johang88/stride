@@ -1,0 +1,78 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Raymarches the clouds of the view at a reduced resolution, interleaved: the target has a texel per 2x2 block of the
+    /// cloud buffer and marches this frame's pixel of each block (CloudInterleave), so each pixel is marched every fourth
+    /// frame and resolved over time (CloudTemporal). Only texels near the sky are marched (the camera stays below the
+    /// clouds, so geometry always hides them); the others are missing (alpha -1).
+    /// Output: rgb = light (the atmosphere in front included), a = transmittance.
+    /// </summary>
+    shader CloudRaymarch : ImageEffectShader, CloudCommon
+    {
+        stage float4x4 CloudInvViewProjection;
+        stage float3 CloudEye;
+        stage float CloudFrame;
+        stage float CloudSteps;
+        stage int CloudLightSteps;
+        stage float CloudMaxDistance;
+        // Angle a pixel of the cloud buffer covers (radians)
+        stage float CloudPixelAngle;
+        stage Texture2D CloudSceneDepth;
+        stage float2 CloudResolution;
+        stage float2 CloudInterleave;
+        // Debug views: 1 = shape noise slice across uv (x, y), 2 = (x, z), 3 = detail noise (x, y), 4 = weather map
+        stage int CloudDebug;
+
+        stage SamplerState CloudPointClamp
+        {
+            Filter = MIN_MAG_MIP_POINT;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        stage override float4 Shading()
+        {
+            float2 block = floor(streams.TexCoord * CloudResolution * 0.5);
+            float2 uv = (block * 2.0 + CloudInterleave + 0.5) / CloudResolution;
+            if (CloudDebug == 1)
+                return float4(CloudShapeNoise.SampleLevel(CloudLinearWrap, float3(uv * 2.0, 0.37), 0).rgb * 0.5, 0.5);
+            if (CloudDebug == 2)
+                return float4(CloudShapeNoise.SampleLevel(CloudLinearWrap, float3(uv.x * 2.0, 0.37, uv.y * 2.0), 0).rgb * 0.5, 0.5);
+            if (CloudDebug == 3)
+                return float4(CloudDetailNoise.SampleLevel(CloudLinearWrap, float3(uv * 2.0, 0.37), 0).rgb * 0.5, 0.5);
+            if (CloudDebug == 4)
+                return float4(CloudWeatherMap.SampleLevel(CloudLinearWrap, uv, 0).rgb * 0.5, 0.5);
+
+            // The composite filters this buffer: a texel is marched if any full resolution pixel in reach of the filter is
+            // sky (reversed depth: the far plane is at 0), or gaps between leaves would show the sky without its clouds
+            float2 fullTexel = 0.5 / CloudResolution;
+            bool anySky = false;
+            [unroll]
+            for (int y = 0; y < 4; y++)
+            {
+                [unroll]
+                for (int x = 0; x < 4; x++)
+                {
+                    if (CloudSceneDepth.SampleLevel(CloudPointClamp, uv + (float2(x, y) - 1.5) * fullTexel, 0).r <= 0.0)
+                        anySky = true;
+                }
+            }
+            if (!anySky)
+                return float4(0.0, 0.0, 0.0, -1.0);
+
+            float4 farPoint = mul(float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0), CloudInvViewProjection);
+            float3 direction = normalize(farPoint.xyz / farPoint.w - CloudEye);
+
+            // A random start per pixel stepping through the golden ratio sequence, one sample per round of the interleave:
+            // the samples cover the step evenly within a few rounds
+            float2 pixel = floor(uv * CloudResolution);
+            float jitter = frac(Hash12(pixel) + CloudFrame * 0.618034);
+
+            float meanDistance;
+            return MarchClouds(CloudEye, direction, CloudEye, CloudSteps, CloudLightSteps, CloudMaxDistance, jitter, true, CloudPixelAngle, meanDistance);
+        }
+    };
+}

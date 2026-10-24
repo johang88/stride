@@ -87,6 +87,7 @@ namespace Stride.Rendering.Lights
             private PermutationParameterKey<ShaderSource> lightDiffuseColorKey;
             private PermutationParameterKey<ShaderSource> lightSpecularColorKey;
             private ValueParameterKey<Color3> sphericalColorsKey;
+            private ObjectParameterKey<Stride.Graphics.Buffer> sphericalHarmonicsBufferKey;
             private ObjectParameterKey<Texture> specularCubeMapkey;
             private ValueParameterKey<float> specularMipCountKey;
 
@@ -107,6 +108,7 @@ namespace Stride.Rendering.Lights
                 lightSpecularColorKey = LightSkyboxShaderKeys.LightSpecularColor.ComposeWith(compositionName);
 
                 sphericalColorsKey = SphericalHarmonicsEnvironmentColorKeys.SphericalColors.ComposeWith("lightDiffuseColor." + compositionName);
+                sphericalHarmonicsBufferKey = SphericalHarmonicsBufferEnvironmentColorKeys.SphericalHarmonicsBuffer.ComposeWith("lightDiffuseColor." + compositionName);
                 specularCubeMapkey = RoughnessCubeMapEnvironmentColorKeys.CubeMap.ComposeWith("lightSpecularColor." + compositionName);
                 specularMipCountKey = RoughnessCubeMapEnvironmentColorKeys.MipCount.ComposeWith("lightSpecularColor." + compositionName);
             }
@@ -153,6 +155,9 @@ namespace Stride.Rendering.Lights
 
                 // This need to be working with new system
                 diffuseParameters.CopyTo(SphericalHarmonicsEnvironmentColorKeys.SphericalColors, parameters, sphericalColorsKey);
+                // (skies computed on the GPU keep their spherical harmonics in a buffer)
+                if (diffuseParameters.Get(SphericalHarmonicsBufferEnvironmentColorKeys.SphericalHarmonicsBuffer) is { } sphericalHarmonicsBuffer)
+                    parameters.Set(sphericalHarmonicsBufferKey, sphericalHarmonicsBuffer);
                 parameters.Set(specularCubeMapkey, specularCubemap);
                 parameters.Set(specularMipCountKey, specularCubemapLevels);
             }

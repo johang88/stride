@@ -1,0 +1,156 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Temporal accumulation of the reduced resolution clouds. The clouds are far away: the history is reprojected by view
+    /// direction only. One pixel of each 2x2 block was marched this frame (CloudInterleave); it is blended into its
+    /// history, clamped to the current neighbourhood to follow the drifting clouds. The others keep their history, or take
+    /// the blocks' estimate where they have none. Texels the raymarch skipped (no sky in reach) are missing (alpha -1) in
+    /// the current clouds and the history alike, and left out of the neighbourhood and the filters: taken as clear sky
+    /// they would pull the clouds around silhouettes towards it (a bright outline around swaying leaves).
+    /// Texture0 = current clouds (a texel per 2x2 block), Texture1 = history.
+    /// </summary>
+    shader CloudTemporal : ImageEffectShader
+    {
+        stage float4x4 CloudInvViewProjection;
+        stage float4x4 CloudPreviousViewProjection;
+        stage float3 CloudEye;
+        // Texel of the current (interleaved) clouds, the cloud buffer's resolution and this frame's pixel in each block
+        stage float2 CloudTexel;
+        stage float2 CloudResolution;
+        stage float2 CloudInterleave;
+        stage float CloudHistoryValid;
+        // Weight of a new sample (lower: smoother, slower to follow changes)
+        stage float CloudBlend;
+
+        stage SamplerState CloudTemporalPoint
+        {
+            Filter = MIN_MAG_MIP_POINT;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        // Catmull-Rom weight of tap k (0-3, the sample between taps 1 and 2) at fraction f
+        float CatmullRom(int k, float f)
+        {
+            if (k == 0)
+                return f * (-0.5 + f * (1.0 - 0.5 * f));
+            if (k == 1)
+                return 1.0 + f * f * (-2.5 + 1.5 * f);
+            if (k == 2)
+                return f * (0.5 + f * (2.0 - 1.5 * f));
+            return f * f * (-0.5 + 0.5 * f);
+        }
+
+        stage override float4 Shading()
+        {
+            float4 missing = float4(0.0, 0.0, 0.0, -1.0);
+            float2 uv = streams.TexCoord;
+            float2 pixel = floor(uv * CloudResolution);
+            float2 block = floor(pixel * 0.5);
+            float4 current = Texture0.SampleLevel(CloudTemporalPoint, (block + 0.5) * CloudTexel, 0);
+            bool marched = all(pixel - block * 2.0 == CloudInterleave);
+
+            // The valid blocks around: their range (for the marched pixel) and the blocks' estimate here (bilinear over
+            // the nearest valid ones, their average where those are missing)
+            float2 filterPosition = uv / CloudTexel - 0.5;
+            float2 filterOrigin = floor(filterPosition);
+            float2 filterWeight = filterPosition - filterOrigin;
+            float4 minimum = float4(1e5, 1e5, 1e5, 1e5);
+            float4 maximum = float4(-1e5, -1e5, -1e5, -1e5);
+            float4 sum = float4(0.0, 0.0, 0.0, 0.0);
+            float count = 0.0;
+            float4 filtered = float4(0.0, 0.0, 0.0, 0.0);
+            float filteredWeight = 0.0;
+            for (int y = -1; y <= 1; y++)
+            {
+                for (int x = -1; x <= 1; x++)
+                {
+                    float2 tap = block + float2(x, y);
+                    float4 c = Texture0.SampleLevel(CloudTemporalPoint, (tap + 0.5) * CloudTexel, 0);
+                    if (c.a >= 0.0)
+                    {
+                        minimum = min(minimum, c);
+                        maximum = max(maximum, c);
+                        sum += c;
+                        count += 1.0;
+                        float2 d = tap - filterOrigin;
+                        if (all(d >= 0.0) && all(d <= 1.0))
+                        {
+                            float w = (d.x > 0.5 ? filterWeight.x : 1.0 - filterWeight.x) * (d.y > 0.5 ? filterWeight.y : 1.0 - filterWeight.y);
+                            filtered += c * w;
+                            filteredWeight += w;
+                        }
+                    }
+                }
+            }
+            float4 estimate = filteredWeight > 0.01 ? filtered / filteredWeight : count > 0.0 ? sum / max(count, 1.0) : missing;
+
+            // History, Catmull-Rom (bilinear over the valid texels next to missing ones): most pixels only carry their
+            // history between their samples, and resampled bilinearly every frame while the view turns they would blur away
+            float4 farPoint = mul(float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0), CloudInvViewProjection);
+            float3 direction = normalize(farPoint.xyz / farPoint.w - CloudEye);
+            float4 previousClip = mul(float4(CloudEye + direction * 100000.0, 1.0), CloudPreviousViewProjection);
+            float2 previousUv = float2(previousClip.x / previousClip.w * 0.5 + 0.5, 0.5 - previousClip.y / previousClip.w * 0.5);
+            bool haveHistory = CloudHistoryValid > 0.5 && previousClip.w > 0.0 && all(previousUv >= 0.0) && all(previousUv <= 1.0);
+            float4 history = float4(0.0, 0.0, 0.0, 0.0);
+            float historyWeight = 0.0;
+            if (haveHistory)
+            {
+                float2 historyPosition = previousUv * CloudResolution - 0.5;
+                float2 historyOrigin = floor(historyPosition);
+                float2 historyFraction = historyPosition - historyOrigin;
+                float4 sharp = float4(0.0, 0.0, 0.0, 0.0);
+                float4 innerMinimum = float4(1e5, 1e5, 1e5, 1e5);
+                float4 innerMaximum = float4(-1e5, -1e5, -1e5, -1e5);
+                bool anyMissing = false;
+                for (int j = 0; j < 4; j++)
+                {
+                    for (int i = 0; i < 4; i++)
+                    {
+                        float4 h = Texture1.SampleLevel(CloudTemporalPoint, (historyOrigin + float2(i - 1, j - 1) + 0.5) / CloudResolution, 0);
+                        sharp += h * (CatmullRom(i, historyFraction.x) * CatmullRom(j, historyFraction.y));
+                        if (h.a < 0.0)
+                            anyMissing = true;
+                        if (i >= 1 && i <= 2 && j >= 1 && j <= 2)
+                        {
+                            float b = (i == 2 ? historyFraction.x : 1.0 - historyFraction.x) * (j == 2 ? historyFraction.y : 1.0 - historyFraction.y);
+                            if (h.a >= 0.0)
+                            {
+                                history += h * b;
+                                historyWeight += b;
+                                innerMinimum = min(innerMinimum, h);
+                                innerMaximum = max(innerMaximum, h);
+                            }
+                        }
+                    }
+                }
+                // (mostly missing: this pixel was hidden last frame)
+                haveHistory = historyWeight > 0.5;
+                history /= max(historyWeight, 1e-4);
+                // (kept within the texels around it: no ringing)
+                if (!anyMissing)
+                    history = clamp(sharp, innerMinimum, innerMaximum);
+            }
+
+            if (marched)
+            {
+                if (current.a < 0.0)
+                    return missing;
+                if (!haveHistory)
+                    return current;
+                float4 extent = (maximum - minimum) * 0.5;
+                history = clamp(history, minimum - extent, maximum + extent);
+                // (a light weight: at the thin edges of small clouds one sample lands in or out of the cloud, and a heavy
+                // weight would make the edges sparkle in a still view)
+                return lerp(history, current, CloudBlend);
+            }
+
+            if (!haveHistory)
+                return estimate;
+            return history;
+        }
+    };
+}

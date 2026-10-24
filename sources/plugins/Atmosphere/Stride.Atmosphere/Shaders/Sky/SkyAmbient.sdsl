@@ -1,0 +1,52 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// The light around the clouds, from the clear sky (the sky-view look-up table, without the clouds themselves: lit by
+    /// a capture holding them, an overcast would feed back into itself). One group of 64 threads.
+    /// Output: [0] = radiance of the sky averaged over the upper hemisphere, [1] = radiance of the ground (its albedo lit by
+    /// the sun or moon and the sky).
+    /// </summary>
+    shader SkyAmbient : ComputeShaderBase, SkyCommon
+    {
+        stage RWBuffer<float4> SkyAmbientOutput;
+
+        groupshared float3 SkyAmbientSums[64];
+
+        override void Compute()
+        {
+            uint index = streams.GroupIndex;
+            // 8 x 8 directions over the upper hemisphere, uniform in solid angle
+            float azimuth = ((index & 7) + 0.5) / 8.0 * 2.0 * AtmospherePi;
+            float cosZenith = 1.0 - ((index >> 3) + 0.5) / 8.0;
+            float sinZenith = sqrt(1.0 - cosZenith * cosZenith);
+            float3 direction = float3(sinZenith * cos(azimuth), cosZenith, sinZenith * sin(azimuth));
+            SkyAmbientSums[index] = SampleSkyView(direction);
+            GroupMemoryBarrierWithGroupSync();
+
+            [unroll]
+            for (uint stride = 32; stride > 0; stride >>= 1)
+            {
+                if (index < stride)
+                    SkyAmbientSums[index] += SkyAmbientSums[index + stride];
+                GroupMemoryBarrierWithGroupSync();
+            }
+
+            if (index == 0)
+            {
+                float3 sky = SkyAmbientSums[0] / 64.0;
+                // Irradiance on the ground: the lights through the atmosphere, and the sky (radiance * pi for a uniform sky)
+                float3 up = float3(0.0, 1.0, 0.0);
+                float sunCos = saturate(AtmosphereSunDirection.y);
+                float moonCos = saturate(AtmosphereMoonDirection.y);
+                float3 irradiance = AtmosphereSunIlluminance * GetLightTransmittance(AtmosphereCameraPosition, AtmosphereSunDirection) * sunCos
+                    + AtmosphereMoonIlluminance * GetLightTransmittance(AtmosphereCameraPosition, AtmosphereMoonDirection) * moonCos
+                    + sky * AtmospherePi;
+                SkyAmbientOutput[0] = float4(sky, 1.0);
+                SkyAmbientOutput[1] = float4(irradiance * AtmosphereGroundAlbedo / AtmospherePi, 1.0);
+            }
+        }
+    };
+}

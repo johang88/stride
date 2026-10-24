@@ -187,8 +187,11 @@ namespace Stride.Particles
         [DataMemberIgnore]
         public int LivingParticles => pool.LivingParticles;
 
+        /// <summary>
+        /// The particles of this emitter, in its <see cref="SimulationSpace"/> (to read them, for example to draw them in some other way).
+        /// </summary>
         [DataMemberIgnore]
-        internal ParticlePool Pool => pool;
+        public ParticlePool Pool => pool;
 
         /// <summary>
         /// Maximum number of particles this <see cref="ParticleEmitter"/> can have at any given time

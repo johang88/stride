@@ -1,0 +1,589 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// The cloud layers, their density and their lighting, shared by the cloud passes (the view raymarch, the shadow map and
+    /// the sky capture).
+    /// </summary>
+    /// <remarks>
+    /// <para>Modeling (after Schneider, Nubis 2015-2023): world-space weather fields (a coverage field with an even spread of
+    /// values, so a coverage of c fills about c of the sky and 0 fills none, plus a cloud type) give each column of the
+    /// layer an envelope: a footprint, a flat base and a top that rises towards the middle of the cloud (a dome), up to
+    /// towers and anvils for the deepest types. The <em>dimensional profile</em> (0 at the envelope, 1 deep inside) is
+    /// eroded by noise: wispy Perlin-Worley for stratiform clouds and at the bases, billowy Worley for cumuliform clouds
+    /// and their tops, finer detail on the edges only, so the cores stay solid.</para>
+    /// <para>Lighting: single scattering with the phase function of cloud droplets (Jendersie and d'Eon 2023, a
+    /// Henyey-Greenstein and a Draine lobe), multiple scattering as octaves of weaker extinction and flatter phase
+    /// (Wrenninge 2013) carried deeper where the profile says the light has scattered in (dark edges and bright cores
+    /// facing the sun), the sun's light through the atmosphere at each sample (sunset colors on the towers, the bases in
+    /// the planet's shadow first), and the sky and ground light around.</para>
+    /// <para>World space in meters; altitudes above AtmosphereSeaLevel; the planet's center sits below the camera.</para>
+    /// </remarks>
+    shader CloudCommon : SkyCommon
+    {
+        stage Texture3D CloudShapeNoise;
+        stage Texture3D CloudDetailNoise;
+        stage Texture2D CloudWeatherMap;
+        stage Texture2D CloudCirrusTexture;
+        stage Texture2D CloudMapTexture;
+        // [0] = the clear sky's radiance averaged over the upper hemisphere, [1] = the ground's radiance (see SkyAmbient)
+        stage Buffer<float4> CloudAmbient;
+
+        stage SamplerState CloudLinearWrap
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Wrap;
+            AddressV = Wrap;
+            AddressW = Wrap;
+        };
+
+        stage SamplerState CloudLinearClamp
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        // Planet: xyz = center (world, below the camera), w = radius (meters)
+        stage float4 CloudPlanet;
+        // Low layer (cumulus family): x = base altitude, y = deepest cloud (meters), z = coverage, w = type (0 stratus, 0.5 cumulus, 1 cumulonimbus)
+        stage float4 CloudLowLayer;
+        // x = extinction per meter, y = 1 / shape noise tile (meters), z = 1 / detail noise tile, w = erosion (0-1)
+        stage float4 CloudLowShape;
+        // Middle layer (altostratus to altocumulus), same as the low layer
+        stage float4 CloudMidLayer;
+        stage float4 CloudMidShape;
+        // High layer (cirrostratus to cirrus): x = altitude, y = coverage, z = type (0 veil, 1 streaks), w = opacity
+        stage float4 CloudHighLayer;
+        // xy = 1 / cirrus tile (meters) along and across the wind, zw = wind direction (unit XZ)
+        stage float4 CloudHighShape;
+        // Wind drift (meters): xy = low layer, zw = middle layer
+        stage float4 CloudWindLow;
+        // xy = high layer, z = shape noise evolution, w = shear (meters of lean per meter of height, along the wind)
+        stage float4 CloudWindHigh;
+        // x = 1 / weather tile (meters), y = how much the weather's type varies around the layer's (0-1), z = precipitation (0-1), w = local coverage contrast
+        stage float4 CloudWeather;
+        // Cloud map: xy = world XZ of its corner, z = 1 / size, w = strength (0: none)
+        stage float4 CloudMapRegion;
+        // Droplet phase: x = g of the Henyey-Greenstein lobe, y = g of the Draine lobe, z = Draine alpha, w = Draine weight
+        stage float4 CloudPhase;
+        // x = silver lining (forward lobe intensity), y = multiple scattering (0-1), z = ambient, w = dark edges (in-scattering probability, 0-1)
+        stage float4 CloudScattering;
+        // The light lighting the clouds: direction towards it and illuminance above the atmosphere (the sun, or the moon at night)
+        stage float3 CloudLightDirection;
+        stage float3 CloudLightIlluminance;
+
+        static const float CloudInvFourPi = 0.0795774715;
+
+        float CloudAltitude(float3 position)
+        {
+            return length(position - CloudPlanet.xyz) - CloudPlanet.w - AtmosphereSeaLevel;
+        }
+
+        /// Distance along a ray to the sphere at an altitude around the planet (the far hit when inside it), or -1.
+        float RayAltitude(float3 origin, float3 direction, float altitude, bool farHit)
+        {
+            float radius = CloudPlanet.w + AtmosphereSeaLevel + altitude;
+            float3 oc = origin - CloudPlanet.xyz;
+            float b = dot(oc, direction);
+            float c = dot(oc, oc) - radius * radius;
+            float h = b * b - c;
+            if (h < 0.0)
+                return -1.0;
+            h = sqrt(h);
+            return farHit ? -b + h : -b - h;
+        }
+
+        float HenyeyGreenstein(float g, float cosTheta)
+        {
+            float g2 = g * g;
+            float denominator = max(1.0 + g2 - 2.0 * g * cosTheta, 1e-5);
+            return (1.0 - g2) * CloudInvFourPi / (denominator * sqrt(denominator));
+        }
+
+        float Draine(float g, float alpha, float cosTheta)
+        {
+            float g2 = g * g;
+            float denominator = max(1.0 + g2 - 2.0 * g * cosTheta, 1e-5);
+            return (1.0 - g2) * (1.0 + alpha * cosTheta * cosTheta) * CloudInvFourPi / (denominator * sqrt(denominator) * (1.0 + alpha * (1.0 + 2.0 * g2) / 3.0));
+        }
+
+        // Single scattering by cloud droplets: the sharp forward lobe (silver lining) and the Draine lobe (broad forward,
+        // back scattering, a hint of the glory)
+        float DropletPhase(float cosTheta)
+        {
+            return (1.0 - CloudPhase.w) * HenyeyGreenstein(CloudPhase.x, cosTheta) * CloudScattering.x + CloudPhase.w * Draine(CloudPhase.y, CloudPhase.z, cosTheta);
+        }
+
+        // Ice crystals: strongly forward with a little back scattering and the 22 degree halo of cirrostratus
+        float IcePhase(float cosTheta, float halo)
+        {
+            float phase = lerp(HenyeyGreenstein(0.75, cosTheta), HenyeyGreenstein(-0.2, cosTheta), 0.25);
+            float ring = exp(-pow((acos(clamp(cosTheta, -1.0, 1.0)) - 0.3840) / 0.012, 2.0));
+            return phase + halo * ring * 0.6;
+        }
+
+        // The weather where a layer is at a world position: x = coverage field (evenly spread values), y = type
+        // variation, z = middle layer field, w = high layer field; overridden by the cloud map inside its region
+        float4 SampleWeather(float2 position)
+        {
+            float4 weather = CloudWeatherMap.SampleLevel(CloudLinearWrap, position * CloudWeather.x, 0);
+            return weather;
+        }
+
+        // The cloud map: x = coverage, y = type, z = 0, w = how much it replaces the weather (zero outside)
+        float4 SampleCloudMap(float2 position)
+        {
+            if (CloudMapRegion.w <= 0.0)
+                return float4(0.0, 0.0, 0.0, 0.0);
+            float2 uv = (position - CloudMapRegion.xy) * CloudMapRegion.z;
+            if (any(uv < 0.0) || any(uv > 1.0))
+                return float4(0.0, 0.0, 0.0, 0.0);
+            float4 map = CloudMapTexture.SampleLevel(CloudLinearClamp, uv, 0);
+            // (fades out at the border of the region)
+            float2 border = saturate(min(uv, 1.0 - uv) * 20.0);
+            map.w *= CloudMapRegion.w * border.x * border.y;
+            return map;
+        }
+
+        // How far into a cloud's footprint a coverage field value is, relative to how far it can go (0 at its edge, 1 at the
+        // peak of the field, reached sooner with more sharpness): none at all at a coverage of 0, everywhere at 1
+        float Footprint(float field, float coverage, float sharpness)
+        {
+            return saturate((field - (1.0 - coverage)) / max(coverage, 0.08) * sharpness);
+        }
+
+        /// The low layer's envelope and its dimensional profile at a position: 0 outside. heightFraction is the height in
+        /// the cloud column (0 at its base, 1 at its top), cloudTop the column's top above the base (meters).
+        float LowProfile(float3 position, float altitude, out float heightFraction, out float type, out float cloudTop)
+        {
+            heightFraction = 0.0;
+            type = CloudLowLayer.w;
+            cloudTop = 0.0;
+            float height = altitude - CloudLowLayer.x;
+            if (height < -400.0 || height > CloudLowLayer.y || CloudLowLayer.z <= 0.0)
+                return 0.0;
+
+            // The weather leans with the wind as it rises (shear)
+            float2 p = position.xz + CloudWindLow.xy + CloudHighShape.zw * (CloudWindHigh.w * max(height, 0.0));
+            float4 weather = SampleWeather(p);
+            float coverage = CloudLowLayer.z;
+            float field = weather.x;
+            // The weather's type is that of the tallest clouds: the variation mixes smaller ones in
+            type = saturate(CloudLowLayer.w * lerp(1.0 - CloudWeather.y, 1.0, pow(weather.y, 0.7)));
+            float4 map = SampleCloudMap(p);
+            if (map.w > 0.0)
+            {
+                // Painted clouds: the map's coverage with its own spread of values, and its type
+                field = lerp(field, saturate(field * 0.35 + 0.65 * map.x), map.w);
+                coverage = lerp(coverage, max(coverage, map.x), map.w);
+                type = lerp(type, map.y, map.w);
+            }
+
+            // Heavy weather: low, ragged bases
+            float precipitation = CloudWeather.z;
+            float baseHeight = lerp(60.0, -250.0, precipitation) * (1.0 - weather.y * 0.5);
+            height -= baseHeight;
+
+            // How far into a cloud's area the field is, relative to how far it can go: 0 at the edge, 1 at the peak of the
+            // field. The whole cloud is a slope the noise erodes, not a flat-topped blob with eroded rims
+            float footprint = saturate((field - (1.0 - coverage)) / max(coverage, 0.08));
+
+            // The column: depth by type (stratus a few hundred meters, stratocumulus 700 m, cumulus 2 km, congestus
+            // 4.5 km, cumulonimbus the whole layer), rising towards the middle of the cloud in a dome (towers steeply)
+            float deepest = 300.0 + (CloudLowLayer.y - 300.0) * pow(saturate(type), 2.2);
+            float top = deepest * lerp(0.15, 1.0, pow(footprint, lerp(0.9, 0.4, type))) * lerp(0.8, 1.2, weather.y);
+            // Anvils: the deepest towers spread out under the top of the layer
+            float anvil = 0.0;
+            if (type > 0.86)
+            {
+                float anvilStart = CloudLowLayer.y * 0.7;
+                anvil = smoothstep(0.86, 1.0, type) * smoothstep(anvilStart - 800.0, anvilStart + 400.0, height);
+                float spread = saturate(coverage + 0.25);
+                float anvilFootprint = saturate((field - (1.0 - spread)) / spread) * anvil;
+                if (anvilFootprint > footprint)
+                {
+                    footprint = anvilFootprint;
+                    top = max(top, CloudLowLayer.y * 0.85);
+                }
+            }
+            if (footprint <= 0.0 || height < 0.0 || height > top)
+                return 0.0;
+            cloudTop = top;
+            heightFraction = height / top;
+
+            // Across the cloud the footprint is warped more and more with height: the column wanders, bulges and narrows
+            // instead of rising as an extrusion of its base (its top stays that of the unwarped column: no layers)
+            float rise = saturate(height / 2500.0 + 0.1);
+            float2 warp = CloudShapeNoise.SampleLevel(CloudLinearWrap, float3(p * (1.0 / 7000.0), height * (1.0 / 6000.0) + 0.31), 2.0).ga - 0.5;
+            float warpedField = SampleWeather(p + warp * (1400.0 * rise)).x;
+            float across = saturate((warpedField - (1.0 - coverage)) / max(coverage, 0.08));
+            across = max(across, footprint * anvil);
+
+            // Flat bases (sharper for cumuliform clouds), rounded tops; a slope over the whole cloud, so the noise carves its
+            // silhouette at every height and only the middle of a big cloud is solid
+            float horizontal = saturate(across * lerp(1.6, 1.15, type));
+            // (the base curves up towards the edge of the cloud: no flat skirt around a tower)
+            float baseRamp = lerp(lerp(50.0, 120.0, type), 400.0, precipitation) + (1.0 - horizontal) * min(top * 0.35, 600.0);
+            float toBase = saturate(height / baseRamp);
+            float toTop = saturate((top - height) / (top * lerp(0.7, 0.45, type)));
+            toTop = toTop * toTop * (3.0 - 2.0 * toTop);
+            return horizontal * toBase * toTop;
+        }
+
+        // Mip level of a noise texture of a frequency (1 / tile size) and texel count for a footprint (meters)
+        float NoiseMip(float footprint, float frequency, float texels)
+        {
+            return max(0.0, log2(max(footprint * frequency * texels, 1e-4)));
+        }
+
+        /// Density (0-1, times CloudLowShape.x for the extinction) of the low layer. footprint: meters a sample covers (the
+        /// noises fade to their average below it). profile: the dimensional profile.
+        float LowDensity(float3 position, float altitude, float footprint, bool withDetail, out float heightFraction, out float profile)
+        {
+            float type;
+            float cloudTop;
+            profile = LowProfile(position, altitude, heightFraction, type, cloudTop);
+            if (profile <= 0.0)
+                return 0.0;
+
+            float3 p = position + float3(CloudWindLow.x, CloudWindHigh.z, CloudWindLow.y);
+            float4 shape = CloudShapeNoise.SampleLevel(CloudLinearWrap, p * CloudLowShape.y, NoiseMip(footprint, CloudLowShape.y, 128.0));
+            // Wispy: Perlin-Worley, connected and stringy; billowy: Worley octaves, round lumps on lumps (both stretched over
+            // the whole range: the erosion carves deep)
+            float wispy = saturate((shape.r - 0.2) * 1.6);
+            float billowy = saturate((shape.g * 0.45 + shape.b * 0.33 + shape.a * 0.22 - 0.28) * 2.0);
+            // Wispy stratiform clouds and bases, billowy cumuliform tops
+            float billows = saturate(type * 2.5 - 0.3) * lerp(0.75, 1.0, saturate(heightFraction * 4.0)) * (1.0 - smoothstep(0.86, 1.0, type) * smoothstep(0.75, 0.9, heightFraction));
+            float noise = lerp(wispy, billowy, billows);
+            // Eroded from the envelope inwards (value erosion): the edges and tops are carved, the cores stay whole
+            float e = (1.0 - noise) * CloudLowShape.w;
+            float density = saturate((profile - e) / max(1.0 - e, 0.05));
+            if (density <= 0.0 || !withDetail)
+                return density;
+
+            // Fine detail on the edges: wisps at the base, curls (inverted) towards the billowing top
+            float3 detail = CloudDetailNoise.SampleLevel(CloudLinearWrap, p * CloudLowShape.z, NoiseMip(footprint, CloudLowShape.z, 32.0)).rgb;
+            float detailFbm = saturate((detail.r * 0.5 + detail.g * 0.3 + detail.b * 0.2 - 0.28) * 2.0);
+            float modifier = lerp(1.0 - detailFbm, detailFbm, saturate(heightFraction * 3.0)) * 0.5 * saturate(1.0 - density * 1.2);
+            return saturate((density - modifier) / (1.0 - modifier));
+        }
+
+        /// Density of the middle layer: altostratus sheets (type 0) to fields of altocumulus cloudlets (type 1).
+        float MidDensity(float3 position, float altitude, float footprint, bool withDetail, out float heightFraction, out float profile)
+        {
+            profile = 0.0;
+            heightFraction = (altitude - CloudMidLayer.x) / CloudMidLayer.y;
+            if (heightFraction <= 0.0 || heightFraction >= 1.0 || CloudMidLayer.z <= 0.0)
+                return 0.0;
+
+            float2 p2 = position.xz + CloudWindLow.zw;
+            float4 weather = SampleWeather(p2);
+            float type = saturate(CloudMidLayer.w + (weather.y - 0.5) * CloudWeather.y * 0.5);
+            float field = Footprint(weather.z, CloudMidLayer.z, 2.5);
+            if (field <= 0.0)
+                return 0.0;
+
+            // Thin slab: rounded tops, flatter bases; thicker towards the middle of a field
+            float h = heightFraction / lerp(0.45, 1.0, field);
+            if (h >= 1.0)
+                return 0.0;
+            float toBase = saturate(h / 0.2);
+            float toTop = saturate((1.0 - h) / 0.6);
+            // (never quite solid for cloudlets: the cells open gaps between them)
+            profile = saturate(field * 1.3) * toBase * toTop * toTop * lerp(1.0, 0.72, type);
+
+            // Cloudlets in rows across the wind: the cells of the Worley octaves, a little stretched along the wind
+            float3 p = float3(p2.x, altitude, p2.y);
+            float2 wind = CloudHighShape.zw;
+            float along = dot(p.xz, wind);
+            float across = dot(p.xz, float2(-wind.y, wind.x));
+            float3 cellPosition = float3(along * 0.8, altitude * 1.5, across * 1.25) * CloudMidShape.y + float3(0.0, CloudWindHigh.z * CloudMidShape.y, 0.0);
+            float4 shape = CloudShapeNoise.SampleLevel(CloudLinearWrap, cellPosition, NoiseMip(footprint, CloudMidShape.y, 128.0));
+            float cells = saturate((shape.g * 0.6 + shape.b * 0.4 - 0.3) * 2.4);
+            float sheet = saturate((shape.r * 0.7 + shape.g * 0.3 - 0.2) * 1.6);
+            float noise = lerp(sheet, cells, type);
+            float e = (1.0 - noise) * CloudMidShape.w * lerp(0.6, 1.0, type);
+            float density = saturate((profile - e) / max(1.0 - e, 0.05));
+            if (density <= 0.0 || !withDetail)
+                return density;
+
+            float3 detail = CloudDetailNoise.SampleLevel(CloudLinearWrap, p * CloudMidShape.z, NoiseMip(footprint, CloudMidShape.z, 32.0)).rgb;
+            float modifier = (1.0 - (detail.r * 0.5 + detail.g * 0.3 + detail.b * 0.2)) * 0.45 * saturate(1.0 - density * 1.3);
+            return saturate((density - modifier) / (1.0 - modifier));
+        }
+
+        // Optical depth towards the light through the low layer (and the middle one above it), from steps growing geometrically
+        float LightOpticalDepth(float3 position, float3 lightDirection, int steps, float footprint)
+        {
+            float opticalDepth = 0.0;
+            float stepLength = 40.0;
+            float distanceAlong = 0.0;
+            for (int i = 0; i < steps; i++)
+            {
+                distanceAlong += stepLength * 0.5;
+                float3 samplePosition = position + lightDirection * distanceAlong;
+                float altitude = CloudAltitude(samplePosition);
+                float heightFraction;
+                float profile;
+                // (the first step with detail: self-shadowing of the small lumps)
+                float sampleFootprint = max(footprint, stepLength * 0.5);
+                float density = LowDensity(samplePosition, altitude, sampleFootprint, i == 0, heightFraction, profile) * CloudLowShape.x;
+                density += MidDensity(samplePosition, altitude, sampleFootprint, false, heightFraction, profile) * CloudMidShape.x;
+                opticalDepth += density * stepLength;
+                distanceAlong += stepLength * 0.5;
+                stepLength *= 1.9;
+            }
+            return opticalDepth;
+        }
+
+        // The light reaching a cloud sample: the sun (or moon) through the atmosphere above it
+        float3 LightAt(float3 position, float3 worldCamera)
+        {
+            float3 atmospherePosition = WorldToAtmosphere(position, worldCamera);
+            return CloudLightIlluminance * GetLightTransmittance(atmospherePosition, CloudLightDirection);
+        }
+
+        /// The light a cloud sample scatters towards the viewer (per unit of scattering). cosTheta between the view
+        /// direction and the light, profile the dimensional profile, heightFraction the height in its cloud.
+        float3 CloudSampleRadiance(float3 light, float lightDepth, float cosTheta, float profile, float heightFraction, float3 ambientTop, float3 ambientBottom, float baseDarkening)
+        {
+            float3 single = DropletPhase(cosTheta) * exp(-lightDepth);
+
+            // Multiple scattering: octaves of weaker extinction and flatter phase (Wrenninge), scaled up for the orders they
+            // leave out, carried in where the light has had room to scatter (Nubis: dark edges, glowing cores facing the
+            // sun), more in the upper parts of a cloud
+            float a = 1.0;
+            float b = 1.0;
+            float c = 1.0;
+            float multiple = 0.0;
+            [unroll]
+            for (int octave = 1; octave < 4; octave++)
+            {
+                a *= 0.35;
+                b *= 0.75;
+                c *= 0.5;
+                float phase = lerp(HenyeyGreenstein(0.65 * c, cosTheta), HenyeyGreenstein(-0.2 * c, cosTheta), 0.25);
+                multiple += b * phase * exp(-lightDepth * a);
+            }
+            float inScatter = lerp(1.0, pow(saturate(profile * 1.5), lerp(1.2, 0.4, heightFraction)), CloudScattering.w);
+            float3 direct = light * (single + CloudScattering.y * 2.5 * inScatter * multiple);
+
+            // Light from around: the sky above (less of it low in a cloud, under the rest of it, and deep inside), the ground below
+            float h = saturate(heightFraction);
+            float occlusion = lerp(1.0, 0.45, profile);
+            float3 ambient = (ambientTop * lerp(0.25, 1.0, sqrt(h)) + ambientBottom * (1.0 - h)) * occlusion * baseDarkening * CloudScattering.z;
+            return direct + ambient;
+        }
+
+        /// Cirrus at its altitude, seen from below: premultiplied light (rgb) and coverage (a). footprint is the size of a
+        /// pixel there (meters), for the texture's mip.
+        float4 Cirrus(float3 origin, float3 direction, float3 worldCamera, float pixelAngle)
+        {
+            if (CloudHighLayer.y <= 0.0)
+                return float4(0.0, 0.0, 0.0, 0.0);
+            float t = RayAltitude(origin, direction, CloudHighLayer.x, true);
+            if (t <= 0.0)
+                return float4(0.0, 0.0, 0.0, 0.0);
+            float3 position = origin + direction * t;
+            float3 up = normalize(position - CloudPlanet.xyz);
+            float slant = 1.0 / max(dot(direction, up), 0.04);
+
+            float2 p = position.xz + CloudWindHigh.xy;
+            float4 weather = SampleWeather(p);
+            float footprint = Footprint(weather.w, CloudHighLayer.y, 2.0);
+            if (footprint <= 0.0)
+                return float4(0.0, 0.0, 0.0, 0.0);
+
+            // Streaks along the wind; mip from the pixel's footprint on the layer (stretched at grazing angles)
+            float2 wind = CloudHighShape.zw;
+            float2 uv = float2(dot(p, wind) * CloudHighShape.x, dot(p, float2(-wind.y, wind.x)) * CloudHighShape.y);
+            float pixel = t * pixelAngle * sqrt(slant);
+            float textureSize = 1024.0;
+            float mip = log2(max(pixel * CloudHighShape.y * textureSize, 1.0));
+            float4 cirrus = CloudCirrusTexture.SampleLevel(CloudLinearWrap, uv, mip);
+
+            float type = saturate(CloudHighLayer.z + (weather.y - 0.5) * 0.4);
+            // Veil (cirrostratus): smooth and milky; streaks (cirrus): fibres in bent bands
+            float veil = 0.25 + 0.75 * cirrus.z;
+            float streaks = cirrus.x * lerp(0.4, 1.0, cirrus.y);
+            float density = footprint * lerp(veil, streaks * 1.6, type);
+            if (density <= 0.001)
+                return float4(0.0, 0.0, 0.0, 0.0);
+
+            float alpha = 1.0 - exp(-density * CloudHighLayer.w * min(slant, 8.0));
+            float3 light = LightAt(position, worldCamera);
+            float cosTheta = dot(direction, CloudLightDirection);
+            float3 ambientTop = CloudAmbient[0].rgb;
+            float3 radiance = light * IcePhase(cosTheta, (1.0 - type) * footprint) + ambientTop * 0.8 * CloudScattering.z;
+            return float4(radiance * alpha, alpha);
+        }
+
+        /// Marches a volumetric layer between two distances, with steps growing with the distance (stepCount sets how many
+        /// steps a span as long as the distance takes). Accumulates premultiplied light and transmittance, and the
+        /// transmittance-weighted distance.
+        void MarchLayer(bool low, float3 origin, float3 direction, float3 worldCamera, float tStart, float tEnd, float stepCount, int lightSteps,
+            float jitter, bool withDetail, float pixelAngle, inout float3 scattered, inout float transmittance, inout float weightedDistance, inout float weightSum)
+        {
+            float stepScale = 1.2 / stepCount;
+            float minStep = low ? 40.0 : 25.0;
+            float maxStep = low ? 900.0 : 400.0;
+            float dt = clamp(tStart * stepScale, minStep, maxStep);
+            float t = tStart + dt * jitter;
+            float cosTheta = dot(direction, CloudLightDirection);
+            float extinctionScale = low ? CloudLowShape.x : CloudMidShape.x;
+            float3 ambientTop = CloudAmbient[0].rgb;
+            float3 ambientBottom = CloudAmbient[1].rgb;
+            // Clouds in rain: darker, greyer bases
+            float wet = CloudWeather.z;
+
+            [loop]
+            for (float i = 0.0; i < 512.0; i += 1.0)
+            {
+                if (t > tEnd || transmittance < 0.01)
+                    break;
+                dt = clamp(t * stepScale, minStep, maxStep);
+                float3 position = origin + direction * t;
+                float altitude = CloudAltitude(position);
+                // What a sample covers: the noises blur where a step (or a pixel) spans several of their texels
+                float footprint = max(t * pixelAngle, dt * 0.15);
+                float heightFraction;
+                float profile;
+                float density = low ? LowDensity(position, altitude, footprint, withDetail, heightFraction, profile)
+                                    : MidDensity(position, altitude, footprint, withDetail, heightFraction, profile);
+                if (density > 0.0)
+                {
+                    float extinction = density * extinctionScale;
+                    float lightDepth = LightOpticalDepth(position, CloudLightDirection, lightSteps, footprint);
+                    float baseDarkening = low ? lerp(1.0, 0.55, wet * saturate(1.0 - heightFraction * 2.0)) : 1.0;
+                    float3 source = CloudSampleRadiance(LightAt(position, worldCamera), lightDepth, cosTheta, profile, heightFraction, ambientTop, ambientBottom, baseDarkening);
+                    float stepTransmittance = exp(-extinction * dt);
+                    // Energy-conserving integration over the step (scattering albedo 1)
+                    scattered += transmittance * source * (1.0 - stepTransmittance);
+                    float absorbed = transmittance * (1.0 - stepTransmittance);
+                    weightedDistance += t * absorbed;
+                    weightSum += absorbed;
+                    transmittance *= stepTransmittance;
+                    t += dt;
+                }
+                else
+                {
+                    // Empty: longer steps until a cloud is near
+                    t += profile > 0.0 ? dt : dt * 1.8;
+                }
+            }
+        }
+
+        /// The atmosphere between the camera and a cloud: its light scattered in front of the cloud (the share of the sky
+        /// behind it in that direction) and the transmittance to it.
+        void AtmosphereInFront(float3 direction, float distance, out float3 inScattered, out float3 atmosphereTransmittance)
+        {
+            float3 position = AtmosphereCameraPosition;
+            float distanceKm = distance * 0.001;
+            atmosphereTransmittance = GetSegmentTransmittance(position, direction, distanceKm);
+            float3 toSpace = GetTransmittanceToTop(length(position), dot(direction, normalize(position)));
+            float3 share = saturate((1.0 - atmosphereTransmittance) / max(1.0 - toSpace, 1e-4));
+            inScattered = SampleSkyView(direction) * share;
+        }
+
+        /// The clouds along a view ray from origin (world): premultiplied light in rgb (the atmosphere in front of them
+        /// included), transmittance in a, and the mean distance to them.
+        float4 MarchClouds(float3 origin, float3 direction, float3 worldCamera, float stepCount, int lightSteps, float maxDistance, float jitter, bool withDetail, float pixelAngle, out float meanDistance)
+        {
+            meanDistance = maxDistance;
+            float3 scattered = float3(0.0, 0.0, 0.0);
+            float transmittance = 1.0;
+            float4 result = float4(0.0, 0.0, 0.0, 1.0);
+
+            // Rays reaching the ground first see no clouds (the camera stays below them)
+            if (RayAltitude(origin, direction, 0.0, false) > 0.0)
+                return result;
+
+            float altitude = CloudAltitude(origin);
+
+            // Low layer
+            float lowBottom = CloudLowLayer.x - 400.0;
+            float lowTop = CloudLowLayer.x + CloudLowLayer.y;
+            float tStart = altitude < lowBottom ? RayAltitude(origin, direction, lowBottom, true) : 0.0;
+            float tEnd = RayAltitude(origin, direction, lowTop, true);
+            if (CloudLowLayer.z > 0.0 && tStart >= 0.0 && tEnd > tStart && tStart < maxDistance)
+            {
+                tEnd = min(tEnd, maxDistance);
+                float weightedDistance = 0.0;
+                float weightSum = 0.0;
+                float3 light = float3(0.0, 0.0, 0.0);
+                float layerTransmittance = 1.0;
+                MarchLayer(true, origin, direction, worldCamera, tStart, tEnd, stepCount, lightSteps, jitter, withDetail, pixelAngle, light, layerTransmittance, weightedDistance, weightSum);
+                if (weightSum > 0.0)
+                {
+                    float distance = weightedDistance / weightSum;
+                    meanDistance = distance;
+                    float3 inScattered;
+                    float3 atmosphereTransmittance;
+                    AtmosphereInFront(direction, distance, inScattered, atmosphereTransmittance);
+                    // (fading out towards the end of the distance marched)
+                    float fade = 1.0 - smoothstep(maxDistance * 0.7, maxDistance, distance);
+                    light *= fade;
+                    layerTransmittance = lerp(1.0, layerTransmittance, fade);
+                    scattered += transmittance * (light * atmosphereTransmittance + inScattered * (1.0 - layerTransmittance));
+                    transmittance *= layerTransmittance;
+                }
+            }
+
+            // Middle layer, behind
+            if (CloudMidLayer.z > 0.0 && transmittance > 0.01)
+            {
+                tStart = altitude < CloudMidLayer.x ? RayAltitude(origin, direction, CloudMidLayer.x, true) : 0.0;
+                tEnd = RayAltitude(origin, direction, CloudMidLayer.x + CloudMidLayer.y, true);
+                if (tStart >= 0.0 && tEnd > tStart && tStart < maxDistance * 1.5)
+                {
+                    // (at grazing angles the slab is long: its first kilometers hide the rest)
+                    tEnd = min(tEnd, tStart + 12000.0);
+                    float weightedDistance = 0.0;
+                    float weightSum = 0.0;
+                    float3 light = float3(0.0, 0.0, 0.0);
+                    float layerTransmittance = 1.0;
+                    MarchLayer(false, origin, direction, worldCamera, tStart, tEnd, stepCount, max(lightSteps - 2, 2), jitter, withDetail, pixelAngle, light, layerTransmittance, weightedDistance, weightSum);
+                    if (weightSum > 0.0)
+                    {
+                        float distance = weightedDistance / weightSum;
+                        meanDistance = min(meanDistance, distance);
+                        float3 inScattered;
+                        float3 atmosphereTransmittance;
+                        AtmosphereInFront(direction, distance, inScattered, atmosphereTransmittance);
+                        float fade = 1.0 - smoothstep(maxDistance * 1.1, maxDistance * 1.5, distance);
+                        light *= fade;
+                        layerTransmittance = lerp(1.0, layerTransmittance, fade);
+                        scattered += transmittance * (light * atmosphereTransmittance + inScattered * (1.0 - layerTransmittance));
+                        transmittance *= layerTransmittance;
+                    }
+                }
+            }
+
+            // High layer, behind
+            if (CloudHighLayer.y > 0.0 && transmittance > 0.01)
+            {
+                float4 cirrus = Cirrus(origin, direction, worldCamera, pixelAngle);
+                if (cirrus.a > 0.0)
+                {
+                    float distance = RayAltitude(origin, direction, CloudHighLayer.x, true);
+                    float3 inScattered;
+                    float3 atmosphereTransmittance;
+                    AtmosphereInFront(direction, distance, inScattered, atmosphereTransmittance);
+                    float fade = 1.0 - smoothstep(150000.0, 300000.0, distance);
+                    cirrus *= fade;
+                    scattered += transmittance * (cirrus.rgb * atmosphereTransmittance + inScattered * cirrus.a);
+                    transmittance *= 1.0 - cirrus.a;
+                    meanDistance = min(meanDistance, distance);
+                }
+            }
+
+            // The march stops short of full opacity: the last fraction is treated as opaque, or the sun (thousands of
+            // times brighter than the sky) still shines through a deep cloud
+            transmittance = saturate((transmittance - 0.012) / 0.988);
+            return float4(scattered, transmittance);
+        }
+    };
+}

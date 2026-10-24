@@ -1,0 +1,52 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Renders the faces of the sky capture (the light of the sky for the surfaces) side by side in one target (six times
+    /// as wide as tall: one pass, enough pixels to keep the GPU busy): the sky with its clouds (a cheaper march) and
+    /// without the sun disk, whose light comes from the directional light.
+    /// </summary>
+    /// <remarks>
+    /// The faces are laid out as Stride's skybox lighting samples them: cube direction (x, y, z) holds world direction
+    /// (x, y, -z).
+    /// </remarks>
+    shader SkyCubeCapture : ImageEffectShader, CloudCommon
+    {
+        stage float3 CaptureOrigin;
+        stage int CaptureClouds;
+        stage float CaptureFrame;
+
+        float3 CubeFaceDirection(int face, float2 uv)
+        {
+            float u = uv.x * 2.0 - 1.0;
+            float v = uv.y * 2.0 - 1.0;
+            if (face == 0) return float3(1.0, -v, -u);
+            if (face == 1) return float3(-1.0, -v, u);
+            if (face == 2) return float3(u, 1.0, v);
+            if (face == 3) return float3(u, -1.0, -v);
+            if (face == 4) return float3(u, -v, 1.0);
+            return float3(-u, -v, -1.0);
+        }
+
+        stage override float4 Shading()
+        {
+            float faceCoordinate = streams.TexCoord.x * 6.0;
+            int face = min((int)faceCoordinate, 5);
+            float2 faceUv = float2(faceCoordinate - face, streams.TexCoord.y);
+            float3 cubeDirection = normalize(CubeFaceDirection(face, faceUv));
+            float3 direction = float3(cubeDirection.xy, -cubeDirection.z);
+
+            float3 sky = SampleSkyView(direction);
+            if (CaptureClouds > 0 && direction.y > -0.02)
+            {
+                float jitter = Hash12(streams.TexCoord * 1024.0 + CaptureFrame * 7.31);
+                float meanDistance;
+                float4 clouds = MarchClouds(CaptureOrigin, normalize(float3(direction.x, max(direction.y, 0.0), direction.z)), CaptureOrigin, 18.0, 2, 60000.0, jitter, false, 0.04, meanDistance);
+                sky = sky * clouds.a + clouds.rgb;
+            }
+            return float4(sky, 1.0);
+        }
+    };
+}

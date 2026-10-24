@@ -34,7 +34,7 @@ public sealed class TerrainRenderObject : RenderMesh
     /// <summary>
     /// The terrain as the volumetric fog sees it (its painted fog and its sun shadows).
     /// </summary>
-    internal Stride.Rendering.VolumetricFog.RenderFogHeightfield FogHeightfield;
+    internal Stride.Atmosphere.Fog.RenderFogHeightfield FogHeightfield;
 
     internal void OnDataChanged(object sender, TerrainDataChangedEventArgs e)
     {

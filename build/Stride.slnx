@@ -225,6 +225,10 @@
     <Project Path="../sources/plugins/SpriteStudio/Stride.SpriteStudio.Editor/Stride.SpriteStudio.Editor.csproj" />
     <Project Path="../sources/plugins/SpriteStudio/Stride.SpriteStudio.Runtime/Stride.SpriteStudio.Runtime.csproj" />
   </Folder>
+  <Folder Name="/80-Plugins/Atmosphere/">
+    <Project Path="../sources/plugins/Atmosphere/Stride.Atmosphere.Editor/Stride.Atmosphere.Editor.csproj" />
+    <Project Path="../sources/plugins/Atmosphere/Stride.Atmosphere/Stride.Atmosphere.csproj" />
+  </Folder>
   <Folder Name="/80-Plugins/Terrain/">
     <Project Path="../sources/plugins/Terrain/Stride.Terrain.Assets/Stride.Terrain.Assets.csproj" />
     <Project Path="../sources/plugins/Terrain/Stride.Terrain.Editor/Stride.Terrain.Editor.csproj" />

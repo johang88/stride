@@ -13,7 +13,7 @@ using Stride.Core.Presentation.Commands;
 using Stride.Core.Presentation.ViewModels;
 using Stride.Core.Quantum;
 using Stride.Rendering;
-using Stride.Rendering.VolumetricFog;
+using Stride.Atmosphere.Fog;
 using Stride.Terrain.Fog;
 using Stride.Terrain.Vegetation;
 

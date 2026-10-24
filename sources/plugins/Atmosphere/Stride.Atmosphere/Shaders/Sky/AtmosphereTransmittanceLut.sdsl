@@ -1,0 +1,35 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Transmittance from any altitude and zenith angle to the top of the atmosphere (256x64).
+    /// </summary>
+    shader AtmosphereTransmittanceLut : ImageEffectShader, AtmosphereCommon
+    {
+        stage override float4 Shading()
+        {
+            float viewHeight;
+            float viewZenithCosAngle;
+            UvToTransmittanceParams(streams.TexCoord, viewHeight, viewZenithCosAngle);
+
+            float3 position = float3(0.0, viewHeight, 0.0);
+            float3 direction = float3(0.0, viewZenithCosAngle, sqrt(saturate(1.0 - viewZenithCosAngle * viewZenithCosAngle)));
+
+            float tMax = RaySphereIntersectNearest(position, direction, float3(0.0, 0.0, 0.0), AtmosphereTopRadius);
+            const float stepCount = 40.0;
+            float dt = tMax / stepCount;
+            float3 opticalDepth = float3(0.0, 0.0, 0.0);
+            for (float s = 0.0; s < stepCount; s += 1.0)
+            {
+                float3 scatteringMie;
+                float3 scatteringRayleigh;
+                float3 extinction;
+                SampleMedium(position + (s + 0.5) * dt * direction, scatteringMie, scatteringRayleigh, extinction);
+                opticalDepth += extinction * dt;
+            }
+            return float4(exp(-opticalDepth), 1.0);
+        }
+    };
+}

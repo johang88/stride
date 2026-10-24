@@ -1,0 +1,21 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Sky luminance around the camera by world azimuth (the full circle, so the sun and the moon both scatter) and a
+    /// latitude mapping that concentrates the texels around the horizon.
+    /// </summary>
+    shader AtmosphereSkyViewLut : ImageEffectShader, SkyCommon
+    {
+        stage override float4 Shading()
+        {
+            float3 position = AtmosphereCameraPosition;
+            float3 direction = SkyViewUvToDirection(streams.TexCoord, length(position));
+            float3 transmittance;
+            float3 L = IntegrateScatteredLuminance(position, direction, 30.0, true, 10.0, 36.0, 9000000.0, true, transmittance);
+            return float4(L, 1.0);
+        }
+    };
+}

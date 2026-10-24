@@ -1,0 +1,285 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Physically based atmosphere (Hillaire 2020, "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"):
+    /// Rayleigh and Mie scattering, ozone absorption, transmittance and multiple scattering look-up tables.
+    /// </summary>
+    /// <remarks>
+    /// Atmosphere space is in kilometers with the planet centered at the origin and Y up; the camera sits at
+    /// (0, BottomRadius + altitude, 0), so the horizontal frame of the world is the local horizontal frame at the camera.
+    /// Two lights scatter: the sun and the moon (illuminances above the atmosphere).
+    /// </remarks>
+    shader AtmosphereCommon
+    {
+        stage float AtmosphereBottomRadius;
+        stage float AtmosphereTopRadius;
+        stage float3 AtmosphereRayleighScattering;
+        stage float AtmosphereRayleighDensityExpScale;
+        stage float3 AtmosphereMieScattering;
+        stage float3 AtmosphereMieExtinction;
+        stage float AtmosphereMieDensityExpScale;
+        stage float AtmosphereMiePhaseG;
+        stage float3 AtmosphereAbsorptionExtinction;
+        stage float3 AtmosphereGroundAlbedo;
+
+        // Camera in atmosphere space (km)
+        stage float3 AtmosphereCameraPosition;
+        // World Y of altitude 0 (meters)
+        stage float AtmosphereSeaLevel;
+
+        // Directions towards the lights and their illuminance above the atmosphere
+        stage float3 AtmosphereSunDirection;
+        stage float3 AtmosphereSunIlluminance;
+        stage float3 AtmosphereMoonDirection;
+        stage float3 AtmosphereMoonIlluminance;
+
+        stage Texture2D AtmosphereTransmittanceLut;
+        stage Texture2D AtmosphereMultiScatterLut;
+
+        stage SamplerState AtmosphereLinearClamp
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+            AddressW = Clamp;
+        };
+
+        static const float AtmospherePi = 3.14159265358979;
+        static const float PlanetRadiusOffset = 0.01;
+        static const float TransmittanceLutWidth = 256.0;
+        static const float TransmittanceLutHeight = 64.0;
+        static const float MultiScatterLutSize = 32.0;
+
+        // Atmosphere space position (km) of a world position (meters) under the camera's horizontal frame
+        float3 WorldToAtmosphere(float3 worldPosition, float3 worldCamera)
+        {
+            float3 offset = (worldPosition - worldCamera) * 0.001;
+            return AtmosphereCameraPosition + offset;
+        }
+
+        float RaySphereIntersectNearest(float3 r0, float3 rd, float3 s0, float sR)
+        {
+            float3 s0r0 = r0 - s0;
+            float b = dot(rd, s0r0);
+            float c = dot(s0r0, s0r0) - sR * sR;
+            float delta = b * b - c;
+            if (delta < 0.0)
+                return -1.0;
+            float sqrtDelta = sqrt(delta);
+            float sol0 = -b - sqrtDelta;
+            float sol1 = -b + sqrtDelta;
+            if (sol0 < 0.0 && sol1 < 0.0)
+                return -1.0;
+            if (sol0 < 0.0)
+                return max(0.0, sol1);
+            if (sol1 < 0.0)
+                return max(0.0, sol0);
+            return max(0.0, min(sol0, sol1));
+        }
+
+        float FromUnitToSubUvs(float u, float resolution)
+        {
+            return (u + 0.5 / resolution) * (resolution / (resolution + 1.0));
+        }
+
+        float FromSubUvsToUnit(float u, float resolution)
+        {
+            return (u - 0.5 / resolution) * (resolution / (resolution - 1.0));
+        }
+
+        float RayleighPhase(float cosTheta)
+        {
+            return 3.0 / (16.0 * AtmospherePi) * (1.0 + cosTheta * cosTheta);
+        }
+
+        // Cornette-Shanks; cosTheta between the view direction and the direction towards the light
+        float AtmosphereMiePhase(float cosTheta)
+        {
+            float g = AtmosphereMiePhaseG;
+            float g2 = g * g;
+            float k = 3.0 / (8.0 * AtmospherePi) * (1.0 - g2) / (2.0 + g2);
+            float denominator = max(1.0 + g2 - 2.0 * g * cosTheta, 1e-4);
+            return k * (1.0 + cosTheta * cosTheta) / (denominator * sqrt(denominator));
+        }
+
+        void SampleMedium(float3 position, out float3 scatteringMie, out float3 scatteringRayleigh, out float3 extinction)
+        {
+            float height = length(position) - AtmosphereBottomRadius;
+            float densityMie = exp(AtmosphereMieDensityExpScale * height);
+            float densityRayleigh = exp(AtmosphereRayleighDensityExpScale * height);
+            float densityOzone = saturate(height < 25.0 ? height / 15.0 - 2.0 / 3.0 : -height / 15.0 + 8.0 / 3.0);
+
+            scatteringMie = densityMie * AtmosphereMieScattering;
+            scatteringRayleigh = densityRayleigh * AtmosphereRayleighScattering;
+            extinction = densityMie * AtmosphereMieExtinction + scatteringRayleigh + densityOzone * AtmosphereAbsorptionExtinction;
+        }
+
+        float2 TransmittanceParamsToUv(float viewHeight, float viewZenithCosAngle)
+        {
+            float H = sqrt(max(0.0, AtmosphereTopRadius * AtmosphereTopRadius - AtmosphereBottomRadius * AtmosphereBottomRadius));
+            float rho = sqrt(max(0.0, viewHeight * viewHeight - AtmosphereBottomRadius * AtmosphereBottomRadius));
+            float discriminant = viewHeight * viewHeight * (viewZenithCosAngle * viewZenithCosAngle - 1.0) + AtmosphereTopRadius * AtmosphereTopRadius;
+            float d = max(0.0, -viewHeight * viewZenithCosAngle + sqrt(max(discriminant, 0.0)));
+            float dMin = AtmosphereTopRadius - viewHeight;
+            float dMax = rho + H;
+            return float2((d - dMin) / (dMax - dMin), rho / H);
+        }
+
+        void UvToTransmittanceParams(float2 uv, out float viewHeight, out float viewZenithCosAngle)
+        {
+            float H = sqrt(AtmosphereTopRadius * AtmosphereTopRadius - AtmosphereBottomRadius * AtmosphereBottomRadius);
+            float rho = H * uv.y;
+            viewHeight = sqrt(rho * rho + AtmosphereBottomRadius * AtmosphereBottomRadius);
+            float dMin = AtmosphereTopRadius - viewHeight;
+            float dMax = rho + H;
+            float d = dMin + uv.x * (dMax - dMin);
+            viewZenithCosAngle = d == 0.0 ? 1.0 : (H * H - rho * rho - d * d) / (2.0 * viewHeight * d);
+            viewZenithCosAngle = clamp(viewZenithCosAngle, -1.0, 1.0);
+        }
+
+        float3 GetTransmittanceToTop(float viewHeight, float viewZenithCosAngle)
+        {
+            float2 uv = TransmittanceParamsToUv(viewHeight, viewZenithCosAngle);
+            return AtmosphereTransmittanceLut.SampleLevel(AtmosphereLinearClamp, uv, 0).rgb;
+        }
+
+        // Transmittance towards a light, fading out over a small angle as the planet occludes it (no pop at sunset)
+        float3 GetLightTransmittance(float3 position, float3 lightDirection)
+        {
+            float height = length(position);
+            float3 up = position / height;
+            float cosZenith = dot(lightDirection, up);
+            float3 transmittance = GetTransmittanceToTop(height, cosZenith);
+            // Cosine of the horizon's zenith angle at this height (negative: below the local horizontal)
+            float cosHorizon = -sqrt(max(0.0, 1.0 - AtmosphereBottomRadius * AtmosphereBottomRadius / (height * height)));
+            return transmittance * smoothstep(cosHorizon - 0.004, cosHorizon + 0.004, cosZenith);
+        }
+
+        // Transmittance along a ray from position over distance (km) that doesn't reach the ground: the ratio of the
+        // transmittances to the top of the atmosphere at both ends
+        float3 GetSegmentTransmittance(float3 position, float3 direction, float distance)
+        {
+            float3 endPosition = position + direction * distance;
+            float startHeight = length(position);
+            float endHeight = length(endPosition);
+            float3 startToTop = GetTransmittanceToTop(startHeight, dot(direction, position / startHeight));
+            float3 endToTop = GetTransmittanceToTop(endHeight, dot(direction, endPosition / endHeight));
+            return saturate(startToTop / max(endToTop, 1e-6));
+        }
+
+        float3 GetMultipleScattering(float3 position, float viewZenithCosAngle)
+        {
+            float2 uv = saturate(float2(viewZenithCosAngle * 0.5 + 0.5, (length(position) - AtmosphereBottomRadius) / (AtmosphereTopRadius - AtmosphereBottomRadius)));
+            uv = float2(FromUnitToSubUvs(uv.x, MultiScatterLutSize), FromUnitToSubUvs(uv.y, MultiScatterLutSize));
+            return AtmosphereMultiScatterLut.SampleLevel(AtmosphereLinearClamp, uv, 0).rgb;
+        }
+
+        /// Integrates the light of the sun and the moon scattered along a ray up to the atmosphere's edge, the ground or
+        /// maxDistance (km). Outputs the transmittance along the ray.
+        float3 IntegrateScatteredLuminance(float3 worldPosition, float3 worldDirection, float sampleCount, bool variableSampleCount, float minSamples, float maxSamples, float maxDistance, bool includeGround, out float3 transmittance)
+        {
+            transmittance = float3(1.0, 1.0, 1.0);
+
+            float tBottom = RaySphereIntersectNearest(worldPosition, worldDirection, float3(0.0, 0.0, 0.0), AtmosphereBottomRadius);
+            float tTop = RaySphereIntersectNearest(worldPosition, worldDirection, float3(0.0, 0.0, 0.0), AtmosphereTopRadius);
+            float tMax = 0.0;
+            if (tBottom < 0.0)
+            {
+                if (tTop < 0.0)
+                    return float3(0.0, 0.0, 0.0);
+                tMax = tTop;
+            }
+            else
+            {
+                tMax = tTop > 0.0 ? min(tTop, tBottom) : tBottom;
+            }
+            bool hitGround = tBottom >= 0.0 && tMax == tBottom;
+            if (maxDistance < tMax)
+            {
+                tMax = maxDistance;
+                hitGround = false;
+            }
+
+            float sampleCountFloor = sampleCount;
+            float tMaxFloor = tMax;
+            if (variableSampleCount)
+            {
+                sampleCount = lerp(minSamples, maxSamples, saturate(tMax * 0.01));
+                sampleCountFloor = floor(sampleCount);
+                tMaxFloor = tMax * sampleCountFloor / sampleCount;
+            }
+
+            float cosSun = dot(worldDirection, AtmosphereSunDirection);
+            float cosMoon = dot(worldDirection, AtmosphereMoonDirection);
+            float miePhaseSun = AtmosphereMiePhase(cosSun);
+            float rayleighPhaseSun = RayleighPhase(cosSun);
+            float miePhaseMoon = AtmosphereMiePhase(cosMoon);
+            float rayleighPhaseMoon = RayleighPhase(cosMoon);
+            bool hasMoon = any(AtmosphereMoonIlluminance > 0.0);
+
+            float3 L = float3(0.0, 0.0, 0.0);
+            float3 throughput = float3(1.0, 1.0, 1.0);
+            float t = 0.0;
+            float dt = tMax / sampleCount;
+            for (float s = 0.0; s < sampleCount; s += 1.0)
+            {
+                if (variableSampleCount)
+                {
+                    float t0 = s / sampleCountFloor;
+                    float t1 = (s + 1.0) / sampleCountFloor;
+                    t0 = tMaxFloor * t0 * t0;
+                    t1 = t1 * t1;
+                    t1 = t1 > 1.0 ? tMax : tMaxFloor * t1;
+                    t = t0 + (t1 - t0) * 0.3;
+                    dt = t1 - t0;
+                }
+                else
+                {
+                    float newT = tMax * (s + 0.3) / sampleCount;
+                    dt = newT - t;
+                    t = newT;
+                }
+
+                float3 P = worldPosition + t * worldDirection;
+                float3 scatteringMie;
+                float3 scatteringRayleigh;
+                float3 extinction;
+                SampleMedium(P, scatteringMie, scatteringRayleigh, extinction);
+                float3 scattering = scatteringMie + scatteringRayleigh;
+                float3 sampleTransmittance = exp(-extinction * dt);
+
+                float3 up = normalize(P);
+                float3 S = AtmosphereSunIlluminance * (GetLightTransmittance(P, AtmosphereSunDirection) * (scatteringMie * miePhaseSun + scatteringRayleigh * rayleighPhaseSun)
+                    + GetMultipleScattering(P, dot(AtmosphereSunDirection, up)) * scattering);
+                if (hasMoon)
+                {
+                    S += AtmosphereMoonIlluminance * (GetLightTransmittance(P, AtmosphereMoonDirection) * (scatteringMie * miePhaseMoon + scatteringRayleigh * rayleighPhaseMoon)
+                        + GetMultipleScattering(P, dot(AtmosphereMoonDirection, up)) * scattering);
+                }
+
+                // Energy-conserving integration over the step
+                L += throughput * (S - S * sampleTransmittance) / max(extinction, float3(1e-7, 1e-7, 1e-7));
+                throughput *= sampleTransmittance;
+            }
+
+            if (includeGround && hitGround)
+            {
+                // On the ground a light is occluded exactly when it is below the horizon (more robust in float than a
+                // ray-sphere test at 6360 km)
+                float3 P = worldPosition + tBottom * worldDirection;
+                float3 up = normalize(P);
+                float sunCos = dot(up, AtmosphereSunDirection);
+                float moonCos = dot(up, AtmosphereMoonDirection);
+                float3 groundIrradiance = AtmosphereSunIlluminance * GetTransmittanceToTop(AtmosphereBottomRadius, sunCos) * saturate(sunCos)
+                    + AtmosphereMoonIlluminance * GetTransmittanceToTop(AtmosphereBottomRadius, moonCos) * saturate(moonCos);
+                L += throughput * groundIrradiance * AtmosphereGroundAlbedo / AtmospherePi;
+            }
+
+            transmittance = throughput;
+            return L;
+        }
+    };
+}

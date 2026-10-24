@@ -1,0 +1,50 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Cloud shadows on the surfaces lit by the sun (a receiver extension of the directional shadow maps): the cloud
+    /// shadow map where the light reaching the surface crosses sea level.
+    /// </summary>
+    shader CloudShadowReceiver : ShadowGroup
+    {
+        rgroup PerView.Lighting
+        {
+            Texture2D CloudShadowTexture;
+        }
+
+        cbuffer PerView.Lighting
+        {
+            // xy = world XZ of the map's corner, z = 1 / its size, w = strength (0: no cloud shadows)
+            float4 CloudShadowRegion;
+            // xyz = direction towards the light, w = world height of sea level
+            float4 CloudShadowLight;
+            // Index of the light in its group (-1: none of them)
+            int CloudShadowLightIndex;
+        }
+
+        stage SamplerState CloudShadowSampler
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        override float3 ComputeShadow(float3 position, int lightIndex)
+        {
+            float3 shadow = base.ComputeShadow(position, lightIndex);
+            if (lightIndex != CloudShadowLightIndex || CloudShadowRegion.w <= 0.0)
+                return shadow;
+
+            float3 L = CloudShadowLight.xyz;
+            float2 xz = position.xz - L.xz / max(L.y, 0.01) * (position.y - CloudShadowLight.w);
+            float2 uv = (xz - CloudShadowRegion.xy) * CloudShadowRegion.z;
+            float transmittance = CloudShadowTexture.SampleLevel(CloudShadowSampler, uv, 0).r;
+            // (fades out at the edge of the map)
+            float2 edge = saturate(min(uv, 1.0 - uv) * 12.0);
+            transmittance = lerp(1.0, transmittance, edge.x * edge.y);
+            return shadow * lerp(1.0, transmittance, CloudShadowRegion.w);
+        }
+    };
+}

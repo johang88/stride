@@ -18,6 +18,7 @@
       "..\\sources\\plugins\\Audio\\Stride.Audio\\Stride.Audio.csproj",
       "..\\sources\\plugins\\BulletPhysics\\Stride.Navigation\\Stride.Navigation.csproj",
       "..\\sources\\plugins\\BulletPhysics\\Stride.Physics\\Stride.Physics.csproj",
+      "..\\sources\\plugins\\Atmosphere\\Stride.Atmosphere\\Stride.Atmosphere.csproj",
       "..\\sources\\plugins\\Particles\\Stride.Particles\\Stride.Particles.csproj",
       "..\\sources\\plugins\\SpriteStudio\\Stride.SpriteStudio.Runtime\\Stride.SpriteStudio.Runtime.csproj",
       "..\\sources\\plugins\\Terrain\\Stride.Terrain\\Stride.Terrain.csproj",

@@ -1,0 +1,32 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Box-filters a mip of a generated 2D texture from the level above.
+    /// </summary>
+    shader CloudMipGenerate2D : ComputeShaderBase
+    {
+        stage Texture2D<float4> CloudMipSource2D;
+        stage RWTexture2D<float4> CloudMipOutput2D;
+
+        cbuffer PerDispatch
+        {
+            // Size of the output level
+            stage int2 CloudMipSize2D;
+        };
+
+        override void Compute()
+        {
+            int2 texel = (int2)streams.DispatchThreadId.xy;
+            if (any(texel >= CloudMipSize2D))
+                return;
+            float4 sum = 0.0;
+            [unroll]
+            for (int i = 0; i < 4; i++)
+                sum += CloudMipSource2D.Load(int3(texel * 2 + int2(i & 1, i >> 1), 0));
+            CloudMipOutput2D[texel] = sum / 4.0;
+        }
+    };
+}

@@ -1,0 +1,32 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Box-filters a mip of a generated 3D noise volume from the level above.
+    /// </summary>
+    shader CloudMipGenerate3D : ComputeShaderBase
+    {
+        stage Texture3D<float4> CloudMipSource3D;
+        stage RWTexture3D<float4> CloudMipOutput3D;
+
+        cbuffer PerDispatch
+        {
+            // Size of the output level
+            stage int3 CloudMipSize3D;
+        };
+
+        override void Compute()
+        {
+            int3 texel = (int3)streams.DispatchThreadId;
+            if (any(texel >= CloudMipSize3D))
+                return;
+            float4 sum = 0.0;
+            [unroll]
+            for (int i = 0; i < 8; i++)
+                sum += CloudMipSource3D.Load(int4(texel * 2 + int3(i & 1, (i >> 1) & 1, (i >> 2) & 1), 0));
+            CloudMipOutput3D[texel] = sum / 8.0;
+        }
+    };
+}

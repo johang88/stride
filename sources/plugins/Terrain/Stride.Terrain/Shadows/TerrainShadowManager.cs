@@ -17,7 +17,7 @@ namespace Stride.Terrain.Shadows;
 /// Shadows cast by the active terrain at any distance, independently of the shadow map cascades: a compute line sweep
 /// along the light (TerrainShadowGenerator, from the Ogre Terra sample) stores, per texel, the height above which a point
 /// is lit, the distance to its occluder and the ground height. Directional light shadows
-/// (<see cref="TerrainDirectionalShadowMapRenderer"/>) combine it with their shadow map, so it darkens the terrain and the
+/// (<see cref="TerrainShadowReceiverExtension"/>) combine it with their shadow map, so it darkens the terrain and the
 /// objects on it; they filter it like soft shadow maps: the occluders found around a receiver set the penumbra width.
 /// </summary>
 /// <remarks>
@@ -118,11 +118,11 @@ public sealed class TerrainShadowManager : IRenderViewExtension, IDisposable
         {
             if (lighting.ShadowMapRenderer is not ShadowMapRenderer shadows)
                 continue;
-            for (int i = 0; i < shadows.Renderers.Count; i++)
+            foreach (var renderer in shadows.Renderers.OfType<LightDirectionalShadowMapRenderer>())
             {
-                // Exactly the stock renderer: a custom one is left alone
-                if (shadows.Renderers[i] is { } renderer && renderer.GetType() == typeof(LightDirectionalShadowMapRenderer))
-                    shadows.Renderers[i] = new TerrainDirectionalShadowMapRenderer { ShadowCasterRenderStage = renderer.ShadowCasterRenderStage };
+                // (one extension per renderer, shared by the games drawing with it)
+                if (!renderer.ReceiverExtensions.OfType<TerrainShadowReceiverExtension>().Any())
+                    renderer.AddReceiverExtension(new TerrainShadowReceiverExtension());
             }
         }
     }

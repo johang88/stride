@@ -1,0 +1,98 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// The baked terrain shadows (see TerrainShadowManager), which reach beyond the shadow map cascades, combined with the
+    /// directional shadow maps (a receiver extension of theirs).
+    /// </summary>
+    shader TerrainShadowReceiver : ShadowGroup
+    {
+        rgroup PerView.Lighting
+        {
+            Texture2D TerrainShadowTexture;
+        }
+
+        cbuffer PerView.Lighting
+        {
+            // xy = world XZ of the terrain origin, z = 1 / terrain size, w = 1 when the terrain shadows are ready
+            float4 TerrainShadowRegion;
+            // x = min height, y = height range, z = maximum occluder distance, w = penumbra width per meter of occluder distance
+            float4 TerrainShadowParams;
+            // x = height bias, y = minimum vertical penumbra width, z = minimum filter radius, w = maximum filter radius (meters)
+            float4 TerrainShadowFilter;
+        }
+
+        stage SamplerState TerrainShadowSampler
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        // Offset of tap i of count in a unit disk (Vogel spiral)
+        float2 TerrainShadowDisk(int i, int count)
+        {
+            float angle = i * 2.39996323;
+            float radius = sqrt((i + 0.5) / count);
+            float sine, cosine;
+            sincos(angle, sine, cosine);
+            return radius * float2(cosine, sine);
+        }
+
+        // How far (meters) a receiver heightAboveGround above the terrain at a tap is above the tap's lit height (negative: shadowed),
+        // and the vertical penumbra width there. Heights are taken relative to the ground under each tap, so slopes don't shadow themselves.
+        float TerrainShadowMargin(float4 tap, float heightAboveGround, out float width)
+        {
+            width = max(TerrainShadowFilter.y, tap.y * TerrainShadowParams.z * TerrainShadowParams.w);
+            return heightAboveGround - (tap.x - tap.z) * TerrainShadowParams.y;
+        }
+
+        override float3 ComputeShadow(float3 position, int lightIndex)
+        {
+            float3 shadow = base.ComputeShadow(position, lightIndex);
+            if (TerrainShadowRegion.w <= 0.0)
+                return shadow;
+
+            float2 uv = (position.xz - TerrainShadowRegion.xy) * TerrainShadowRegion.z;
+            if (any(uv < 0.0) || any(uv > 1.0))
+                return shadow;
+
+            float4 center = TerrainShadowTexture.SampleLevel(TerrainShadowSampler, uv, 0);
+            float heightAboveGround = position.y + TerrainShadowFilter.x - (TerrainShadowParams.x + center.z * TerrainShadowParams.y);
+
+            // Blocker search: the average distance to the occluders of the taps (at least partly) in shadow
+            float occluderDistance = 0.0;
+            float occluders = 0.0;
+            float width;
+            [unroll]
+            for (int i = 0; i < 12; i++)
+            {
+                float4 tap = TerrainShadowTexture.SampleLevel(TerrainShadowSampler, uv + TerrainShadowDisk(i, 12) * TerrainShadowFilter.w * TerrainShadowRegion.z, 0);
+                if (TerrainShadowMargin(tap, heightAboveGround, width) < 0.5 * width)
+                {
+                    occluderDistance += tap.y;
+                    occluders += 1.0;
+                }
+            }
+            if (occluders == 0.0)
+                return shadow;
+
+            // Filter: the penumbra widens with the distance to the occluders, along the light (the vertical width of each tap) and across it (the radius)
+            float radius = clamp(0.5 * occluderDistance / occluders * TerrainShadowParams.z * TerrainShadowParams.w, TerrainShadowFilter.z, TerrainShadowFilter.w);
+            float lit = 0.0;
+            [unroll]
+            for (int j = 0; j < 16; j++)
+            {
+                float4 tap = TerrainShadowTexture.SampleLevel(TerrainShadowSampler, uv + TerrainShadowDisk(j, 16) * radius * TerrainShadowRegion.z, 0);
+                float margin = TerrainShadowMargin(tap, heightAboveGround, width);
+                lit += smoothstep(-0.5 * width, 0.5 * width, margin);
+            }
+            lit /= 16.0;
+
+            // Both see the terrain up close: keep the darker one instead of darkening twice
+            return min(shadow, lit);
+        }
+    };
+}

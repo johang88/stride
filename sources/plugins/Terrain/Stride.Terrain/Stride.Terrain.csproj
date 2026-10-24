@@ -24,6 +24,7 @@
     <ProjectReference Include="..\..\..\engine\Stride.Engine\Stride.Engine.csproj" />
     <ProjectReference Include="..\..\..\engine\Stride.Rendering\Stride.Rendering.csproj" />
     <ProjectReference Include="..\..\BepuPhysics\Stride.BepuPhysics\Stride.BepuPhysics.csproj" />
+    <ProjectReference Include="..\..\Atmosphere\Stride.Atmosphere\Stride.Atmosphere.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="BepuPhysics" />

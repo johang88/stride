@@ -1,0 +1,62 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Generates the tiling cirrus texture (u along the wind, v across): x = streaks (bent, hooked bands of ice breaking into
+    /// strands, in patches), y = fibres (fine hair along the streaks), z = broad patches (the veil), w = 1. Mip-mapped
+    /// afterwards, so distant cirrus filters into a soft veil instead of aliasing.
+    /// </summary>
+    shader CloudCirrusGenerate : ComputeShaderBase, AtmosphereNoise
+    {
+        stage RWTexture2D<float4> CloudCirrusOutput;
+
+        cbuffer PerDispatch
+        {
+            stage int CloudCirrusSize;
+        };
+
+        // Tiling gradient octaves with a different number of cells along each axis
+        float StretchedFbm(float2 uv, int2 frequency, int octaves, uint seed)
+        {
+            float sum = 0.0;
+            float amplitude = 0.5;
+            float total = 0.0;
+            int2 f = frequency;
+            for (int i = 0; i < octaves; i++)
+            {
+                sum += amplitude * GradientNoise(float3(uv * f, 0.5), int3(f, 1), seed + i);
+                total += amplitude;
+                amplitude *= 0.55;
+                f *= 2;
+            }
+            return saturate(sum / total * 0.5 + 0.5);
+        }
+
+        override void Compute()
+        {
+            int2 texel = (int2)streams.DispatchThreadId.xy;
+            if (any(texel >= CloudCirrusSize))
+                return;
+            float2 uv = (texel + 0.5) / CloudCirrusSize;
+
+            // Bends: the bands meander and hook across the wind (a strong warp across, a weaker one along)
+            float2 warp = float2(StretchedFbm(uv, int2(2, 2), 3, 201u), StretchedFbm(uv + 0.41, int2(3, 2), 4, 202u)) - 0.5;
+            float2 bent = frac(uv + float2(warp.x * 0.08, warp.y * 0.35));
+            // A second, finer bending for the strands: they fray off the bands at an angle
+            float2 fray = float2(0.0, (StretchedFbm(bent, int2(4, 6), 3, 203u) - 0.5) * 0.08);
+
+            float patches = StretchedFbm(uv, int2(3, 3), 5, 204u);
+            float bands = StretchedFbm(bent, int2(3, 9), 4, 205u);
+            float strands = StretchedFbm(frac(bent + fray), int2(5, 26), 4, 206u);
+            float fibres = StretchedFbm(frac(bent + fray * 1.6), int2(12, 90), 3, 207u);
+
+            // Bands where the patches are, fraying into strands towards their edges
+            float body = smoothstep(0.42, 0.72, patches * 0.45 + bands * 0.55);
+            float streaks = body * smoothstep(0.35, 0.7, strands * 0.6 + body * 0.4);
+            float hair = saturate((fibres - 0.3) * 2.2);
+            CloudCirrusOutput[texel] = float4(streaks, hair, patches, 1.0);
+        }
+    };
+}

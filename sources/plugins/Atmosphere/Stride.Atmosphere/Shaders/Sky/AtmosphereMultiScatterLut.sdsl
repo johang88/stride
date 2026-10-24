@@ -1,0 +1,101 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Light scattered more than once (32x32), by sun zenith angle and altitude: isotropic phase for the second order and
+    /// above, the geometric series of the orders summed (Hillaire 2020).
+    /// </summary>
+    shader AtmosphereMultiScatterLut : ImageEffectShader, AtmosphereCommon
+    {
+        void IntegrateSecondOrder(float3 position, float3 direction, float3 sunDirection, out float3 L, out float3 multiScatterAs1)
+        {
+            L = float3(0.0, 0.0, 0.0);
+            multiScatterAs1 = float3(0.0, 0.0, 0.0);
+
+            float tBottom = RaySphereIntersectNearest(position, direction, float3(0.0, 0.0, 0.0), AtmosphereBottomRadius);
+            float tTop = RaySphereIntersectNearest(position, direction, float3(0.0, 0.0, 0.0), AtmosphereTopRadius);
+            float tMax = 0.0;
+            if (tBottom < 0.0)
+            {
+                if (tTop < 0.0)
+                    return;
+                tMax = tTop;
+            }
+            else
+            {
+                tMax = tTop > 0.0 ? min(tTop, tBottom) : tBottom;
+            }
+            bool hitGround = tBottom >= 0.0 && tMax == tBottom;
+
+            const float sampleCount = 20.0;
+            const float uniformPhase = 1.0 / (4.0 * AtmospherePi);
+            float3 throughput = float3(1.0, 1.0, 1.0);
+            float t = 0.0;
+            for (float s = 0.0; s < sampleCount; s += 1.0)
+            {
+                float newT = tMax * (s + 0.3) / sampleCount;
+                float dt = newT - t;
+                t = newT;
+
+                float3 P = position + t * direction;
+                float3 scatteringMie;
+                float3 scatteringRayleigh;
+                float3 extinction;
+                SampleMedium(P, scatteringMie, scatteringRayleigh, extinction);
+                float3 scattering = scatteringMie + scatteringRayleigh;
+                float3 sampleTransmittance = exp(-extinction * dt);
+                float3 safeExtinction = max(extinction, float3(1e-7, 1e-7, 1e-7));
+
+                float3 S = GetLightTransmittance(P, sunDirection) * scattering * uniformPhase;
+                L += throughput * (S - S * sampleTransmittance) / safeExtinction;
+                multiScatterAs1 += throughput * (scattering - scattering * sampleTransmittance) / safeExtinction;
+                throughput *= sampleTransmittance;
+            }
+
+            if (hitGround)
+            {
+                float3 up = normalize(position + tBottom * direction);
+                float sunCos = dot(up, sunDirection);
+                L += GetTransmittanceToTop(AtmosphereBottomRadius, sunCos) * throughput * saturate(sunCos) * AtmosphereGroundAlbedo / AtmospherePi;
+            }
+        }
+
+        stage override float4 Shading()
+        {
+            float2 uv = streams.TexCoord;
+            uv = float2(FromSubUvsToUnit(uv.x, MultiScatterLutSize), FromSubUvsToUnit(uv.y, MultiScatterLutSize));
+
+            float cosSunZenith = uv.x * 2.0 - 1.0;
+            float3 sunDirection = float3(0.0, cosSunZenith, sqrt(saturate(1.0 - cosSunZenith * cosSunZenith)));
+            float viewHeight = AtmosphereBottomRadius + saturate(uv.y + PlanetRadiusOffset) * (AtmosphereTopRadius - AtmosphereBottomRadius - PlanetRadiusOffset);
+            float3 position = float3(0.0, viewHeight, 0.0);
+
+            const float sqrtSamples = 8.0;
+            float3 sumL = float3(0.0, 0.0, 0.0);
+            float3 sumMultiScatter = float3(0.0, 0.0, 0.0);
+            for (float i = 0.0; i < sqrtSamples; i += 1.0)
+            {
+                for (float j = 0.0; j < sqrtSamples; j += 1.0)
+                {
+                    float theta = 2.0 * AtmospherePi * (i + 0.5) / sqrtSamples;
+                    float phi = acos(1.0 - 2.0 * (j + 0.5) / sqrtSamples);
+                    float3 direction = float3(cos(theta) * sin(phi), cos(phi), sin(theta) * sin(phi));
+
+                    float3 L;
+                    float3 multiScatterAs1;
+                    IntegrateSecondOrder(position, direction, sunDirection, L, multiScatterAs1);
+                    sumL += L;
+                    sumMultiScatter += multiScatterAs1;
+                }
+            }
+
+            // Uniform sphere samples weighed by the isotropic phase: (4 pi / n) / (4 pi)
+            float weight = 1.0 / (sqrtSamples * sqrtSamples);
+            float3 inScattered = sumL * weight;
+            float3 r = sumMultiScatter * weight;
+            return float4(inScattered / (1.0 - r), 1.0);
+        }
+    };
+}

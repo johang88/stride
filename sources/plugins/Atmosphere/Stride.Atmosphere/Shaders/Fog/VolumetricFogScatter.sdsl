@@ -1,0 +1,441 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere.Fog
+{
+    /// <summary>
+    /// First pass of the volumetric fog: per froxel (a cell of the view frustum grid), the participating medium at a jittered
+    /// point (height fog, local fog volumes and the fog layers painted on a height field, broken up by animated noise) and the
+    /// light it scatters towards the camera (sun with its shadow cascades and the height field's shadows, sky ambient, local
+    /// point and spot lights), blended with the reprojected result of the previous frame. Smoke from particle systems
+    /// (spheres of density binned per froxel group) and cloud shadows on the sun (light shafts from the clouds) join them.
+    /// Output: rgb = in-scattered (and emitted) radiance per meter, a = extinction per meter.
+    /// </summary>
+    /// <remarks>
+    /// Thread groups of 4x4x4 froxels cull the local lights and fog volumes against their bounds together, so each froxel
+    /// only loops over the ones that can reach it.
+    /// </remarks>
+    shader VolumetricFogScatter : ComputeShaderBase, VolumetricFogCommon
+    {
+        static const int MaxLights = 64;
+        static const int MaxVolumes = 32;
+        static const int LightStride = 4;
+        static const int VolumeStride = 8;
+        static const int ParticleStride = 3;
+        static const int MaxGroupParticles = 96;
+
+        stage RWTexture3D<float4> FogScatterOutput;
+        stage Texture3D<float4> FogHistory;
+        stage Texture3D<float> FogNoiseTexture;
+        stage Texture2D FogShadowMap;
+        stage Buffer<float4> FogLights;
+        stage Buffer<float4> FogVolumes;
+        stage Texture2D<float> FogFieldHeightmap;
+        stage Texture2D<float4> FogFieldWeights;
+        stage Texture2D<float4> FogFieldSunShadow;
+        stage Buffer<float4> FogParticles;
+        // The sky capture's averages (see SkySphericalHarmonics: [10] = upper hemisphere, [11] = lower)
+        stage Buffer<float4> FogSkyLighting;
+        stage Texture2D<float> FogCloudShadow;
+
+        stage SamplerState FogLinearClamp
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+            AddressW = Clamp;
+        };
+
+        stage SamplerState FogLinearWrap
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Wrap;
+            AddressV = Wrap;
+            AddressW = Wrap;
+        };
+
+        stage SamplerComparisonState FogShadowSampler
+        {
+            Filter = COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+            AddressU = Clamp;
+            AddressV = Clamp;
+            ComparisonFunc = LessEqual;
+        };
+
+        cbuffer PerDispatch
+        {
+            // View: inverse view, projection terms (1 / M11, 1 / M22, M31, M32), camera position
+            stage float4x4 FogViewInverse;
+            stage float4 FogProjection;
+            stage float3 FogEye;
+            // Grid (see VolumetricFogCommon), its size in froxels and this frame's sample offset in a froxel (-0.5 to 0.5)
+            stage float4 FogGrid;
+            stage float3 FogGridSize;
+            stage float3 FogJitter;
+            // Previous frame: world to clip and view, its grid, and the weight of its result (0: none)
+            stage float4x4 FogPrevViewProjection;
+            stage float4x4 FogPrevView;
+            stage float4 FogPrevGrid;
+            stage float FogHistoryWeight;
+
+            // Height fog: density at the base height, falloff per meter above it, base height
+            stage float3 FogHeight;
+            stage float3 FogAlbedo;
+            // Emitted radiance per unit of extinction
+            stage float3 FogEmissive;
+            stage float FogAnisotropy;
+            stage float FogMultipleScattering;
+            // Noise: strength of the global fog's, frequency (1 / meters), offset (wind)
+            stage float FogNoiseStrength;
+            stage float FogNoiseFrequency;
+            stage float3 FogNoiseOffset;
+
+            // Sun: direction its light travels, color (intensity included), shadow cascades
+            stage float3 FogSunDirection;
+            stage float3 FogSunColor;
+            stage float4x4 FogShadowMatrices[4];
+            stage float4 FogShadowSplits;
+            stage int FogShadowCascades;
+            stage float FogShadowBias;
+            // Isotropic sky radiance (scattered evenly)
+            stage float3 FogAmbient;
+            stage float FogLocalLightScale;
+            stage int FogLightCount;
+            stage int FogVolumeCount;
+            stage int FogParticleCount;
+            // Ambient from the sky capture: x = scale (0: FogAmbient), y = share of the sky (the rest from below)
+            stage float2 FogSkyAmbient;
+            // Cloud shadows: xy = world XZ of the map's corner, z = 1 / its size, w = strength (0: none); FogCloudShadowLight: xyz = towards the sun, w = sea level
+            stage float4 FogCloudShadowRegion;
+            stage float4 FogCloudShadowLight;
+            // Wrapped noise offset of the particles' noise (wind)
+            stage float FogTime;
+
+            // Height field: xy = world XZ of its origin, z = 1 / size, w = 1 when there is one
+            stage float4 FogFieldRegion;
+            // Heights: x = world height of 0, y = height range, z = heightmap mip, w = number of fog layers
+            stage float4 FogFieldHeights;
+            // Local XZ (meters) to texture coordinates: heightmap (xy = scale, z = offset), weights (same)
+            stage float4 FogFieldHeightUV;
+            stage float4 FogFieldWeightUV;
+            // Sun shadows of the height field: x = world height of 0, y = height range, z = penumbra per normalized occluder distance, w = 1 when there are some
+            stage float4 FogFieldShadow;
+            // Per layer: x = density, y = top (height above ground, or altitude), z = softness of the top (meters), w = 1 for an altitude
+            stage float4 FogLayerParams[4];
+            // Per layer: rgb = albedo, a = noise strength
+            stage float4 FogLayerAlbedo[4];
+            stage float4 FogLayerEmissive[4];
+        };
+
+        groupshared float3 FogGroupMin;
+        groupshared float3 FogGroupMax;
+        groupshared uint FogGroupLights[2];
+        groupshared uint FogGroupVolumes;
+        groupshared uint FogGroupParticleCount;
+        groupshared uint FogGroupParticles[MaxGroupParticles];
+
+        // World position of a point of the grid (froxel units, z in slices)
+        float3 FogGridToWorld(float3 gridPosition, out float depth)
+        {
+            float2 uv = gridPosition.xy / FogGridSize.xy;
+            float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+            depth = FogSliceToDepth(gridPosition.z / FogGridSize.z, FogGrid);
+            float3 positionVS = float3((ndc.x + FogProjection.z) * FogProjection.x, (ndc.y + FogProjection.w) * FogProjection.y, -1.0) * depth;
+            return mul(float4(positionVS, 1.0), FogViewInverse).xyz;
+        }
+
+        float FogNoiseModulation(float3 position, float strength)
+        {
+            if (strength <= 0.0)
+                return 1.0;
+            float3 p = position * FogNoiseFrequency + FogNoiseOffset;
+            float n = FogNoiseTexture.SampleLevel(FogLinearWrap, p, 0) * 0.7 + FogNoiseTexture.SampleLevel(FogLinearWrap, p * 2.71 + 0.37, 0) * 0.3;
+            // Average around 1: clear pockets and thicker billows
+            return lerp(1.0, saturate(n * 2.4 - 0.45) * 1.6, strength);
+        }
+
+        // Accumulates the medium at a point: extinction, scattering (extinction * albedo) and emission
+        void FogMedium(float3 position, inout float extinction, inout float3 scattering, inout float3 emission)
+        {
+            // Height fog
+            float heightDensity = FogHeight.x * exp(-FogHeight.y * (position.y - FogHeight.z));
+            if (heightDensity > 0.0)
+            {
+                heightDensity *= FogNoiseModulation(position, FogNoiseStrength);
+                extinction += heightDensity;
+                scattering += heightDensity * FogAlbedo;
+                emission += heightDensity * FogEmissive;
+            }
+
+            // Fog layers painted on the height field
+            if (FogFieldRegion.w > 0.0 && FogFieldHeights.w > 0.0)
+            {
+                float2 local = position.xz - FogFieldRegion.xy;
+                float2 uv = local * FogFieldRegion.z;
+                if (all(uv >= 0.0) && all(uv <= 1.0))
+                {
+                    float4 weights = FogFieldWeights.SampleLevel(FogLinearClamp, local * FogFieldWeightUV.xy + FogFieldWeightUV.z, 0);
+                    if (any(weights > 0.0))
+                    {
+                        float ground = FogFieldHeights.x + FogFieldHeightmap.SampleLevel(FogLinearClamp, local * FogFieldHeightUV.xy + FogFieldHeightUV.z, FogFieldHeights.z) * FogFieldHeights.y;
+                        [unroll]
+                        for (int i = 0; i < 4; i++)
+                        {
+                            if (i >= (int)FogFieldHeights.w || weights[i] <= 0.0)
+                                continue;
+                            float4 layer = FogLayerParams[i];
+                            float top = layer.w > 0.5 ? layer.y : ground + layer.y;
+                            float profile = saturate((top - position.y) / max(layer.z, 0.01));
+                            float density = weights[i] * layer.x * profile;
+                            if (density <= 0.0)
+                                continue;
+                            density *= FogNoiseModulation(position, FogLayerAlbedo[i].a);
+                            extinction += density;
+                            scattering += density * FogLayerAlbedo[i].rgb;
+                            emission += density * FogLayerEmissive[i].rgb;
+                        }
+                    }
+                }
+            }
+
+            // Local fog volumes (those the group culling kept)
+            uint mask = FogGroupVolumes;
+            while (mask != 0)
+            {
+                uint index = firstbitlow(mask);
+                mask &= mask - 1;
+                int b = index * VolumeStride;
+                float3 local = float3(dot(FogVolumes[b].xyz, position) + FogVolumes[b].w,
+                                      dot(FogVolumes[b + 1].xyz, position) + FogVolumes[b + 1].w,
+                                      dot(FogVolumes[b + 2].xyz, position) + FogVolumes[b + 2].w);
+                float4 shape = FogVolumes[b + 3];
+                // Distance to the surface in local units: 0 at the surface, 1 at the center
+                float inside = shape.x > 0.5 ? 1.0 - length(local) : 1.0 - max(abs(local.x), max(abs(local.y), abs(local.z)));
+                if (inside <= 0.0)
+                    continue;
+                float density = shape.y * saturate(inside / max(shape.z, 1e-3));
+                density *= FogNoiseModulation(position, shape.w);
+                extinction += density;
+                scattering += density * FogVolumes[b + 4].rgb;
+                emission += density * FogVolumes[b + 5].rgb;
+            }
+
+            // Smoke particles (those binned to this group): soft spheres broken up by billowing noise that turns with
+            // each particle. [0] = position, radius; [1] = albedo, density; [2] = emission, noise seed
+            uint particleCount = min(FogGroupParticleCount, (uint)MaxGroupParticles);
+            for (uint k = 0; k < particleCount; k++)
+            {
+                int b = FogGroupParticles[k] * ParticleStride;
+                float4 sphere = FogParticles[b];
+                float3 offset = position - sphere.xyz;
+                float distanceSquared = dot(offset, offset);
+                if (distanceSquared >= sphere.w * sphere.w)
+                    continue;
+                float4 material = FogParticles[b + 1];
+                float4 glow = FogParticles[b + 2];
+                float r = sqrt(distanceSquared) / sphere.w;
+                float falloff = 1.0 - r * r;
+                float3 noisePosition = offset / sphere.w * 0.9 + glow.w * 17.0 + float3(0.0, FogTime * 0.15, 0.0);
+                float n = FogNoiseTexture.SampleLevel(FogLinearWrap, noisePosition * 0.35, 0) * 0.6 + FogNoiseTexture.SampleLevel(FogLinearWrap, noisePosition * 0.9 + 0.5, 0) * 0.4;
+                float density = material.w * saturate(falloff * falloff * 1.6 - (1.0 - n) * 0.9);
+                extinction += density;
+                scattering += density * material.rgb;
+                emission += density * glow.rgb;
+            }
+        }
+
+        float FogCloudShadowAt(float3 position)
+        {
+            if (FogCloudShadowRegion.w <= 0.0)
+                return 1.0;
+            float3 L = FogCloudShadowLight.xyz;
+            float2 xz = position.xz - L.xz / max(L.y, 0.01) * (position.y - FogCloudShadowLight.w);
+            float2 uv = (xz - FogCloudShadowRegion.xy) * FogCloudShadowRegion.z;
+            float transmittance = FogCloudShadow.SampleLevel(FogLinearClamp, uv, 0);
+            return lerp(1.0, transmittance, FogCloudShadowRegion.w);
+        }
+
+        float FogSunShadow(float3 position, float depth)
+        {
+            float shadow = 1.0;
+            if (FogShadowCascades > 0)
+            {
+                int cascade = 0;
+                [unroll]
+                for (int i = 0; i < 3; i++)
+                {
+                    if (depth > FogShadowSplits[i])
+                        cascade = i + 1;
+                }
+                if (cascade < FogShadowCascades)
+                {
+                    float4 shadowPosition = mul(float4(position, 1.0), FogShadowMatrices[cascade]);
+                    shadowPosition.xyz /= shadowPosition.w;
+                    shadow = FogShadowMap.SampleCmpLevelZero(FogShadowSampler, shadowPosition.xy, shadowPosition.z - FogShadowBias);
+
+                    // Fade out towards the end of the shadow range
+                    float end = FogShadowSplits[FogShadowCascades - 1];
+                    shadow = lerp(1.0, shadow, saturate((end - depth) / (end * 0.1)));
+                }
+            }
+
+            // The height field's own shadows reach beyond the cascades
+            if (FogFieldShadow.w > 0.0)
+            {
+                float2 uv = (position.xz - FogFieldRegion.xy) * FogFieldRegion.z;
+                if (all(uv >= 0.0) && all(uv <= 1.0))
+                {
+                    float4 tap = FogFieldSunShadow.SampleLevel(FogLinearClamp, uv, 0);
+                    float litHeight = FogFieldShadow.x + tap.x * FogFieldShadow.y;
+                    float width = max(1.0, tap.y * FogFieldShadow.z);
+                    shadow = min(shadow, smoothstep(-0.5 * width, 0.5 * width, position.y - litHeight));
+                }
+            }
+            return shadow * FogCloudShadowAt(position);
+        }
+
+        float3 FogLocalLights(float3 position, float3 toEye)
+        {
+            float3 radiance = 0.0;
+            [unroll]
+            for (int word = 0; word < 2; word++)
+            {
+                uint mask = FogGroupLights[word];
+                while (mask != 0)
+                {
+                    uint index = word * 32 + firstbitlow(mask);
+                    mask &= mask - 1;
+                    int b = index * LightStride;
+                    float4 positionRadius = FogLights[b];
+                    float4 color = FogLights[b + 1];
+                    float4 direction = FogLights[b + 2];
+                    float4 angle = FogLights[b + 3];
+
+                    float3 lightVector = position - positionRadius.xyz;
+                    float distanceSquared = dot(lightVector, lightVector);
+                    // Distance attenuation as the forward lights compute it (Frostbite)
+                    float factor = distanceSquared * positionRadius.w;
+                    float smoothFactor = saturate(1.0 - factor * factor);
+                    float attenuation = smoothFactor * smoothFactor / max(distanceSquared, 0.01 * 0.01);
+                    float3 travel = lightVector * rsqrt(max(distanceSquared, 1e-8));
+                    // Spot cone (points have scale 0, offset 1)
+                    float cone = saturate(dot(direction.xyz, travel) * angle.x + angle.y);
+                    attenuation *= cone * cone;
+                    radiance += color.rgb * attenuation * FogPhase(dot(travel, toEye), FogAnisotropy, FogMultipleScattering);
+                }
+            }
+            return radiance * FogLocalLightScale;
+        }
+
+        // Group bounds (world space) from the corners of its froxels, then the lights and volumes overlapping them
+        void FogCullGroup(uint threadIndex)
+        {
+            if (threadIndex == 0)
+            {
+                float3 first = streams.GroupId * 4;
+                float3 last = min(first + 4, FogGridSize);
+                float3 minimum = 1e30;
+                float3 maximum = -1e30;
+                [unroll]
+                for (int i = 0; i < 8; i++)
+                {
+                    float3 corner = float3((i & 1) ? last.x : first.x, (i & 2) ? last.y : first.y, (i & 4) ? last.z : first.z);
+                    float depth;
+                    float3 world = FogGridToWorld(corner, depth);
+                    minimum = min(minimum, world);
+                    maximum = max(maximum, world);
+                }
+                FogGroupMin = minimum;
+                FogGroupMax = maximum;
+                FogGroupLights[0] = 0;
+                FogGroupLights[1] = 0;
+                FogGroupVolumes = 0;
+                FogGroupParticleCount = 0;
+            }
+            GroupMemoryBarrierWithGroupSync();
+
+            float3 groupMin = FogGroupMin;
+            float3 groupMax = FogGroupMax;
+            for (int light = threadIndex; light < FogLightCount; light += 64)
+            {
+                float3 center = FogLights[light * LightStride].xyz;
+                float radius = FogLights[light * LightStride + 1].w;
+                float3 closest = clamp(center, groupMin, groupMax);
+                if (dot(closest - center, closest - center) <= radius * radius)
+                    InterlockedOr(FogGroupLights[light >> 5], 1u << (light & 31));
+            }
+            for (int volume = threadIndex; volume < FogVolumeCount; volume += 64)
+            {
+                float3 volumeMin = FogVolumes[volume * VolumeStride + 6].xyz;
+                float3 volumeMax = FogVolumes[volume * VolumeStride + 7].xyz;
+                if (all(volumeMin <= groupMax) && all(volumeMax >= groupMin))
+                    InterlockedOr(FogGroupVolumes, 1u << volume);
+            }
+            for (int particle = threadIndex; particle < FogParticleCount; particle += 64)
+            {
+                float4 sphere = FogParticles[particle * ParticleStride];
+                float3 closest = clamp(sphere.xyz, groupMin, groupMax);
+                if (dot(closest - sphere.xyz, closest - sphere.xyz) <= sphere.w * sphere.w)
+                {
+                    uint slot;
+                    InterlockedAdd(FogGroupParticleCount, 1u, slot);
+                    if (slot < (uint)MaxGroupParticles)
+                        FogGroupParticles[slot] = particle;
+                }
+            }
+            GroupMemoryBarrierWithGroupSync();
+        }
+
+        override void Compute()
+        {
+            FogCullGroup(streams.GroupIndex);
+
+            uint3 froxel = streams.DispatchThreadId;
+            if (any(froxel >= (uint3)FogGridSize))
+                return;
+
+            float depth;
+            float3 position = FogGridToWorld(froxel + 0.5 + FogJitter, depth);
+            float3 toEye = normalize(FogEye - position);
+
+            float extinction = 0.0;
+            float3 scattering = 0.0;
+            float3 emission = 0.0;
+            FogMedium(position, extinction, scattering, emission);
+
+            float4 result = float4(emission, extinction);
+            if (any(scattering > 0.0))
+            {
+                float3 light = FogAmbient;
+                if (FogSkyAmbient.x > 0.0)
+                    light = (lerp(FogSkyLighting[11].rgb, FogSkyLighting[10].rgb, FogSkyAmbient.y)) * FogSkyAmbient.x;
+                if (any(FogSunColor > 0.0))
+                    light += FogSunColor * FogPhase(dot(FogSunDirection, toEye), FogAnisotropy, FogMultipleScattering) * FogSunShadow(position, depth);
+                if (FogLightCount > 0)
+                    light += FogLocalLights(position, toEye);
+                result.rgb += scattering * light;
+            }
+
+            // Blend with the previous frame where the froxel center was in its grid
+            if (FogHistoryWeight > 0.0)
+            {
+                float centerDepth;
+                float3 center = FogGridToWorld(froxel + 0.5, centerDepth);
+                float4 previousClip = mul(float4(center, 1.0), FogPrevViewProjection);
+                if (previousClip.w > 0.0)
+                {
+                    float2 previousUV = previousClip.xy / previousClip.w * float2(0.5, -0.5) + 0.5;
+                    float previousDepth = -mul(float4(center, 1.0), FogPrevView).z;
+                    float3 previous = float3(previousUV, FogDepthToSlice(previousDepth, FogPrevGrid));
+                    if (all(previous > 0.0) && all(previous < 1.0))
+                    {
+                        float4 history = FogHistory.SampleLevel(FogLinearClamp, previous, 0);
+                        result = lerp(result, history, FogHistoryWeight);
+                    }
+                }
+            }
+
+            FogScatterOutput[froxel] = result;
+        }
+    };
+}
