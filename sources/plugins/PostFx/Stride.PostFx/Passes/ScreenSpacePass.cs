@@ -15,12 +15,27 @@ namespace Stride.PostFx.Passes;
 internal sealed class ScreenSpaceTargets : IDisposable
 {
     public const int PyramidLevels = 5;
+    public const int ReflectionLevels = 5;
 
     public Texture Pyramid;
     public readonly Texture[] PyramidLevelViews = new Texture[PyramidLevels];
     public Texture AmbientOcclusion;
     public Texture AmbientOcclusionRaw;
     public Texture ContactShadows;
+
+    // Half resolution light found on screen after the frame, read by the next one
+    public Texture Reflections;
+    public readonly Texture[] ReflectionLevelViews = new Texture[ReflectionLevels];
+    public bool ReflectionsValid;
+    public Texture IndirectRaw;
+    public readonly Texture[] IndirectHistory = new Texture[2];
+    public int IndirectIndex;
+    public bool IndirectValid;
+
+    /// <summary>
+    /// The accumulated indirect light of the last frame.
+    /// </summary>
+    public Texture Indirect => IndirectValid ? IndirectHistory[IndirectIndex] : null;
 
     public void Ensure(GraphicsDevice device, int width, int height)
     {
@@ -37,6 +52,22 @@ internal sealed class ScreenSpaceTargets : IDisposable
         AmbientOcclusionRaw.Name = "PostFxAmbientOcclusionRaw";
         ContactShadows = Texture.New2D(device, width, height, PixelFormat.R8_UNorm, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
         ContactShadows.Name = "PostFxContactShadows";
+
+        var halfWidth = Math.Max(1, width / 2);
+        var halfHeight = Math.Max(1, height / 2);
+        Reflections = Texture.New2D(device, halfWidth, halfHeight, ReflectionLevels, PixelFormat.R16G16B16A16_Float, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
+        Reflections.Name = "PostFxReflections";
+        for (int i = 0; i < ReflectionLevels; i++)
+            ReflectionLevelViews[i] = Reflections.ToTextureView(ViewType.Single, 0, i);
+        IndirectRaw = Texture.New2D(device, halfWidth, halfHeight, PixelFormat.R16G16B16A16_Float, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
+        IndirectRaw.Name = "PostFxIndirectRaw";
+        for (int i = 0; i < 2; i++)
+        {
+            IndirectHistory[i] = Texture.New2D(device, halfWidth, halfHeight, PixelFormat.R16G16B16A16_Float, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
+            IndirectHistory[i].Name = "PostFxIndirect";
+        }
+        ReflectionsValid = false;
+        IndirectValid = false;
     }
 
     public void Dispose()
@@ -46,6 +77,20 @@ internal sealed class ScreenSpaceTargets : IDisposable
             PyramidLevelViews[i]?.Dispose();
             PyramidLevelViews[i] = null;
         }
+        for (int i = 0; i < ReflectionLevels; i++)
+        {
+            ReflectionLevelViews[i]?.Dispose();
+            ReflectionLevelViews[i] = null;
+        }
+        Reflections?.Dispose();
+        IndirectRaw?.Dispose();
+        for (int i = 0; i < 2; i++)
+        {
+            IndirectHistory[i]?.Dispose();
+            IndirectHistory[i] = null;
+        }
+        Reflections = IndirectRaw = null;
+        ReflectionsValid = IndirectValid = false;
         Pyramid?.Dispose();
         AmbientOcclusion?.Dispose();
         AmbientOcclusionRaw?.Dispose();
@@ -64,6 +109,10 @@ internal sealed class ScreenSpacePass
     private readonly ComputeEffectShader gtao;
     private readonly ComputeEffectShader denoise;
     private readonly ComputeEffectShader contact;
+    private readonly ComputeEffectShader reflections;
+    private readonly ComputeEffectShader mip;
+    private readonly ComputeEffectShader indirect;
+    private readonly ComputeEffectShader indirectTemporal;
 
     public ScreenSpacePass(RenderContext context)
     {
@@ -71,6 +120,80 @@ internal sealed class ScreenSpacePass
         gtao = new ComputeEffectShader(context) { ShaderSourceName = "PostFxGtao", ThreadNumbers = new Int3(8, 8, 1) };
         denoise = new ComputeEffectShader(context) { ShaderSourceName = "PostFxGtaoDenoise", ThreadNumbers = new Int3(8, 8, 1) };
         contact = new ComputeEffectShader(context) { ShaderSourceName = "PostFxContactShadows", ThreadNumbers = new Int3(8, 8, 1) };
+        reflections = new ComputeEffectShader(context) { ShaderSourceName = "PostFxReflections", ThreadNumbers = new Int3(8, 8, 1) };
+        mip = new ComputeEffectShader(context) { ShaderSourceName = "PostFxScreenMip", ThreadNumbers = new Int3(8, 8, 1) };
+        indirect = new ComputeEffectShader(context) { ShaderSourceName = "PostFxIndirect", ThreadNumbers = new Int3(8, 8, 1) };
+        indirectTemporal = new ComputeEffectShader(context) { ShaderSourceName = "PostFxIndirectTemporal", ThreadNumbers = new Int3(8, 8, 1) };
+    }
+
+    /// <summary>
+    /// Traces the reflections of the frame (against its anti-aliased image) and their blur levels, for the next frame.
+    /// </summary>
+    public void DrawReflections(RenderDrawContext context, RenderView view, ScreenSpaceTargets targets, Texture scene, int frame)
+    {
+        var width = targets.Pyramid.Width;
+        var height = targets.Pyramid.Height;
+        var size = new Int2(targets.Reflections.Width, targets.Reflections.Height);
+        var parameters = reflections.Parameters;
+        SetView(parameters, view, width, height);
+        parameters.Set(PostFxReflectionsKeys.ReflectionDistance, targets.Pyramid);
+        parameters.Set(PostFxReflectionsKeys.ReflectionScene, scene);
+        parameters.Set(PostFxReflectionsKeys.ReflectionOutput, targets.ReflectionLevelViews[0]);
+        parameters.Set(PostFxReflectionsKeys.ReflectionSize, size);
+        parameters.Set(PostFxReflectionsKeys.ReflectionMaxDistance, 60.0f);
+        parameters.Set(PostFxReflectionsKeys.ReflectionSteps, 32);
+        parameters.Set(PostFxReflectionsKeys.ReflectionFrame, (float)(frame % 1024));
+        reflections.ThreadGroupCounts = Groups(size.X, size.Y);
+        reflections.Draw(context, "PostFx.Reflections");
+
+        for (int level = 1; level < ScreenSpaceTargets.ReflectionLevels; level++)
+        {
+            var levelSize = new Int2(Math.Max(1, size.X >> level), Math.Max(1, size.Y >> level));
+            mip.Parameters.Set(PostFxScreenMipKeys.MipSource, targets.ReflectionLevelViews[level - 1]);
+            mip.Parameters.Set(PostFxScreenMipKeys.MipOutput, targets.ReflectionLevelViews[level]);
+            mip.Parameters.Set(PostFxScreenMipKeys.MipSize, levelSize);
+            mip.ThreadGroupCounts = Groups(levelSize.X, levelSize.Y);
+            mip.Draw(context, "PostFx.ReflectionMips");
+        }
+        targets.ReflectionsValid = true;
+    }
+
+    /// <summary>
+    /// Traces the indirect light of the frame and accumulates it over frames, for the next frame.
+    /// </summary>
+    public void DrawIndirect(RenderDrawContext context, RenderView view, ScreenSpaceTargets targets, Texture scene, Matrix inverseViewProjection, Matrix previousViewProjection, int frame)
+    {
+        var width = targets.Pyramid.Width;
+        var height = targets.Pyramid.Height;
+        var size = new Int2(targets.IndirectRaw.Width, targets.IndirectRaw.Height);
+        var parameters = indirect.Parameters;
+        SetView(parameters, view, width, height);
+        parameters.Set(PostFxIndirectKeys.IndirectDistance, targets.Pyramid);
+        parameters.Set(PostFxIndirectKeys.IndirectScene, scene);
+        parameters.Set(PostFxIndirectKeys.IndirectOutput, targets.IndirectRaw);
+        parameters.Set(PostFxIndirectKeys.IndirectSize, size);
+        parameters.Set(PostFxIndirectKeys.IndirectMaxDistance, 8.0f);
+        parameters.Set(PostFxIndirectKeys.IndirectSteps, 12);
+        parameters.Set(PostFxIndirectKeys.IndirectFrame, (float)(frame % 1024));
+        indirect.ThreadGroupCounts = Groups(size.X, size.Y);
+        indirect.Draw(context, "PostFx.Indirect");
+
+        var previous = targets.IndirectHistory[targets.IndirectIndex];
+        var next = targets.IndirectHistory[1 - targets.IndirectIndex];
+        var temporal = indirectTemporal.Parameters;
+        SetView(temporal, view, width, height);
+        temporal.Set(PostFxIndirectTemporalKeys.IndirectCurrent, targets.IndirectRaw);
+        temporal.Set(PostFxIndirectTemporalKeys.IndirectHistory, previous);
+        temporal.Set(PostFxIndirectTemporalKeys.IndirectTemporalDistance, targets.PyramidLevelViews[0]);
+        temporal.Set(PostFxIndirectTemporalKeys.IndirectAccumulated, next);
+        temporal.Set(PostFxIndirectTemporalKeys.IndirectTemporalSize, size);
+        temporal.Set(PostFxIndirectTemporalKeys.IndirectInverseViewProjection, inverseViewProjection);
+        temporal.Set(PostFxIndirectTemporalKeys.IndirectPreviousViewProjection, previousViewProjection);
+        temporal.Set(PostFxIndirectTemporalKeys.IndirectHistoryValid, targets.IndirectValid ? 1.0f : 0.0f);
+        indirectTemporal.ThreadGroupCounts = Groups(size.X, size.Y);
+        indirectTemporal.Draw(context, "PostFx.IndirectTemporal");
+        targets.IndirectIndex = 1 - targets.IndirectIndex;
+        targets.IndirectValid = true;
     }
 
     private static void SetView(ParameterCollection parameters, RenderView view, int width, int height)

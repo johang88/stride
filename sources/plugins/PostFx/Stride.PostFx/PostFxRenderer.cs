@@ -117,6 +117,8 @@ public enum PostFxDebugView
     None,
     AmbientOcclusion,
     ContactShadows,
+    Reflections,
+    IndirectLight,
 }
 
 /// <summary>
@@ -202,6 +204,22 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
     [DataMember(46)]
     [DefaultValue(true)]
     public bool ContactShadows { get; set; } = true;
+
+    /// <summary>
+    /// Whether reflections are found on screen (traced after each frame at half resolution, read by the next): they
+    /// replace the sky's where they're found.
+    /// </summary>
+    [DataMember(47)]
+    [DefaultValue(true)]
+    public bool Reflections { get; set; } = true;
+
+    /// <summary>
+    /// Whether indirect light is found on screen (a ray per pixel at half resolution, accumulated over frames): light
+    /// bouncing off nearby surfaces replaces the sky's where it's found.
+    /// </summary>
+    [DataMember(48)]
+    [DefaultValue(true)]
+    public bool IndirectLight { get; set; } = true;
 
     /// <summary>
     /// Whether the bright light glows.
@@ -296,7 +314,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         Resolve(context, view, state);
 
         // The screen-space lighting of the opaque surfaces
-        screenSpace.Enabled = AmbientOcclusion != PostFxAmbientOcclusionQuality.Off || ContactShadows;
+        screenSpace.Enabled = AmbientOcclusion != PostFxAmbientOcclusionQuality.Off || ContactShadows || Reflections || IndirectLight;
         if (screenSpace.Enabled)
             EnsureScreenSpaceFeatures(context);
 
@@ -308,6 +326,8 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
             state.Temporal ??= new TemporalHistory();
             state.Temporal.ApplyJitter(view);
         }
+
+        PublishScreenSpace(context, view, state);
     }
 
     public void Draw(RenderDrawContext drawContext, RenderOutputValidator outputValidator, Span<Texture> inputs, Texture inputDepthStencil, Texture outputTarget)
@@ -360,6 +380,29 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
             temporalResolved = true;
         }
 
+        // Light found on the anti-aliased image, for the next frame's surfaces
+        if (state.ScreenSpaceTargets?.Pyramid != null && renderContext.RenderView.Projection.M44 != 1.0f)
+        {
+            var targets = state.ScreenSpaceTargets;
+            // (the image just resolved is read)
+            context.CommandList.ResetTargets();
+            if (Reflections && profile.ScreenSpaceLight.Reflections > 0.0f)
+                screenSpacePass.DrawReflections(context, renderContext.RenderView, targets, scene, frame);
+            else
+                targets.ReflectionsValid = false;
+            if (IndirectLight && profile.ScreenSpaceLight.IndirectLight > 0.0f)
+            {
+                var viewProjection = state.Temporal?.ViewProjection ?? renderContext.RenderView.ViewProjection;
+                Matrix.Invert(ref viewProjection, out var inverseViewProjection);
+                var previous = state.Temporal?.HasPrevious == true ? state.Temporal.PreviousUnjitteredViewProjection : viewProjection;
+                screenSpacePass.DrawIndirect(context, renderContext.RenderView, targets, scene, inverseViewProjection, previous, frame);
+            }
+            else
+            {
+                targets.IndirectValid = false;
+            }
+        }
+
         Texture glow = null;
         if (Bloom && (profile.Bloom.Intensity > 0.0f || profile.Bloom.LensDirtIntensity > 0.0f))
             glow = bloom.Draw(context, (w, h, f) => NewScopedRenderTarget2D(w, h, f), scene, profile.Bloom.Scatter);
@@ -379,10 +422,14 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         {
             PostFxDebugView.AmbientOcclusion => state.ScreenSpaceTargets?.AmbientOcclusion,
             PostFxDebugView.ContactShadows => state.ScreenSpaceTargets?.ContactShadows,
+            PostFxDebugView.Reflections => state.ScreenSpaceTargets?.ReflectionLevelViews[0],
+            PostFxDebugView.IndirectLight => state.ScreenSpaceTargets?.Indirect,
             _ => null,
         };
         if (debugTexture != null)
         {
+            debugShader.Parameters.Set(PostFxDebugViewKeys.DebugColor, DebugView is PostFxDebugView.Reflections or PostFxDebugView.IndirectLight);
+            debugShader.Parameters.Set(PostFxDebugViewKeys.DebugScale, MathF.Pow(2.0f, ExposureEV(profile)));
             debugShader.SetInput(0, debugTexture);
             debugShader.SetOutput(output);
             debugShader.Draw(context, "PostFx.DebugView");
@@ -518,37 +565,67 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         return result;
     }
 
+    /// <summary>
+    /// Decides the screen-space terms of a view and publishes them to its opaque surfaces (at collect: the surfaces'
+    /// parameters are prepared before the depth prepass draws them).
+    /// </summary>
+    private void PublishScreenSpace(RenderContext renderContext, RenderView view, ViewState state)
+    {
+        if (!screenSpace.Views.TryGetValue(view, out var data))
+            screenSpace.Views.Add(view, data = new ScreenSpaceViewData());
+        // (orthographic views have no distances to march in)
+        if (!screenSpace.Enabled || view.Projection.M44 == 1.0f || view.ViewSize.X < 1.0f || view.ViewSize.Y < 1.0f)
+        {
+            data.Frame = -1;
+            return;
+        }
+
+        var profile = state.Profile;
+        state.ScreenSpaceTargets ??= new ScreenSpaceTargets();
+        var targets = state.ScreenSpaceTargets;
+        targets.Ensure(GraphicsDevice, (int)view.ViewSize.X, (int)view.ViewSize.Y);
+
+        data.Frame = renderContext.RenderSystem.FrameCounter;
+        data.ScreenSize = new Vector4(targets.Pyramid.Width, targets.Pyramid.Height, 1.0f / targets.Pyramid.Width, 1.0f / targets.Pyramid.Height);
+        data.PreviousViewProjection = state.Temporal?.HasPrevious == true ? state.Temporal.PreviousUnjitteredViewProjection : view.ViewProjection;
+
+        var occlusion = profile.AmbientOcclusion;
+        var occlusionOn = AmbientOcclusion != PostFxAmbientOcclusionQuality.Off && occlusion.Intensity > 0.0f;
+        data.AmbientOcclusion = occlusionOn ? targets.AmbientOcclusion : null;
+        data.AmbientOcclusionStrength = Math.Clamp(occlusion.Intensity, 0.0f, 2.0f);
+
+        // The light found on screen after the last frame
+        var found = profile.ScreenSpaceLight;
+        data.Reflections = Reflections && found.Reflections > 0.0f && targets.ReflectionsValid ? targets.Reflections : null;
+        data.ReflectionStrength = Math.Clamp(found.Reflections, 0.0f, 1.0f);
+        data.Indirect = IndirectLight && found.IndirectLight > 0.0f ? targets.Indirect : null;
+        data.IndirectStrength = Math.Clamp(found.IndirectLight, 0.0f, 1.0f);
+
+        var contact = profile.ContactShadows;
+        data.ContactLight = ContactShadows && contact.Intensity > 0.0f ? FindMainLight(renderContext) : null;
+        data.ContactShadows = data.ContactLight != null ? targets.ContactShadows : null;
+        data.ContactShadowStrength = Math.Clamp(contact.Intensity, 0.0f, 1.0f);
+    }
+
     /// <inheritdoc/>
     public void DrawAfterDepthPrepass(RenderDrawContext context, Texture depthStencil)
     {
         var renderContext = context.RenderContext;
         var view = renderContext.RenderView;
-        if (!screenSpace.Enabled || view == null || depthStencil == null)
+        if (view == null || depthStencil == null || !screenSpace.Views.TryGetValue(view, out var data) || data.Frame != renderContext.RenderSystem.FrameCounter)
             return;
-        // (orthographic views have no distances to march in)
-        if (view.Projection.M44 == 1.0f)
+        var state = GetState(view, data.Frame);
+        var targets = state.ScreenSpaceTargets;
+        // (a depth of another size than the view's: nothing to match it with this frame)
+        if (targets?.Pyramid == null || targets.Pyramid.Width != depthStencil.ViewWidth || targets.Pyramid.Height != depthStencil.ViewHeight)
+        {
+            data.Frame = -1;
             return;
-
-        var frameCounter = renderContext.RenderSystem.FrameCounter;
-        var state = GetState(view, frameCounter);
-        if (state.ResolvedFrame != frameCounter)
-            Resolve(renderContext, view, state);
+        }
         var profile = state.Profile;
 
-        state.ScreenSpaceTargets ??= new ScreenSpaceTargets();
-        var targets = state.ScreenSpaceTargets;
-        targets.Ensure(GraphicsDevice, depthStencil.ViewWidth, depthStencil.ViewHeight);
         screenSpacePass.DrawPyramid(context, view, targets, depthStencil);
-
-        if (!screenSpace.Views.TryGetValue(view, out var data))
-            screenSpace.Views.Add(view, data = new ScreenSpaceViewData());
-        data.Frame = frameCounter;
-        data.ScreenSize = new Vector4(targets.Pyramid.Width, targets.Pyramid.Height, 1.0f / targets.Pyramid.Width, 1.0f / targets.Pyramid.Height);
-        data.PreviousViewProjection = state.Temporal?.HasPrevious == true ? state.Temporal.PreviousUnjitteredViewProjection : view.ViewProjection;
-
-        var occlusion = profile.AmbientOcclusion;
-        data.AmbientOcclusion = null;
-        if (AmbientOcclusion != PostFxAmbientOcclusionQuality.Off && occlusion.Intensity > 0.0f)
+        if (data.AmbientOcclusion != null)
         {
             var (slices, steps) = AmbientOcclusion switch
             {
@@ -556,21 +633,10 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
                 PostFxAmbientOcclusionQuality.Medium => (2, 4),
                 _ => (3, 5),
             };
-            screenSpacePass.DrawAmbientOcclusion(context, view, targets, occlusion, slices, steps, frame);
-            data.AmbientOcclusion = targets.AmbientOcclusion;
-            data.AmbientOcclusionStrength = Math.Clamp(occlusion.Intensity, 0.0f, 2.0f);
+            screenSpacePass.DrawAmbientOcclusion(context, view, targets, profile.AmbientOcclusion, slices, steps, frame);
         }
-
-        var contact = profile.ContactShadows;
-        data.ContactShadows = null;
-        data.ContactLight = null;
-        if (ContactShadows && contact.Intensity > 0.0f && FindMainLight(renderContext) is { } light)
-        {
-            screenSpacePass.DrawContactShadows(context, view, targets, contact, -Vector3.Normalize(light.Direction), 16, frame);
-            data.ContactShadows = targets.ContactShadows;
-            data.ContactLight = light;
-            data.ContactShadowStrength = Math.Clamp(contact.Intensity, 0.0f, 1.0f);
-        }
+        if (data.ContactLight != null)
+            screenSpacePass.DrawContactShadows(context, view, targets, profile.ContactShadows, -Vector3.Normalize(data.ContactLight.Direction), 16, frame);
     }
 
     /// <summary>

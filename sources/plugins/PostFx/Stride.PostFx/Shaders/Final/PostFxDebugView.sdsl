@@ -4,14 +4,23 @@
 namespace Stride.PostFx
 {
     /// <summary>
-    /// Shows a single channel buffer (ambient occlusion, contact shadows) in grey. Texture0 = the buffer.
+    /// Shows a buffer of the renderer: a single channel one (ambient occlusion, contact shadows) in grey, or light found on
+    /// screen (exposed, weighted by its confidence). Texture0 = the buffer.
     /// </summary>
     shader PostFxDebugView : ImageEffectShader
     {
+        stage bool DebugColor;
+        stage float DebugScale;
+
         stage override float4 Shading()
         {
-            float value = Texture0.SampleLevel(PointSampler, streams.TexCoord, 0).r;
-            return float4(value, value, value, 1.0);
+            float4 value = Texture0.SampleLevel(PointSampler, streams.TexCoord, 0);
+            if (DebugColor)
+            {
+                float3 light = value.rgb * value.a * DebugScale;
+                return float4(pow(saturate(light / (1.0 + light)), 1.0 / 2.2), 1.0);
+            }
+            return float4(value.r, value.r, value.r, 1.0);
         }
     };
 }

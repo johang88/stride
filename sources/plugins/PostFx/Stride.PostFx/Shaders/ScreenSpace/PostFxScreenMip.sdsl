@@ -1,0 +1,35 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// One level down a mip chain of screen-space light (reflections): the 2x2 average, the light weighted by its
+    /// confidence (what was found isn't diluted by where nothing was). Groups of 8x8 threads.
+    /// </summary>
+    shader PostFxScreenMip : ComputeShaderBase
+    {
+        stage Texture2D<float4> MipSource;
+        stage RWTexture2D<float4> MipOutput;
+
+        cbuffer PerDispatch
+        {
+            stage int2 MipSize;
+        };
+
+        override void Compute()
+        {
+            int2 texel = (int2)streams.DispatchThreadId.xy;
+            if (any(texel >= MipSize))
+                return;
+            int2 source = texel * 2;
+            float4 a = MipSource.Load(int3(source, 0));
+            float4 b = MipSource.Load(int3(source + int2(1, 0), 0));
+            float4 c = MipSource.Load(int3(source + int2(0, 1), 0));
+            float4 d = MipSource.Load(int3(source + int2(1, 1), 0));
+            float weight = a.a + b.a + c.a + d.a;
+            float3 light = weight > 0.0 ? (a.rgb * a.a + b.rgb * b.a + c.rgb * c.a + d.rgb * d.a) / weight : 0.0;
+            MipOutput[texel] = float4(light, weight * 0.25);
+        }
+    };
+}

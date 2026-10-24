@@ -1,0 +1,141 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// Screen-space reflections, at half resolution: the mirror direction about the normal (from the depth) marched through
+    /// the view's distances in growing steps, the hit refined, and the anti-aliased image read there. The opaque surfaces
+    /// of the next frame read the result (reprojected, blurred by their roughness through its mips): the sky light's
+    /// reflection gives way to it by its confidence. Groups of 8x8 threads.
+    /// Output: rgb = reflected light, a = confidence.
+    /// </summary>
+    shader PostFxReflections : ComputeShaderBase, PostFxViewSpace, PostFxCommon
+    {
+        stage Texture2D<float> ReflectionDistance;
+        stage Texture2D ReflectionScene;
+        stage RWTexture2D<float4> ReflectionOutput;
+
+        stage SamplerState ReflectionPointClamp
+        {
+            Filter = MIN_MAG_MIP_POINT;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        stage SamplerState ReflectionLinearClamp
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        cbuffer PerDispatch
+        {
+            // Size of the output (half the view's)
+            stage int2 ReflectionSize;
+            // Farthest a reflection is looked for (meters)
+            stage float ReflectionMaxDistance;
+            stage int ReflectionSteps;
+            stage float ReflectionFrame;
+        };
+
+        stage float SceneDistance(float2 uv, float mip)
+        {
+            return ReflectionDistance.SampleLevel(ReflectionPointClamp, uv, mip);
+        }
+
+        override void Compute()
+        {
+            int2 pixel = (int2)streams.DispatchThreadId.xy;
+            if (any(pixel >= ReflectionSize))
+                return;
+            int2 full = pixel * 2;
+            float2 texel = ViewSize.zw;
+            float2 uv = (full + 1.0) * texel;
+            float distance = ReflectionDistance.Load(int3(full, 0));
+            if (distance > 5000.0)
+            {
+                ReflectionOutput[pixel] = 0.0;
+                return;
+            }
+
+            float3 position = ViewPosition((full + 0.5) * texel, distance);
+            float3 left = ViewPosition((full + float2(-0.5, 0.5)) * texel, ReflectionDistance.Load(int3(full - int2(1, 0), 0)));
+            float3 right = ViewPosition((full + float2(1.5, 0.5)) * texel, ReflectionDistance.Load(int3(full + int2(1, 0), 0)));
+            float3 up = ViewPosition((full + float2(0.5, -0.5)) * texel, ReflectionDistance.Load(int3(full - int2(0, 1), 0)));
+            float3 down = ViewPosition((full + float2(0.5, 1.5)) * texel, ReflectionDistance.Load(int3(full + int2(0, 1), 0)));
+            float3 dx = abs(right.z - position.z) < abs(position.z - left.z) ? right - position : position - left;
+            float3 dy = abs(down.z - position.z) < abs(position.z - up.z) ? down - position : position - up;
+            float3 normal = normalize(cross(dy, dx));
+            float3 viewVector = normalize(-position);
+            if (dot(normal, viewVector) < 0.0)
+                normal = -normal;
+
+            float3 direction = reflect(-viewVector, normal);
+            // (rays towards the camera leave the screen's information: faded out)
+            float facing = saturate(direction.z * 4.0 + 0.5);
+            if (facing <= 0.0)
+            {
+                ReflectionOutput[pixel] = 0.0;
+                return;
+            }
+
+            float jitter = PostFxFrameNoise(pixel, ReflectionFrame, 8.0);
+            float3 origin = position + normal * (0.01 + 0.002 * distance);
+            // Steps growing geometrically from a few centimeters to the farthest distance
+            float growth = pow(ReflectionMaxDistance / 0.05, 1.0 / ReflectionSteps);
+            float previousT = 0.0;
+            float t = 0.05 * (1.0 + jitter * (growth - 1.0));
+            float hitT = -1.0;
+            float2 hitUv = 0.0;
+            for (int i = 0; i < ReflectionSteps; i++)
+            {
+                float3 sample = origin + direction * t;
+                if (sample.z <= 0.05)
+                    break;
+                float2 sampleUv = ViewToUv(sample);
+                if (any(sampleUv < 0.0) || any(sampleUv > 1.0))
+                    break;
+                float stepPixels = (t - previousT) * 0.5 / (sample.z * ViewProjectionInfo.y) * ViewSize.y;
+                float mip = clamp(log2(max(stepPixels, 1.0)) - 1.0, 0.0, 3.0);
+                float scene = SceneDistance(sampleUv, mip);
+                float behind = sample.z - scene;
+                // (thicker surfaces far away, where a step spans more)
+                float thickness = 0.15 + (t - previousT) * 1.5;
+                if (behind > 0.0 && behind < thickness)
+                {
+                    // Refine between the last step in front and this one
+                    float low = previousT;
+                    float high = t;
+                    [unroll]
+                    for (int j = 0; j < 5; j++)
+                    {
+                        float middle = (low + high) * 0.5;
+                        float3 refine = origin + direction * middle;
+                        float2 refineUv = ViewToUv(refine);
+                        if (refine.z > SceneDistance(refineUv, 0))
+                            high = middle;
+                        else
+                            low = middle;
+                    }
+                    hitT = high;
+                    hitUv = ViewToUv(origin + direction * high);
+                    break;
+                }
+                previousT = t;
+                t *= growth;
+            }
+
+            if (hitT < 0.0)
+            {
+                ReflectionOutput[pixel] = 0.0;
+                return;
+            }
+            float3 color = ReflectionScene.SampleLevel(ReflectionLinearClamp, hitUv, 0).rgb;
+            float2 edge = saturate(min(hitUv, 1.0 - hitUv) * 10.0);
+            float confidence = facing * edge.x * edge.y * saturate(1.0 - hitT / ReflectionMaxDistance);
+            ReflectionOutput[pixel] = float4(isnan(color) ? 0.0 : color, confidence);
+        }
+    };
+}
