@@ -121,15 +121,32 @@ namespace Stride.Rendering
                     renderViewDatas.Add(view, viewData);
                 }
 
+                // (a view seen for the first time has no previous frame: no camera motion)
+                if (!viewData.HasPrevious)
+                {
+                    viewData.PreviousViewProjection = view.ViewProjection;
+                    viewData.HasPrevious = true;
+                }
+
                 Dispatcher.ForEach(viewFeature.ViewObjectNodes, renderPerViewNodeReference =>
                 {
                     var renderPerViewNode = RootRenderFeature.GetViewObjectNode(renderPerViewNodeReference);
                     var renderModelFrameInfo = renderModelObjectInfoData[renderPerViewNode.ObjectNode];
-                    
-                    Matrix previousViewProjection = viewData.PreviousViewProjection;
+                    var renderObject = RootRenderFeature.GetObjectNode(renderPerViewNode.ObjectNode).RenderObject;
 
-                    Matrix previousWorldViewProjection;
-                    Matrix.Multiply(ref renderModelFrameInfo.World, ref previousViewProjection, out previousWorldViewProjection);
+                    // The object's motion: current world space back into its space, out with the previous world transform
+                    // (skinned and instanced positions are already in world space: their root's motion)
+                    var previousWorld = previousTransformationInfoData[renderObject.StaticObjectNode];
+                    var world = renderModelFrameInfo.World;
+                    var motion = Matrix.Identity;
+                    if (previousWorld.Valid && previousWorld.World != world && world.Determinant() != 0.0f)
+                    {
+                        Matrix.Invert(ref world, out var inverseWorld);
+                        motion = inverseWorld * previousWorld.World;
+                    }
+
+                    Matrix previousViewProjection = viewData.PreviousViewProjection;
+                    Matrix.Multiply(ref motion, ref previousViewProjection, out var previousWorldViewProjection);
 
                     previousTransformationViewInfoData[renderPerViewNodeReference] = new PreviousObjectViewInfo
                     {
@@ -171,6 +188,7 @@ namespace Stride.Rendering
                 previousTransformationInfoData[renderNode.RenderObject.StaticObjectNode] = new StaticObjectInfo
                 {
                     World = renderModelFrameInfo.World,
+                    Valid = true,
                 };
                 
                 previousPerDraw->PreviousWorldViewProjection = renderModelPreviousFrameInfo.WorldViewProjection;
@@ -180,12 +198,15 @@ namespace Stride.Rendering
         internal class RenderViewData
         {
             public Matrix PreviousViewProjection;
+            public bool HasPrevious;
             public int UsageCounter;
         }
 
         internal struct StaticObjectInfo
         {
             public Matrix World;
+            // Whether World holds a previous frame's transform (not a new object's)
+            public bool Valid;
         }
 
         internal struct PreviousObjectViewInfo

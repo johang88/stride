@@ -1,11 +1,13 @@
 ﻿// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Silicon Studio Corp. (https://www.siliconstudio.co.jp)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
-// Computes screen space velocity for meshes
+// Computes screen space velocity for meshes, from the final world position (after skinning, instancing and any
+// displacement): the object's motion since the previous frame and the previous view projection
 shader MeshVelocity : PositionStream4, TransformationBase, ScreenPositionBase, VelocityStream
 {
     cbuffer PerDraw
     {
+        // Current world space to the previous frame's clip space
         float4x4 PreviousWorldViewProjection;
     }
 
@@ -15,9 +17,8 @@ shader MeshVelocity : PositionStream4, TransformationBase, ScreenPositionBase, V
     stage override void VSMain()
     {
         base.VSMain();
-        
-        // Calculate previous world position
-        streams.PreviousPosition = mul(streams.Position, PreviousWorldViewProjection);
+
+        streams.PreviousPosition = mul(float4(streams.PositionWS.xyz / streams.PositionWS.w, 1.0), PreviousWorldViewProjection);
     }
     
     stage override void PSMain()
