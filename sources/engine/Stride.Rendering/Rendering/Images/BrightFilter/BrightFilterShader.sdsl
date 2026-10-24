@@ -17,6 +17,8 @@ namespace Stride.Rendering.Images
 
         stage float BrightPassSteepness = 2.0f;
         stage float ThresholdOffset = 0.2f;
+        // The exposure the image will be tone mapped with: the threshold applies to exposed luminance
+        stage float BrightPassExposure = 1.0f;
 
         stage override float4 Shading()
         {
@@ -27,7 +29,7 @@ namespace Stride.Rendering.Images
             color = HalfPrecisionUtils.ClampToSafeRange(color);
 
             // Calculate relative luminance
-            float luminance = LuminanceUtils.Luma(color);
+            float luminance = LuminanceUtils.Luma(color) * BrightPassExposure;
 
             // method 1
             // Apply threshold

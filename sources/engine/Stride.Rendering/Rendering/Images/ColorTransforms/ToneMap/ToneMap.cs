@@ -108,6 +108,18 @@ namespace Stride.Rendering.Images
         public float Exposure { get; set; }
 
         /// <summary>
+        /// The linear exposure the image is tone mapped with: 2^<see cref="Exposure"/>, or the key value over the average
+        /// luminance with <see cref="AutoExposure"/>.
+        /// </summary>
+        public float LinearExposure(float averageLuminance)
+        {
+            if (!AutoExposure)
+                return MathF.Pow(2.0f, Exposure);
+            var luminance = previousLuminance ?? averageLuminance;
+            return Math.Max(KeyValue / Math.Max(luminance, 1e-4f), 1e-4f);
+        }
+
+        /// <summary>
         /// Gets or sets a value indicating whether to update the luminance progressively based on the current time.
         /// </summary>
         /// <value><c>true</c> the luminance is updated progressively based on the current time; otherwise, <c>false</c>.</value>

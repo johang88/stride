@@ -458,7 +458,10 @@ namespace Stride.Rendering.Images
             if (BrightFilter.Enabled && (Bloom.Enabled || LightStreak.Enabled || LensFlare.Enabled))
             {
                 Texture brightTexture = NewScopedRenderTarget2D(currentInput.Width, currentInput.Height, currentInput.Format, 1);
-                // Bright filter pass
+                // Bright filter pass, on the intensities as the tone mapping will expose them (else a dim scene blooms
+                // nowhere and a bright one everywhere)
+                var exposureMap = colorTransformsGroup.Enabled ? colorTransformsGroup.Transforms.Get<ToneMap>() : null;
+                BrightFilter.Exposure = exposureMap is { Enabled: true } ? exposureMap.LinearExposure(luminanceEffect?.AverageLuminance ?? 1.0f) : 1.0f;
 
                 BrightFilter.SetInput(currentInput);
                 BrightFilter.SetOutput(brightTexture);

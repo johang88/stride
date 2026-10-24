@@ -104,6 +104,13 @@ public class BrightFilter : ImageEffect
     [DataMember(20)]
     public Color3 Color { get; set; }
 
+    /// <summary>
+    ///   Gets or sets the linear exposure the image is tone mapped with afterwards, so the <see cref="Threshold"/> applies
+    ///   to exposed intensities (the post-processing effects set it from their tone mapping).
+    /// </summary>
+    [DataMemberIgnore]
+    public float Exposure { get; set; } = 1.0f;
+
 
     protected override void InitializeCore()
     {
@@ -129,6 +136,7 @@ public class BrightFilter : ImageEffect
     
         brightPassFilter.Parameters.Set(BrightFilterShaderKeys.ThresholdOffset, Threshold);
         brightPassFilter.Parameters.Set(BrightFilterShaderKeys.BrightPassSteepness, Steepness);
+        brightPassFilter.Parameters.Set(BrightFilterShaderKeys.BrightPassExposure, Exposure);
         brightPassFilter.Parameters.Set(BrightFilterShaderKeys.ColorModulator, Color.ToColorSpace(GraphicsDevice.ColorSpace));
         
         brightPassFilter.SetInput(input);
