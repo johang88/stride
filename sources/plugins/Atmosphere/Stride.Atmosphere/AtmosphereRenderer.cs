@@ -93,6 +93,8 @@ public sealed class AtmosphereRenderer : RendererCoreBase, IAtmosphereRenderer
     private readonly CloudShadowReceiverExtension cloudShadowExtension = new();
     private readonly CloudShadows cloudShadows = new();
     private SkyRenderer sky;
+    private readonly SkyExposure exposure = new();
+    private bool exposureMeasured;
     private CloudRenderer clouds;
     private ImageEffectShader composite;
     private LightDirectionalShadowMapRenderer shadowMapRenderer;
@@ -190,6 +192,45 @@ public sealed class AtmosphereRenderer : RendererCoreBase, IAtmosphereRenderer
     private int cloudDebug;
 
     /// <summary>
+    /// How much of the fall of the light on the ground the exposure makes up for (0: none, a fixed exposure; 1: all, dusk as
+    /// bright as noon): the eye adapting to dusk, overcast skies and the night. See <see cref="ExposureCompensation"/>.
+    /// </summary>
+    [DataMember(95)]
+    [DefaultValue(0.7f)]
+    [DataMemberRange(0, 1, 0.01, 0.1, 2)]
+    public float ExposureAdaptation { get; set; } = 0.7f;
+
+    /// <summary>
+    /// Most the exposure is raised, in EV (how dark the night may get stays a choice).
+    /// </summary>
+    [DataMember(96)]
+    [DefaultValue(4.0f)]
+    [DataMemberRange(0, 16, 0.1, 1, 1)]
+    public float ExposureMaxCompensation { get; set; } = 4.0f;
+
+    /// <summary>
+    /// Most the exposure is raised at night, in EV (the night stays darker than dusk).
+    /// </summary>
+    [DataMember(97)]
+    [DefaultValue(2.5f)]
+    [DataMemberRange(0, 16, 0.1, 1, 1)]
+    public float ExposureNightCompensation { get; set; } = 2.5f;
+
+    /// <summary>
+    /// Exposure to add (EV) for the light of the sky now, adapted over a second or two: the sun and the sky on the ground at
+    /// the camera (through the clouds), measured on the GPU, against a clear noon. Zero under a clear sky by day. The
+    /// renderer doesn't apply it: the game adds it to its tone mapping's exposure.
+    /// </summary>
+    [DataMemberIgnore]
+    public float ExposureCompensation { get; private set; }
+
+    /// <summary>
+    /// Luminance of the light on the ground at the camera (sky + key light, the last measurement).
+    /// </summary>
+    [DataMemberIgnore]
+    public float GroundIlluminance { get; private set; }
+
+    /// <summary>
     /// The volumetric fog.
     /// </summary>
     [DataMember(100)]
@@ -203,6 +244,7 @@ public sealed class AtmosphereRenderer : RendererCoreBase, IAtmosphereRenderer
         sky.Initialize(Context);
         clouds = new CloudRenderer { Debug = cloudDebug };
         clouds.Initialize(Context);
+        exposure.Initialize(Context);
         composite = ToLoadAndUnload(new ImageEffectShader("AtmosphereCompositeEffect"));
         // Background * transmittance (alpha) + light (color)
         var blend = BlendStates.Opaque;
@@ -238,6 +280,7 @@ public sealed class AtmosphereRenderer : RendererCoreBase, IAtmosphereRenderer
             Context.Services.RemoveService<CloudShadows>();
         sky?.Dispose();
         clouds?.Dispose();
+        exposure.Dispose();
         Fog?.Dispose();
         base.Destroy();
     }
@@ -362,6 +405,7 @@ public sealed class AtmosphereRenderer : RendererCoreBase, IAtmosphereRenderer
                     }
                     using (context.QueryManager.BeginProfile(Color.SkyBlue, SkyCaptureKey))
                         sky.Capture(context, atmosphere, haze, frameEye, sceneClouds != null ? setCloudPassParameters : null);
+                    UpdateExposure(context);
                 }
 
                 Matrix.Invert(ref view.ViewProjection, out var inverseViewProjection);
@@ -372,6 +416,44 @@ public sealed class AtmosphereRenderer : RendererCoreBase, IAtmosphereRenderer
 
         Fog?.DrawVolume(context);
     }
+
+    /// <summary>
+    /// Measures the light on the ground (read back a few frames later) and adapts the exposure compensation towards it.
+    /// </summary>
+    private void UpdateExposure(RenderDrawContext context)
+    {
+        if (sky.SkyCube == null)
+            return;
+        // (every eighth frame: the light changes slowly, and a dispatch of one thread stalls the GPU around it)
+        if (context.RenderContext.RenderSystem.FrameCounter % 8 == 0 || !exposureMeasured)
+        {
+            var (lightDirection, lightIlluminance) = CloudRenderer.CloudLight(atmosphere);
+            exposure.Measure(context, sky.Harmonics, cloudShadows, frameEye, lightDirection, Luminance(lightIlluminance));
+        }
+
+        var measured = exposure.Illuminance;
+        if (float.IsNaN(measured.X))
+            return;
+        GroundIlluminance = measured.X + measured.Y;
+        // A clear noon: the sun overhead (its light above the atmosphere) and the sky's share
+        var reference = Luminance(atmosphere.SunIlluminance) * 1.15f;
+        var fall = MathF.Log2(Math.Max(reference, 1e-6f) / Math.Max(GroundIlluminance, reference * 1e-7f));
+        // (the variations of a clear day aren't made up for)
+        const float Tolerance = 0.5f;
+        var maximum = MathUtil.Lerp(ExposureMaxCompensation, Math.Min(ExposureNightCompensation, ExposureMaxCompensation), Math.Clamp(atmosphere.Night, 0, 1));
+        var target = Math.Clamp((fall - Tolerance) * ExposureAdaptation, 0.0f, maximum);
+        if (!exposureMeasured)
+        {
+            ExposureCompensation = target;
+            exposureMeasured = true;
+            return;
+        }
+        // About a second and a half to adapt
+        var elapsed = (float)(context.RenderContext.Time?.Elapsed.TotalSeconds ?? 0.0);
+        ExposureCompensation += (target - ExposureCompensation) * (1.0f - MathF.Exp(-elapsed / 1.5f));
+    }
+
+    private static float Luminance(Color3 color) => 0.2126f * color.R + 0.7152f * color.G + 0.0722f * color.B;
 
     /// <inheritdoc/>
     public void Draw(RenderDrawContext context, Texture color, Texture depthStencil)

@@ -126,6 +126,8 @@ namespace Stride.Atmosphere
             const float w1 = 0.022;
             const float w2 = 0.09;
             float glow = 0.035 * exp(-angle / w1) / (6.2831853 * w1 * w1) + 0.02 * exp(-angle / w2) / (6.2831853 * w2 * w2);
+            // (faded out before the cut: an exposure raised at dusk would show its edge as a disc around the sun)
+            glow *= 1.0 - smoothstep(0.16, 0.31, angle);
             return SunDiskLuminance * solidAngle * glow;
         }
 

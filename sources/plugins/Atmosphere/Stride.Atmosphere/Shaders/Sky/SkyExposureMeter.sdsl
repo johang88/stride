@@ -1,0 +1,54 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Measures the light falling on the ground at the camera (luminance of the illuminance on a horizontal surface): the sky
+    /// (the upper hemisphere of the captured sky, clouds included) and the key light through the clouds above.
+    /// Output: [0] = (sky, key light, 0, 0). One thread.
+    /// </summary>
+    shader SkyExposureMeter : ComputeShaderBase
+    {
+        // The captured sky's harmonics and averages ([10] = radiance averaged over the upper hemisphere)
+        stage Buffer<float4> SkyExposureHarmonics;
+        stage Texture2D<float> SkyExposureCloudShadow;
+        stage RWBuffer<float4> SkyExposureOutput;
+
+        cbuffer PerDispatch
+        {
+            // xyz = direction towards the key light, w = luminance of its illuminance
+            stage float4 SkyExposureLight;
+            // xy = world XZ of the cloud shadow map's corner, z = 1 / its size, w = 1 when there is one
+            stage float4 SkyExposureShadowRegion;
+            stage float3 SkyExposureEye;
+            // World height of sea level (the cloud shadow map's plane)
+            stage float SkyExposureSeaLevel;
+        };
+
+        stage SamplerState SkyExposureSampler
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        override void Compute()
+        {
+            float3 luminanceWeights = float3(0.2126, 0.7152, 0.0722);
+            float sky = 3.14159265 * dot(max(SkyExposureHarmonics[10].rgb, 0.0), luminanceWeights);
+
+            float3 L = SkyExposureLight.xyz;
+            float transmittance = 1.0;
+            if (SkyExposureShadowRegion.w > 0.0)
+            {
+                float2 xz = SkyExposureEye.xz - L.xz / max(L.y, 0.01) * (SkyExposureEye.y - SkyExposureSeaLevel);
+                float2 uv = (xz - SkyExposureShadowRegion.xy) * SkyExposureShadowRegion.z;
+                if (all(uv > 0.0) && all(uv < 1.0))
+                    transmittance = SkyExposureCloudShadow.SampleLevel(SkyExposureSampler, uv, 0);
+            }
+            float key = SkyExposureLight.w * saturate(L.y) * transmittance;
+            SkyExposureOutput[0] = float4(sky, key, 0.0, 0.0);
+        }
+    };
+}

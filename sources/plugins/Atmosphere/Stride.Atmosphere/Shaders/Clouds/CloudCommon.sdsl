@@ -59,6 +59,10 @@ namespace Stride.Atmosphere
         stage float4 CloudHighLayer;
         // xy = 1 / cirrus tile (meters) along and across the wind, zw = wind direction (unit XZ)
         stage float4 CloudHighShape;
+        // x = contrails (0-1), y = time (seconds), z = halo strength
+        stage float4 CloudContrails;
+        // Velocity of the high wind (world XZ, m/s): contrails drift with it
+        stage float2 CloudContrailWind;
         // Wind drift (meters): xy = low layer, zw = middle layer
         stage float4 CloudWindLow;
         // xy = high layer, z = shape noise evolution, w = shear (meters of lean per meter of height, along the wind)
@@ -315,7 +319,13 @@ namespace Stride.Atmosphere
             // A second lookup at an incommensurate scale, axes swapped, varies the cells and the sheet: a field spans tens of
             // kilometres and a single tile would repeat across it as a regular lattice
             float4 large = CloudShapeNoise.SampleLevel(CloudLinearWrap, cellPosition.zxy * 0.37 + float3(0.19, 0.53, 0.71), NoiseMip(footprint, CloudMidShape.y * 0.37, 128.0));
-            float cells = saturate((shape.g * 0.6 + shape.b * 0.4 - 0.3 + (large.g - 0.5) * 0.6) * 2.4);
+            // Cloudlets of every size: where the clump field is high the coarse cells (hundreds of meters) merge into thick
+            // masses, elsewhere the fine ones break into fragments with sky between
+            float clump = smoothstep(0.35, 0.75, large.r);
+            float coarse = shape.g;
+            float fine = shape.b * 0.6 + shape.a * 0.4;
+            float cells = saturate((lerp(fine, coarse, clump) - 0.32 + (large.g - 0.5) * 0.7 + clump * 0.12) * 2.4);
+            profile *= lerp(1.0, lerp(1.0, 1.5, clump), cellular);
             float sheet = saturate(((shape.r * 0.7 + shape.g * 0.3) * 0.6 + large.r * 0.4 - 0.2) * 1.6);
             float noise = lerp(sheet, cells, cellular);
             float e = (1.0 - noise) * CloudMidShape.w * lerp(0.6, 1.0, cellular);
@@ -335,17 +345,18 @@ namespace Stride.Atmosphere
             float frayFbm = saturate((detail.a - 0.3) * 2.5);
             // (faded out once a sample spans a fair part of a cell; later for cloudlets, whose cells are their look)
             float detailFade = saturate(1.0 - footprint * CloudMidShape.z * lerp(8.0, 4.0, cellular));
-            float modifier = lerp(frayFbm, 1.0 - billowFbm, cellular) * 0.75 * saturate(1.0 - density) * detailFade;
+            // (cloudlets fray too: billows alone leave cut-out edges)
+            float modifier = lerp(frayFbm, lerp(1.0 - billowFbm, frayFbm, 0.45), cellular) * 0.75 * saturate(1.0 - density) * detailFade;
             density = saturate((density - modifier) / (1.0 - modifier));
             return pow(density, sharpness) * thickness;
         }
 
         // Optical depth towards the light through the low layer (and the middle one above it), from steps growing geometrically,
         // a sample in each placed by jitter (0-1: fixed places band the light along the contours of dense clouds)
-        float LightOpticalDepth(float3 position, float3 lightDirection, int steps, float footprint, float jitter)
+        float LightOpticalDepth(float3 position, float3 lightDirection, int steps, float footprint, float jitter, float firstStep)
         {
             float opticalDepth = 0.0;
-            float stepLength = 20.0;
+            float stepLength = firstStep;
             float distanceAlong = 0.0;
             for (int i = 0; i < steps; i++)
             {
@@ -398,16 +409,69 @@ namespace Stride.Atmosphere
 
             // Light from around: the sky above (less of it low in a cloud, under the rest of it, and deep inside), the ground below
             float h = saturate(heightFraction);
-            float occlusion = lerp(1.0, 0.4, profile);
-            float3 ambient = (ambientTop * lerp(0.45, 1.0, sqrt(h)) + ambientBottom * (1.0 - h) * 0.6) * occlusion * baseDarkening * CloudScattering.z;
+            // (the sky's light reaches a cloud's base through the rest of it: thick bases are much darker than the sky, which
+            // is what makes a deck stand out against the twilight)
+            float occlusion = lerp(1.0, 0.3, profile);
+            float3 ambient = (ambientTop * lerp(0.25, 1.0, sqrt(h)) + ambientBottom * (1.0 - h) * 0.6) * occlusion * baseDarkening * CloudScattering.z;
             return direct + ambient;
         }
 
-        /// Cirrus at its altitude, seen from below: premultiplied light (rgb) and coverage (a). footprint is the size of a
-        /// pixel there (meters), for the texture's mip.
+        /// Density of the contrails at a point of the high layer (world XZ): up to twelve aircraft cross the sky around the
+        /// world's origin, each trail laid behind its aircraft, drifting with the high wind, spreading from a thin line into a
+        /// fibrous ribbon and fading as it ages; a new aircraft takes its place each lifetime. mip: of the cirrus texture.
+        float ContrailDensity(float2 xz, float mip, float pixel)
+        {
+            const float Lifetime = 900.0;
+            const float Speed = 230.0;
+            int count = (int)ceil(CloudContrails.x * 12.0);
+            float density = 0.0;
+            [loop]
+            for (int i = 0; i < count; i++)
+            {
+                float cycleTime = CloudContrails.y / Lifetime + NoiseRandom3(int3(i, 17, 3), 101u).x;
+                float cycle = floor(cycleTime);
+                float age = (cycleTime - cycle) * Lifetime;
+                float3 r = NoiseRandom3(int3(i, (int)cycle, 7), 211u);
+                float angle = r.x * 6.2831853;
+                float2 along = float2(cos(angle), sin(angle));
+                float2 across = float2(-along.y, along.x);
+                // Where it passes closest to the origin, and when (seconds into its lifetime)
+                float2 closest = across * (r.y - 0.5) * 36000.0;
+                float passing = r.z * Lifetime * 0.3;
+
+                // The trail point under xz: it was laid at s / Speed + passing and has drifted with the wind since
+                float2 q = xz;
+                float s = dot(q - closest, along);
+                float laid = age - passing - s / Speed;
+                q = xz - CloudContrailWind * max(laid, 0.0);
+                s = dot(q - closest, along);
+                laid = age - passing - s / Speed;
+                // (behind the aircraft, after it came into the sky, and not yet gone)
+                if (laid < 0.0 || s < -passing * Speed || laid > Lifetime)
+                    continue;
+                float aged = laid / Lifetime;
+
+                // (thin for a while, then spreading faster)
+                float width = 30.0 + 950.0 * aged * sqrt(aged);
+                // Spreading trails meander a little
+                float d = dot(q - closest, across) + sin(s * 0.00021 + i * 1.7) * width * 0.35 * aged;
+                // (no thinner than a pixel, its density spread over it: a fresh trail is far thinner than a pixel up there)
+                float seen = sqrt(width * width + pixel * pixel);
+                float profile = exp(-(d * d) / (seen * seen)) * (width / seen);
+                // Thin and dense when fresh, wide and faint when old; it condenses a little behind the aircraft
+                float peak = sqrt(60.0 / width) * 0.5 * smoothstep(0.0, 6.0, laid) * (1.0 - smoothstep(0.55, 1.0, aged));
+                // Breaks along its length, and fibres along it as it spreads
+                float breaks = smoothstep(0.22, 0.55, CloudCirrusTexture.SampleLevel(CloudLinearWrap, float2(s * (1.0 / 18000.0) + i * 0.37, 0.31 + i * 0.13), 3.0).z);
+                float fibres = CloudCirrusTexture.SampleLevel(CloudLinearWrap, float2(s * (1.0 / 6000.0), d / (width * 3.0) + i * 0.29), mip).w;
+                density += profile * peak * lerp(1.0, breaks, 0.4 + 0.6 * aged) * lerp(1.0, 0.35 + fibres, aged);
+            }
+            return density * saturate(CloudContrails.x * 4.0);
+        }
+
+        /// Cirrus (and contrails) at its altitude, seen from below: premultiplied light (rgb) and coverage (a).
         float4 Cirrus(float3 origin, float3 direction, float3 worldCamera, float pixelAngle)
         {
-            if (CloudHighLayer.y <= 0.0)
+            if (CloudHighLayer.y <= 0.0 && CloudContrails.x <= 0.0)
                 return float4(0.0, 0.0, 0.0, 0.0);
             float t = RayAltitude(origin, direction, CloudHighLayer.x, true);
             if (t <= 0.0)
@@ -416,25 +480,36 @@ namespace Stride.Atmosphere
             float3 up = normalize(position - CloudPlanet.xyz);
             float slant = 1.0 / max(dot(direction, up), 0.04);
 
-            float2 p = position.xz + CloudWindHigh.xy;
-            float4 weather = SampleWeather(p);
-            float footprint = Footprint(weather.w, CloudHighLayer.y, 2.0);
-            if (footprint <= 0.0)
-                return float4(0.0, 0.0, 0.0, 0.0);
-
-            // Streaks along the wind; mip from the pixel's footprint on the layer (stretched at grazing angles)
-            float2 wind = CloudHighShape.zw;
-            float2 uv = float2(dot(p, wind) * CloudHighShape.x, dot(p, float2(-wind.y, wind.x)) * CloudHighShape.y);
+            // Mip from the pixel's footprint on the layer (stretched at grazing angles)
             float pixel = t * pixelAngle * sqrt(slant);
             float textureSize = 1024.0;
             float mip = log2(max(pixel * CloudHighShape.y * textureSize, 1.0));
-            float4 cirrus = CloudCirrusTexture.SampleLevel(CloudLinearWrap, uv, mip);
 
-            float type = saturate(CloudHighLayer.z + (weather.y - 0.5) * 0.4);
-            // Veil (cirrostratus): smooth and milky; streaks (cirrus): fibres in bent bands
-            float veil = (0.15 + 0.6 * cirrus.z) * lerp(0.6, 1.0, cirrus.y);
-            float streaks = cirrus.x * pow(cirrus.y, 0.8) * 1.8;
-            float density = footprint * lerp(veil, streaks, type);
+            float density = 0.0;
+            float halo = 0.0;
+            if (CloudHighLayer.y > 0.0)
+            {
+                float2 p = position.xz + CloudWindHigh.xy;
+                float4 weather = SampleWeather(p);
+                float footprint = Footprint(weather.w, CloudHighLayer.y, 2.0);
+                if (footprint > 0.0)
+                {
+                    // Streaks along the wind
+                    float2 wind = CloudHighShape.zw;
+                    float2 uv = float2(dot(p, wind) * CloudHighShape.x, dot(p, float2(-wind.y, wind.x)) * CloudHighShape.y);
+                    float4 cirrus = CloudCirrusTexture.SampleLevel(CloudLinearWrap, uv, mip);
+                    float type = saturate(CloudHighLayer.z + (weather.y - 0.5) * 0.4);
+                    // Veil (cirrostratus): milky, with long straight fibres along the wind; streaks (cirrus): fibres in bent bands
+                    // (the threads come and go with the patches: evenly everywhere they read as speed lines)
+                    float threads = smoothstep(0.35, 0.8, cirrus.z) * 0.45;
+                    float veil = (0.3 + 0.45 * cirrus.z) * lerp(1.0 - threads, 1.0, cirrus.w);
+                    float streaks = cirrus.x * pow(cirrus.y, 0.8) * 1.8;
+                    density = footprint * lerp(veil, streaks, type);
+                    halo = (1.0 - type) * footprint * CloudContrails.z;
+                }
+            }
+            if (CloudContrails.x > 0.0)
+                density += ContrailDensity(position.xz, mip, pixel);
             if (density <= 0.001)
                 return float4(0.0, 0.0, 0.0, 0.0);
 
@@ -442,7 +517,7 @@ namespace Stride.Atmosphere
             float3 light = LightAt(position, worldCamera);
             float cosTheta = dot(direction, CloudLightDirection);
             float3 ambientTop = CloudAmbient[0].rgb;
-            float3 radiance = light * IcePhase(cosTheta, (1.0 - type) * footprint) + ambientTop * 0.8 * CloudScattering.z;
+            float3 radiance = light * IcePhase(cosTheta, halo) + ambientTop * 0.8 * CloudScattering.z;
             return float4(radiance * alpha, alpha);
         }
 
@@ -484,7 +559,8 @@ namespace Stride.Atmosphere
                 if (density > 0.0)
                 {
                     float extinction = density * extinctionScale;
-                    float lightDepth = LightOpticalDepth(position, CloudLightDirection, lightSteps, footprint, frac(jitter + 0.5));
+                    // (the middle layer's cloudlets are wide and the light at dusk crosses them: a longer reach)
+                    float lightDepth = LightOpticalDepth(position, CloudLightDirection, lightSteps, footprint, frac(jitter + 0.5), low ? 20.0 : 60.0);
                     float baseDarkening = low ? lerp(1.0, 0.4, wet * saturate(1.0 - heightFraction * 1.5)) : 1.0;
                     float depth = saturate(density * 0.75 + profile * 0.35);
                     float3 source = CloudSampleRadiance(LightAt(position, worldCamera), lightDepth, cosTheta, depth, heightFraction, ambientTop, ambientBottom, baseDarkening);
@@ -592,7 +668,7 @@ namespace Stride.Atmosphere
             }
 
             // High layer, behind
-            if (CloudHighLayer.y > 0.0 && transmittance > 0.01)
+            if ((CloudHighLayer.y > 0.0 || CloudContrails.x > 0.0) && transmittance > 0.01)
             {
                 float4 cirrus = Cirrus(origin, direction, worldCamera, pixelAngle);
                 if (cirrus.a > 0.0)

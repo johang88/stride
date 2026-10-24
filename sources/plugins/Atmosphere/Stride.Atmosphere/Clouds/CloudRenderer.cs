@@ -170,6 +170,12 @@ internal sealed class CloudRenderer : RendererCoreBase
         parameters.Set(CloudCommonKeys.CloudHighLayer, new Vector4(high.Altitude, Math.Clamp(weather.HighCloudCoverage, 0, 1), Math.Clamp(weather.HighCloudType, 0, 1), high.Opacity));
         var direction = WindDirection(weather);
         parameters.Set(CloudCommonKeys.CloudHighShape, new Vector4(1.0f / Math.Max(high.StreakLength, 1), 1.0f / Math.Max(high.StreakWidth, 1), direction.X, direction.Y));
+        // Contrails: amount, time (wrapped at a day: a whole number of their 15 minute lifetimes), halo; they drift with the
+        // high wind
+        var contrailTime = double.IsNaN(lastTime) ? 0.0f : (float)(lastTime % 86400.0);
+        parameters.Set(CloudCommonKeys.CloudContrails, new Vector4(Math.Clamp(weather.Contrails, 0, 1), contrailTime, Math.Max(high.Halo, 0), 0));
+        var highWind = direction * (weather.WindSpeed * high.WindFactor);
+        parameters.Set(CloudCommonKeys.CloudContrailWind, new Vector2(highWind.X, highWind.Y));
         parameters.Set(CloudCommonKeys.CloudWindLow, new Vector4(-windLow.X, -windLow.Y, -windMid.X, -windMid.Y));
         parameters.Set(CloudCommonKeys.CloudWindHigh, new Vector4(-windHigh.X, -windHigh.Y, evolution * 600.0f, low.WindShear));
         parameters.Set(CloudCommonKeys.CloudWeather, new Vector4(1.0f / Math.Max(clouds.WeatherScale, 1), Math.Clamp(low.TypeVariation, 0, 1), Math.Clamp(weather.Precipitation, 0, 1), 1));

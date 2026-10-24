@@ -5,7 +5,8 @@ namespace Stride.Atmosphere
 {
     /// <summary>
     /// Generates the tiling cirrus texture (u along the wind, v across): x = streaks (bent, hooked bands of ice breaking into
-    /// strands, in patches), y = fibres (fine hair along the streaks), z = broad patches (the veil), w = 1. Mip-mapped
+    /// strands, in patches), y = fibres (fine hair along the streaks), z = broad patches (the veil), w = long straight fibres
+    /// along the wind (the veil's threads). Mip-mapped
     /// afterwards, so distant cirrus filters into a soft veil instead of aliasing.
     /// </summary>
     shader CloudCirrusGenerate : ComputeShaderBase, AtmosphereNoise
@@ -56,7 +57,11 @@ namespace Stride.Atmosphere
             float body = smoothstep(0.42, 0.72, patches * 0.45 + bands * 0.55);
             float streaks = body * smoothstep(0.35, 0.7, strands * 0.6 + body * 0.4);
             float hair = saturate((fibres - 0.3) * 2.2);
-            CloudCirrusOutput[texel] = float4(streaks, hair, patches, 1.0);
+            // Long straight fibres along the wind, barely wavering (the veil of cirrostratus fibratus)
+            float waver = (StretchedFbm(uv, int2(2, 3), 2, 208u) - 0.5) * 0.015;
+            float straight = StretchedFbm(frac(uv + float2(0.0, waver)), int2(4, 64), 3, 209u);
+            float threads = saturate((straight - 0.35) * 2.2);
+            CloudCirrusOutput[texel] = float4(streaks, hair, patches, threads);
         }
     };
 }

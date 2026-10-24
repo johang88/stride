@@ -257,9 +257,9 @@ public sealed class MidCloudLayer
     public float Thickness { get; set; } = 550.0f;
 
     [DataMember(30)]
-    [DefaultValue(0.02f)]
+    [DefaultValue(0.035f)]
     [DataMemberRange(0.001, 1, 0.001, 0.01, 4)]
-    public float Density { get; set; } = 0.02f;
+    public float Density { get; set; } = 0.035f;
 
     /// <summary>
     /// Size of the cloudlets' noise (meters).
@@ -330,4 +330,12 @@ public sealed class HighCloudLayer
     [DefaultValue(2.5f)]
     [DataMemberRange(0, 10, 0.05, 0.5, 2)]
     public float WindFactor { get; set; } = 2.5f;
+
+    /// <summary>
+    /// Strength of the 22 degree halo around the sun (and moon) in cirrostratus.
+    /// </summary>
+    [DataMember(60)]
+    [DefaultValue(0.3f)]
+    [DataMemberRange(0, 2, 0.01, 0.1, 2)]
+    public float Halo { get; set; } = 0.3f;
 }
