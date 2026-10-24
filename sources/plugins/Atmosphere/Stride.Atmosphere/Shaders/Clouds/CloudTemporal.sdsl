@@ -4,10 +4,12 @@
 namespace Stride.Atmosphere
 {
     /// <summary>
-    /// Temporal accumulation of the reduced resolution clouds. The clouds are far away: the history is reprojected by view
-    /// direction only. One pixel of each 2x2 block was marched this frame (CloudInterleave); it is blended into its
-    /// history, clamped to the current neighbourhood to follow the drifting clouds. The others keep their history, or take
-    /// the blocks' estimate where they have none. Texels the raymarch skipped (no sky in reach) are missing (alpha -1) in
+    /// Temporal accumulation of the reduced resolution clouds. The history is reprojected through a point on the low clouds
+    /// (a sphere a little above their base, the farthest distance at the horizon) moved back by the wind since: the clouds
+    /// drift, and pixels marched on different frames would otherwise trail them by different amounts (stripes in fast
+    /// storms). One pixel of each 2x2 block was marched this frame (CloudInterleave); it is blended into its
+    /// history. The others keep their history, or take the blocks' estimate where they have none. Histories are clamped
+    /// to the current neighbourhood to follow the drifting clouds. Texels the raymarch skipped (no sky in reach) are missing (alpha -1) in
     /// the current clouds and the history alike, and left out of the neighbourhood and the filters: taken as clear sky
     /// they would pull the clouds around silhouettes towards it (a bright outline around swaying leaves).
     /// Texture0 = current clouds (a texel per 2x2 block), Texture1 = history.
@@ -17,6 +19,11 @@ namespace Stride.Atmosphere
         stage float4x4 CloudInvViewProjection;
         stage float4x4 CloudPreviousViewProjection;
         stage float3 CloudEye;
+        // How far the wind moved the clouds since the history, the sphere (planet radius, world height) and the farthest
+        // distance the history is reprojected through
+        stage float3 CloudWindDelta;
+        stage float2 CloudReprojectSphere;
+        stage float CloudReprojectDistance;
         // Texel of the current (interleaved) clouds, the cloud buffer's resolution and this frame's pixel in each block
         stage float2 CloudTexel;
         stage float2 CloudResolution;
@@ -61,6 +68,7 @@ namespace Stride.Atmosphere
             float4 minimum = float4(1e5, 1e5, 1e5, 1e5);
             float4 maximum = float4(-1e5, -1e5, -1e5, -1e5);
             float4 sum = float4(0.0, 0.0, 0.0, 0.0);
+            float4 sumSquares = float4(0.0, 0.0, 0.0, 0.0);
             float count = 0.0;
             float4 filtered = float4(0.0, 0.0, 0.0, 0.0);
             float filteredWeight = 0.0;
@@ -75,6 +83,7 @@ namespace Stride.Atmosphere
                         minimum = min(minimum, c);
                         maximum = max(maximum, c);
                         sum += c;
+                        sumSquares += c * c;
                         count += 1.0;
                         float2 d = tap - filterOrigin;
                         if (all(d >= 0.0) && all(d <= 1.0))
@@ -92,7 +101,16 @@ namespace Stride.Atmosphere
             // history between their samples, and resampled bilinearly every frame while the view turns they would blur away
             float4 farPoint = mul(float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0), CloudInvViewProjection);
             float3 direction = normalize(farPoint.xyz / farPoint.w - CloudEye);
-            float4 previousClip = mul(float4(CloudEye + direction * 100000.0, 1.0), CloudPreviousViewProjection);
+            // (the planet's center is under the eye; in a form without cancellation: the squares of planet sized distances
+            // lose everything in single precision)
+            float radius = CloudReprojectSphere.x;
+            float above = CloudReprojectSphere.y - CloudEye.y;
+            float along = (radius + CloudEye.y) * direction.y;
+            float below = above * (2.0 * radius + CloudEye.y + CloudReprojectSphere.y);
+            float discriminant = along * along + below;
+            float cloudDistance = above > 0.0 && discriminant > 0.0 ? below / (along + sqrt(discriminant)) : CloudReprojectDistance;
+            cloudDistance = clamp(cloudDistance, 100.0, CloudReprojectDistance);
+            float4 previousClip = mul(float4(CloudEye + direction * cloudDistance - CloudWindDelta, 1.0), CloudPreviousViewProjection);
             float2 previousUv = float2(previousClip.x / previousClip.w * 0.5 + 0.5, 0.5 - previousClip.y / previousClip.w * 0.5);
             bool haveHistory = CloudHistoryValid > 0.5 && previousClip.w > 0.0 && all(previousUv >= 0.0) && all(previousUv <= 1.0);
             float4 history = float4(0.0, 0.0, 0.0, 0.0);
@@ -135,14 +153,25 @@ namespace Stride.Atmosphere
                     history = clamp(sharp, innerMinimum, innerMaximum);
             }
 
+            // Kept within the current neighbourhood (the reprojection is only right for the low clouds at the reference height):
+            // its mean and spread rather than its extremes, which are noisy samples (a history clamped to them speckles
+            // while the clouds change), within the range a little widened (a still view doesn't sparkle)
+            if (haveHistory && count > 0.0)
+            {
+                float4 mean = sum / count;
+                float4 deviation = sqrt(max(sumSquares / count - mean * mean, 0.0));
+                float4 extent = (maximum - minimum) * 0.5;
+                float4 low = max(mean - deviation * 2.0, minimum - extent);
+                float4 high = min(mean + deviation * 2.0, maximum + extent);
+                history = clamp(history, low, high);
+            }
+
             if (marched)
             {
                 if (current.a < 0.0)
                     return missing;
                 if (!haveHistory)
                     return current;
-                float4 extent = (maximum - minimum) * 0.5;
-                history = clamp(history, minimum - extent, maximum + extent);
                 // (a light weight: at the thin edges of small clouds one sample lands in or out of the cloud, and a heavy
                 // weight would make the edges sparkle in a still view)
                 return lerp(history, current, CloudBlend);

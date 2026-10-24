@@ -157,7 +157,7 @@ public sealed class WeatherState
         WeatherPreset.Towering => new() { CloudCoverage = 0.42f, CloudType = 0.88f, MidCloudCoverage = 0.15f, HighCloudCoverage = 0.45f, HighCloudType = 0.6f, WindSpeed = 12.0f, Haze = 1.3f },
         WeatherPreset.Mackerel => new() { CloudCoverage = 0.1f, CloudType = 0.35f, MidCloudCoverage = 0.7f, MidCloudType = 1.0f, HighCloudCoverage = 0.4f, HighCloudType = 0.9f, WindSpeed = 14.0f },
         WeatherPreset.Overcast => new() { CloudCoverage = 0.95f, CloudType = 0.18f, MidCloudCoverage = 0.8f, MidCloudType = 0.1f, HighCloudCoverage = 0.0f, WindSpeed = 9.0f, Haze = 1.8f, FogDensity = 1.5f },
-        WeatherPreset.Storm => new() { CloudCoverage = 0.88f, CloudType = 1.0f, MidCloudCoverage = 0.6f, MidCloudType = 0.2f, HighCloudCoverage = 0.2f, HighCloudType = 0.3f, Precipitation = 1.0f, WindSpeed = 18.0f, Haze = 2.5f, FogDensity = 2.0f },
+        WeatherPreset.Storm => new() { CloudCoverage = 0.97f, CloudType = 0.8f, MidCloudCoverage = 0.95f, MidCloudType = 0.0f, HighCloudCoverage = 0.2f, HighCloudType = 0.3f, Precipitation = 1.0f, WindSpeed = 18.0f, Haze = 2.5f, FogDensity = 2.0f },
         WeatherPreset.Foggy => new() { CloudCoverage = 0.75f, CloudType = 0.05f, MidCloudCoverage = 0.4f, MidCloudType = 0.0f, HighCloudCoverage = 0.0f, WindSpeed = 3.0f, Haze = 3.0f, FogDensity = 4.0f },
         _ => new(),
     };

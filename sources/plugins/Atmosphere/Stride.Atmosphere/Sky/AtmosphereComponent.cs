@@ -87,9 +87,16 @@ public sealed class AtmosphereComponent : ActivableEntityComponent
     /// Moonlight relative to sunlight (the real moon is about 1/400000 of the sun: this is how bright the night is).
     /// </summary>
     [DataMember(90)]
-    [DefaultValue(0.03f)]
+    [DefaultValue(0.06f)]
     [DataMemberRange(0, 1, 0.001, 0.01, 4)]
-    public float MoonBrightness { get; set; } = 0.03f;
+    public float MoonBrightness { get; set; } = 0.06f;
+
+    /// <summary>
+    /// Tint of the moonlight (its brightness is kept): moonlit nights look blue to the eye, though moonlight is reddish
+    /// sunlight. White for physical moonlight.
+    /// </summary>
+    [DataMember(95)]
+    public Color3 MoonColor { get; set; } = new Color3(0.55f, 0.72f, 1.0f);
 
     /// <summary>
     /// Apparent diameter of the moon disk, degrees.

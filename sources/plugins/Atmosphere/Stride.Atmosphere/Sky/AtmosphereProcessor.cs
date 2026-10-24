@@ -108,7 +108,9 @@ public sealed class AtmosphereProcessor : EntityProcessor<AtmosphereComponent, A
             render.MoonDirection = timeOfDay.ComputeMoonDirection();
             // Lit fraction of the disk
             var lit = 0.5f * (1.0f - MathF.Cos(timeOfDay.MoonPhase * 2.0f * MathF.PI));
-            render.MoonIlluminance = sunIlluminance * (active.MoonBrightness * lit);
+            var moonTint = (Vector3)active.MoonColor;
+            var tintLuminance = Math.Max(Vector3.Dot(moonTint, new Vector3(0.2126f, 0.7152f, 0.0722f)), 1e-4f);
+            render.MoonIlluminance = (Color3)((Vector3)sunIlluminance * moonTint * (active.MoonBrightness * lit / tintLuminance));
             render.StarRotation = timeOfDay.ComputeStarRotation();
         }
         else

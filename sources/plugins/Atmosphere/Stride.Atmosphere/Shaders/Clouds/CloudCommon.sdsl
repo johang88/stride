@@ -333,23 +333,23 @@ namespace Stride.Atmosphere
             float4 detail = CloudDetailNoise.SampleLevel(CloudLinearWrap, p * CloudMidShape.z, NoiseMip(footprint, CloudMidShape.z, 64.0));
             float billowFbm = saturate((detail.r * 0.5 + detail.g * 0.3 + detail.b * 0.2 - 0.28) * 2.0);
             float frayFbm = saturate((detail.a - 0.3) * 2.5);
-            // (faded out once a sample spans a fair part of a cell)
-            float detailFade = saturate(1.0 - footprint * CloudMidShape.z * 8.0);
+            // (faded out once a sample spans a fair part of a cell; later for cloudlets, whose cells are their look)
+            float detailFade = saturate(1.0 - footprint * CloudMidShape.z * lerp(8.0, 4.0, cellular));
             float modifier = lerp(frayFbm, 1.0 - billowFbm, cellular) * 0.75 * saturate(1.0 - density) * detailFade;
             density = saturate((density - modifier) / (1.0 - modifier));
             return pow(density, sharpness) * thickness;
         }
 
-        // Optical depth towards the light through the low layer (and the middle one above it), from steps growing geometrically
-        float LightOpticalDepth(float3 position, float3 lightDirection, int steps, float footprint)
+        // Optical depth towards the light through the low layer (and the middle one above it), from steps growing geometrically,
+        // a sample in each placed by jitter (0-1: fixed places band the light along the contours of dense clouds)
+        float LightOpticalDepth(float3 position, float3 lightDirection, int steps, float footprint, float jitter)
         {
             float opticalDepth = 0.0;
             float stepLength = 20.0;
             float distanceAlong = 0.0;
             for (int i = 0; i < steps; i++)
             {
-                distanceAlong += stepLength * 0.5;
-                float3 samplePosition = position + lightDirection * distanceAlong;
+                float3 samplePosition = position + lightDirection * (distanceAlong + stepLength * jitter);
                 float altitude = CloudAltitude(samplePosition);
                 float heightFraction;
                 float profile;
@@ -358,7 +358,7 @@ namespace Stride.Atmosphere
                 float density = LowDensity(samplePosition, altitude, sampleFootprint, i < 2, heightFraction, profile) * CloudLowShape.x;
                 density += MidDensity(samplePosition, altitude, sampleFootprint, false, heightFraction, profile) * CloudMidShape.x;
                 opticalDepth += density * stepLength;
-                distanceAlong += stepLength * 0.5;
+                distanceAlong += stepLength;
                 stepLength *= 2.2;
             }
             return opticalDepth;
@@ -469,7 +469,10 @@ namespace Stride.Atmosphere
             {
                 if (t > tEnd || transmittance < 0.01)
                     break;
-                dt = clamp(t * stepScale, minStep, maxStep);
+                // Each step a random length around the distance's (a golden ratio sequence from the pixel's jitter): with
+                // steps in proportion to the distance, every ray would sample the same altitudes, horizontal slices through
+                // the clouds that no jitter of the start averages away (stripes)
+                dt = clamp(t * stepScale, minStep, maxStep) * (0.5 + frac(jitter * 7.31 + i * 0.618034));
                 float3 position = origin + direction * t;
                 float altitude = CloudAltitude(position);
                 // What a sample covers: the noises blur where a step (or a pixel) spans several of their texels
@@ -481,8 +484,8 @@ namespace Stride.Atmosphere
                 if (density > 0.0)
                 {
                     float extinction = density * extinctionScale;
-                    float lightDepth = LightOpticalDepth(position, CloudLightDirection, lightSteps, footprint);
-                    float baseDarkening = low ? lerp(1.0, 0.55, wet * saturate(1.0 - heightFraction * 2.0)) : 1.0;
+                    float lightDepth = LightOpticalDepth(position, CloudLightDirection, lightSteps, footprint, frac(jitter + 0.5));
+                    float baseDarkening = low ? lerp(1.0, 0.4, wet * saturate(1.0 - heightFraction * 1.5)) : 1.0;
                     float depth = saturate(density * 0.75 + profile * 0.35);
                     float3 source = CloudSampleRadiance(LightAt(position, worldCamera), lightDepth, cosTheta, depth, heightFraction, ambientTop, ambientBottom, baseDarkening);
                     float stepTransmittance = exp(-extinction * dt);

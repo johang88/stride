@@ -48,6 +48,10 @@ internal sealed class CloudRenderer : RendererCoreBase
     private Vector2 windMid;
     private Vector2 windHigh;
     private float evolution;
+    // How far the wind has carried the low clouds (never wrapped: the history of a view is moved by its change) and the
+    // sphere the history is reprojected through (where the low clouds are seen: a little above their base)
+    private Vector2 windTravel;
+    private Vector2 reprojectSphere;
     private double lastTime = double.NaN;
 
     /// <summary>
@@ -112,6 +116,7 @@ internal sealed class CloudRenderer : RendererCoreBase
         var direction = WindDirection(weather);
         var drift = direction * (weather.WindSpeed * elapsed);
         windLow += drift;
+        windTravel += drift;
         windMid += drift * clouds.Middle.WindFactor;
         windHigh += drift * clouds.High.WindFactor;
         // (kept small around the tiles of the weather and the noises)
@@ -153,6 +158,7 @@ internal sealed class CloudRenderer : RendererCoreBase
         parameters.Set(CloudCommonKeys.CloudAmbient, skyAmbient);
         // The planet's center under the camera, sea level at the world height AtmosphereSeaLevel (CloudAltitude subtracts it)
         parameters.Set(CloudCommonKeys.CloudPlanet, new Vector4(eye.X, -planetRadius, eye.Z, planetRadius));
+        reprojectSphere = new Vector2(planetRadius, atmosphere.SeaLevel + clouds.Low.BaseAltitude + Math.Min(clouds.Low.MaxHeight * 0.2f, 600.0f));
 
         var low = clouds.Low;
         parameters.Set(CloudCommonKeys.CloudLowLayer, new Vector4(low.BaseAltitude, low.MaxHeight, Math.Clamp(weather.CloudCoverage, 0, 1), Math.Clamp(weather.CloudType, 0, 1)));
@@ -261,6 +267,11 @@ internal sealed class CloudRenderer : RendererCoreBase
         temporal.Set(CloudTemporalKeys.CloudInvViewProjection, inverseViewProjection);
         temporal.Set(CloudTemporalKeys.CloudPreviousViewProjection, state.HistoryValid ? state.ResolvedViewProjection : viewProjection);
         temporal.Set(CloudTemporalKeys.CloudEye, eye);
+        // The clouds drift: the history is reprojected through where the wind carried them since it was resolved
+        var windDelta = state.HistoryValid ? windTravel - state.ResolvedWindTravel : Vector2.Zero;
+        temporal.Set(CloudTemporalKeys.CloudWindDelta, new Vector3(windDelta.X, 0, windDelta.Y));
+        temporal.Set(CloudTemporalKeys.CloudReprojectSphere, reprojectSphere);
+        temporal.Set(CloudTemporalKeys.CloudReprojectDistance, maxDistance);
         temporal.Set(CloudTemporalKeys.CloudTexel, new Vector2(1.0f / marchWidth, 1.0f / marchHeight));
         temporal.Set(CloudTemporalKeys.CloudResolution, new Vector2(width, height));
         temporal.Set(CloudTemporalKeys.CloudInterleave, new Vector2(interleave.X, interleave.Y));
@@ -275,6 +286,7 @@ internal sealed class CloudRenderer : RendererCoreBase
         state.HistoryIndex = 1 - state.HistoryIndex;
         state.HistoryValid = true;
         state.ResolvedViewProjection = viewProjection;
+        state.ResolvedWindTravel = windTravel;
         state.Resolved = output;
     }
 
@@ -392,6 +404,7 @@ internal sealed class CloudViewState : IDisposable
     public int HistoryIndex;
     public bool HistoryValid;
     public Matrix ResolvedViewProjection;
+    public Vector2 ResolvedWindTravel;
     public int Frame;
 
     /// <summary>
