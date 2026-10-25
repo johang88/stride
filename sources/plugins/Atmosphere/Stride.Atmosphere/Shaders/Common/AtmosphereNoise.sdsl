@@ -85,13 +85,16 @@ namespace Stride.Atmosphere
             return saturate(sqrt(nearest));
         }
 
-        // Cellular noise (as WorleyNoise) that also gives a random value (0-1) of the nearest feature's cell
+        // Cellular noise (as WorleyNoise) that also gives a random value (0-1) of the nearest feature's cell, blended over its borders
         float WorleyNoiseCell(float3 p, int3 period, uint seed, out float cellValue)
         {
             int3 cell = (int3)floor(p);
             float3 f = p - cell;
             float nearest = 1.0;
-            cellValue = 0.0;
+            // The cell's value blends into its neighbours' near the borders (a weighted average falling off steeply with the
+            // distance): a value that jumps at the borders shows them as polygons wherever it is used
+            float valueSum = 0.0;
+            float weightSum = 0.0;
             [loop]
             for (int z = -1; z <= 1; z++)
             {
@@ -104,14 +107,14 @@ namespace Stride.Atmosphere
                         float3 random = NoiseRandom3(wrapped, seed + 17u);
                         float3 d = offset + random - f;
                         float distanceSquared = dot(d, d);
-                        if (distanceSquared < nearest)
-                        {
-                            nearest = distanceSquared;
-                            cellValue = NoiseRandom3(wrapped, seed + 29u).x;
-                        }
+                        nearest = min(nearest, distanceSquared);
+                        float weight = exp(-distanceSquared * 8.0);
+                        valueSum += weight * NoiseRandom3(wrapped, seed + 29u).x;
+                        weightSum += weight;
                     }
                 }
             }
+            cellValue = valueSum / max(weightSum, 1e-6);
             return saturate(sqrt(nearest));
         }
 
