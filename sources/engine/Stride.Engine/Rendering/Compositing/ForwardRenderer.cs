@@ -51,6 +51,9 @@ namespace Stride.Rendering.Compositing
         // Share of the output's resolution the view is drawn at this frame (upscaling post effects)
         private float renderScale = 1.0f;
 
+        // The meshes the depth prepass resolves, shaded once per pixel in the opaque stage
+        private readonly DepthPrepassStages depthPrepassStages = new();
+
         protected int ViewCount { get; private set; }
 
         protected int ViewIndex { get; private set; }
@@ -436,6 +439,7 @@ namespace Stride.Rendering.Compositing
                     LightShafts?.Collect(context);
 
                     Atmosphere?.Collect(context, TransparentRenderStage);
+                    CollectDepthPrepass(context);
                     if (PostEffects is IScreenSpaceLightingEffects screenSpaceLighting)
                         screenSpaceLighting.OpaqueRenderStage = OpaqueRenderStage;
 
@@ -449,6 +453,27 @@ namespace Stride.Rendering.Compositing
                     if (shadowMapRenderStage != null)
                         shadowMapRenderStage.Output = new RenderOutputDescription(PixelFormat.None, PixelFormat.D32_Float);
                 }
+            }
+        }
+
+        /// <summary>
+        /// With a depth prepass, the meshes drawn in it are shaded on its depth in the opaque stage (see <see cref="DepthPrepassStages"/>).
+        /// </summary>
+        private void CollectDepthPrepass(RenderContext context)
+        {
+            var prepass = LightProbes && GBufferRenderStage != null && OpaqueRenderStage != null && actualMultisampleCount == MultisampleCount.None;
+            depthPrepassStages.DepthPrepass = prepass ? GBufferRenderStage : null;
+            depthPrepassStages.Shading = prepass ? OpaqueRenderStage : null;
+            if (!prepass)
+                return;
+            foreach (var feature in context.RenderSystem.RenderFeatures)
+            {
+                if (feature is not MeshRenderFeature meshes)
+                    continue;
+                if (!meshes.RenderFeatures.OfType<DepthPrepassRenderFeature>().Any())
+                    meshes.RenderFeatures.Add(new DepthPrepassRenderFeature { Stages = depthPrepassStages });
+                if (!meshes.PipelineProcessors.OfType<DepthPrepassPipelineProcessor>().Any())
+                    meshes.PipelineProcessors.Add(new DepthPrepassPipelineProcessor { Stages = depthPrepassStages });
             }
         }
 

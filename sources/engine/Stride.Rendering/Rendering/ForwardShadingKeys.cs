@@ -22,4 +22,10 @@ public static class ForwardShadingKeys
     /// (the <c>screenSpaceSpecular</c> and <c>screenSpaceDiffuse</c> streams: radiance and confidence).
     /// </summary>
     public static readonly PermutationParameterKey<ShaderSource> ScreenSpaceLighting = ParameterKeys.NewPermutation((ShaderSource)null);
+
+    /// <summary>
+    /// The depth prepass resolved the visibility of the surface (drawn on its depth, equal): the alpha discard of cutoff
+    /// materials is left out (see <see cref="DepthPrepassStages"/>).
+    /// </summary>
+    public static readonly PermutationParameterKey<bool> DepthPrepassResolved = ParameterKeys.NewPermutation(false);
 }

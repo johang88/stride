@@ -6,11 +6,14 @@ namespace Stride.Rendering.Materials
     {
         override void Compute()
         {
-            // Discard a pixel if the alpha from the material diffuse is less than the alpha discard limit
+            // Discard a pixel if the alpha from the material diffuse is less than the alpha discard limit (unless a depth
+            // prepass already did, the surface drawn on its depth)
+#ifndef STRIDE_DEPTH_PREPASS_RESOLVED
             if (streams.shadingColorAlpha < streams.matAlphaDiscard)
             {
                 discard;
             }
+#endif
         }
     };
 }

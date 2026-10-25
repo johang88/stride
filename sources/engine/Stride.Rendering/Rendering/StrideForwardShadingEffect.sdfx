@@ -73,6 +73,12 @@ namespace Stride.Rendering
         mixin child ShadowMapCasterCubeMap;
         mixin child ZPrepass;
 
+        // The depth prepass resolved what is visible (drawn on its depth): no alpha discard, so the depth is tested early
+        if (ForwardShadingKeys.DepthPrepassResolved)
+        {
+            mixin macro STRIDE_DEPTH_PREPASS_RESOLVED = 1;
+        }
+
         // -----------------------------------------------
         // Add direct and environment light groups
         // -----------------------------------------------
