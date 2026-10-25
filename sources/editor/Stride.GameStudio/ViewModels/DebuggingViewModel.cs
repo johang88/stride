@@ -37,7 +37,7 @@ using Stride.Assets.Presentation.ViewModel;
 
 namespace Stride.GameStudio.ViewModels
 {
-    public class DebuggingViewModel : DispatcherViewModel, IDisposable
+    public class DebuggingViewModel : DispatcherViewModel, IDisposable, IProjectRunService
     {
         private readonly IDebugService debugService;
         private readonly GameStudioViewModel editor;
@@ -88,6 +88,7 @@ namespace Stride.GameStudio.ViewModels
             // Create script resolver
             entityComponentsSorter = new EntityComponentSourceCodeResolver();
             ServiceProvider.RegisterService(entityComponentsSorter);
+            ServiceProvider.RegisterService((IProjectRunService)this);
 
             assemblyReloadLogger.MessageLogged += (sender, e) => Dispatcher.InvokeAsync(() => OutputTitle = outputTitleBase + '*');
             editor.Session.PropertyChanged += SessionPropertyChanged;
@@ -161,6 +162,16 @@ namespace Stride.GameStudio.ViewModels
         public ICommandBase ResetOutputTitleCommand { get; }
 
         internal Task<(bool Success, Process Process)> RunProjectAsync() => BuildProject(true);
+
+        /// <inheritdoc/>
+        bool IProjectRunService.IsBuilding => BuildInProgress;
+
+        /// <inheritdoc/>
+        async Task<Process> IProjectRunService.BuildAndRunAsync(string arguments, IReadOnlyDictionary<string, string> environment)
+        {
+            var (success, process) = await BuildProject(true, arguments, environment);
+            return success ? process : null;
+        }
 
         /// <inheritdoc/>
         public override void Destroy()
@@ -630,7 +641,7 @@ namespace Stride.GameStudio.ViewModels
             }
         }
 
-        private async Task<(bool Success, Process Process)> BuildProject(bool startProject)
+        private async Task<(bool Success, Process Process)> BuildProject(bool startProject, string arguments = null, IReadOnlyDictionary<string, string> environment = null)
         {
             if (BuildInProgress)
                 return (false, null);
@@ -645,7 +656,7 @@ namespace Stride.GameStudio.ViewModels
                 var result = (Success: false, Process: (Process)null);
                 try
                 {
-                    return result = await BuildProjectCore(startProject);
+                    return result = await BuildProjectCore(startProject, arguments, environment);
                 }
                 finally
                 {
@@ -665,7 +676,7 @@ namespace Stride.GameStudio.ViewModels
             logger.MessageLogged += (sender, e) => Dispatcher.InvokeAsync(() => OutputTitle = outputTitleBase + '*');
         }
 
-        private async Task<(bool Success, Process Process)> BuildProjectCore(bool startProject)
+        private async Task<(bool Success, Process Process)> BuildProjectCore(bool startProject, string arguments = null, IReadOnlyDictionary<string, string> environment = null)
         {
             Process startedProcess = null;
             var logger = new LoggerResult();
@@ -788,9 +799,15 @@ namespace Stride.GameStudio.ViewModels
                                 {
                                     StartInfo = new ProcessStartInfo(assemblyPath)
                                     {
-                                        WorkingDirectory = Path.GetDirectoryName(assemblyPath) ?? ""
+                                        WorkingDirectory = Path.GetDirectoryName(assemblyPath) ?? "",
+                                        Arguments = arguments ?? "",
                                     }
                                 };
+                                if (environment != null)
+                                {
+                                    foreach (var (name, value) in environment)
+                                        process.StartInfo.Environment[name] = value;
+                                }
                                 process.Start();
                                 startedProcess = process;
                             }
