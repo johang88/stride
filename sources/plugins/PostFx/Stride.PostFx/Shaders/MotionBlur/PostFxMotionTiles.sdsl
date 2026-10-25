@@ -15,6 +15,14 @@ namespace Stride.PostFx
         stage RWTexture2D<float2> MotionOutput;
         stage RWTexture2D<float2> MotionTileOutput;
 
+        // (the depth and motion may be smaller than the image: drawn at a lower resolution, upscaled)
+        stage SamplerState MotionPoint
+        {
+            Filter = MIN_MAG_MIP_POINT;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
         cbuffer PerDispatch
         {
             stage int2 MotionSize;
@@ -39,7 +47,8 @@ namespace Stride.PostFx
             float2 motionPixels = 0.0;
             if (all(pixel < MotionSize))
             {
-                float2 velocity = MotionVelocity.Load(int3(pixel, 0));
+                float2 uv = (pixel + 0.5) / (float2)MotionSize;
+                float2 velocity = MotionVelocity.SampleLevel(MotionPoint, uv, 0);
                 float2 motionNdc;
                 if (velocity.x != 0.0 || velocity.y != 0.0)
                 {
@@ -47,9 +56,8 @@ namespace Stride.PostFx
                 }
                 else
                 {
-                    float2 uv = (pixel + 0.5) / (float2)MotionSize;
                     float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-                    float depth = MotionDepth.Load(int3(pixel, 0));
+                    float depth = MotionDepth.SampleLevel(MotionPoint, uv, 0);
                     float4 world = mul(float4(ndc, depth, 1.0), MotionInverseViewProjection);
                     float4 previousClip = mul(world, MotionPreviousViewProjection);
                     motionNdc = previousClip.w > 0.0 ? (ndc - MotionJitterNdc) - previousClip.xy / previousClip.w : 0.0;

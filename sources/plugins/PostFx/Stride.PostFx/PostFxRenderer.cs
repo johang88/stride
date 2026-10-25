@@ -87,6 +87,38 @@ public enum PostFxAntialiasing
 }
 
 /// <summary>
+/// The resolution the scene is drawn at, upscaled to the output by the temporal anti-aliasing.
+/// </summary>
+public enum PostFxUpscaling
+{
+    /// <summary>
+    /// The output's resolution.
+    /// </summary>
+    Native,
+
+    /// <summary>
+    /// 77% of the output's resolution on each axis.
+    /// </summary>
+    Quality,
+
+    /// <summary>
+    /// 67% of the output's resolution on each axis.
+    /// </summary>
+    Balanced,
+
+    /// <summary>
+    /// Half the output's resolution on each axis.
+    /// </summary>
+    Performance,
+
+    /// <summary>
+    /// As much of the output's resolution as fits the target frame time (the GPU time of the scene's drawing, shadows to
+    /// post-processing).
+    /// </summary>
+    Dynamic,
+}
+
+/// <summary>
 /// Quality of the screen-space ambient occlusion.
 /// </summary>
 public enum PostFxAmbientOcclusionQuality
@@ -129,8 +161,16 @@ public enum PostFxDebugView
 /// </summary>
 [DataContract("PostFxRenderer")]
 [Display("Post-processing (PostFx)")]
-public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScreenSpaceLightingEffects
+public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScreenSpaceLightingEffects, IUpscalingEffects
 {
+    private const int TimingLatency = 4;
+    private readonly QueryPool[] timingPools = new QueryPool[TimingLatency];
+    private readonly bool[] timingPending = new bool[TimingLatency];
+    private readonly long[] timingData = new long[2];
+    private int timingIndex;
+    private bool timingOpen;
+    private float measuredMilliseconds;
+    private int scaleCooldown;
     private const int ViewTimeout = 120;
 
     private readonly Dictionary<RenderView, ViewState> views = new();
@@ -167,12 +207,47 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
     public PostFxAntialiasing Antialiasing { get; set; } = PostFxAntialiasing.Taa;
 
     /// <summary>
-    /// Sharpening of the anti-aliased image (temporal anti-aliasing softens it a little).
+    /// Sharpening of the anti-aliased image (temporal anti-aliasing softens it a little; more is added when upscaling).
     /// </summary>
     [DataMember(15)]
     [DefaultValue(0.3f)]
     [DataMemberRange(0, 1, 0.01, 0.1, 2)]
     public float Sharpness { get; set; } = 0.3f;
+
+    /// <summary>
+    /// The resolution the scene is drawn at (upscaled by the temporal anti-aliasing; native without it).
+    /// </summary>
+    [DataMember(16)]
+    [DefaultValue(PostFxUpscaling.Native)]
+    public PostFxUpscaling Upscaling { get; set; } = PostFxUpscaling.Native;
+
+    /// <summary>
+    /// GPU time the dynamic resolution aims the scene's drawing at (milliseconds).
+    /// </summary>
+    [DataMember(17)]
+    [DefaultValue(12.0f)]
+    [DataMemberRange(1, 100, 0.1, 1, 1)]
+    public float TargetFrameTime { get; set; } = 12.0f;
+
+    /// <summary>
+    /// Lowest share of the output's resolution the dynamic resolution goes to (on each axis).
+    /// </summary>
+    [DataMember(18)]
+    [DefaultValue(0.5f)]
+    [DataMemberRange(0.25, 1, 0.01, 0.1, 2)]
+    public float MinimumRenderScale { get; set; } = 0.5f;
+
+    /// <summary>
+    /// Share of the output's resolution the scene is drawn at (on each axis).
+    /// </summary>
+    [DataMemberIgnore]
+    public float RenderScale { get; private set; } = 1.0f;
+
+    /// <summary>
+    /// GPU time of the scene's drawing measured a few frames ago (milliseconds; 0 until known, dynamic resolution only).
+    /// </summary>
+    [DataMemberIgnore]
+    public float MeasuredFrameTime => measuredMilliseconds;
 
     /// <summary>
     /// How the scene's light becomes displayable values.
@@ -333,10 +408,83 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
             state.Dispose();
         views.Clear();
         shadowMapRenderer?.RemoveReceiverExtension(contactShadowExtension);
+        for (int i = 0; i < TimingLatency; i++)
+        {
+            timingPools[i]?.Dispose();
+            timingPools[i] = null;
+        }
         exposure?.Dispose();
         tonyMcMapface?.Dispose();
         black?.Dispose();
         base.Destroy();
+    }
+
+    /// <inheritdoc/>
+    public float UpdateRenderScale(RenderContext context)
+    {
+        if (Antialiasing != PostFxAntialiasing.Taa)
+            return RenderScale = 1.0f;
+        switch (Upscaling)
+        {
+            case PostFxUpscaling.Quality:
+                return RenderScale = 1.0f / 1.3f;
+            case PostFxUpscaling.Balanced:
+                return RenderScale = 1.0f / 1.5f;
+            case PostFxUpscaling.Performance:
+                return RenderScale = 0.5f;
+            case PostFxUpscaling.Dynamic:
+                break;
+            default:
+                return RenderScale = 1.0f;
+        }
+
+        // The cost follows the pixels drawn: the scale towards the target by the square root of the times' ratio, in steps
+        // of 5% (each change reallocates the view's targets), waiting for the measurements of a change to arrive
+        var minimum = Math.Clamp(MinimumRenderScale, 0.25f, 1.0f);
+        if (scaleCooldown > 0)
+        {
+            scaleCooldown--;
+        }
+        else if (measuredMilliseconds > 0.0f)
+        {
+            var desired = Math.Clamp(RenderScale * MathF.Sqrt(TargetFrameTime / measuredMilliseconds), minimum, 1.0f);
+            // (down at once when over the target, up only with room to spare)
+            var change = desired < RenderScale ? desired - RenderScale : desired - RenderScale - 0.03f;
+            if (MathF.Abs(change) >= 0.05f)
+            {
+                RenderScale = MathF.Round((RenderScale + change) * 20.0f) / 20.0f;
+                scaleCooldown = TimingLatency + 4;
+            }
+        }
+        return RenderScale = Math.Clamp(RenderScale, minimum, 1.0f);
+    }
+
+    /// <inheritdoc/>
+    public void BeginDraw(RenderDrawContext context)
+    {
+        if (Upscaling != PostFxUpscaling.Dynamic || Antialiasing != PostFxAntialiasing.Taa)
+            return;
+        // The oldest measurement, then its pool for this frame
+        timingIndex = (timingIndex + 1) % TimingLatency;
+        var pool = timingPools[timingIndex] ??= QueryPool.New(context.GraphicsDevice, QueryType.Timestamp, 2);
+        if (timingPending[timingIndex] && pool.TryGetData(timingData))
+        {
+            var frequency = context.GraphicsDevice.TimestampFrequency;
+            if (frequency > 0 && timingData[1] > timingData[0])
+                measuredMilliseconds = (float)((timingData[1] - timingData[0]) * 1000.0 / frequency);
+        }
+        timingPending[timingIndex] = false;
+        context.CommandList.WriteTimestamp(pool, 0);
+        timingOpen = true;
+    }
+
+    private void EndTiming(RenderDrawContext context)
+    {
+        if (!timingOpen)
+            return;
+        timingOpen = false;
+        context.CommandList.WriteTimestamp(timingPools[timingIndex], 1);
+        timingPending[timingIndex] = true;
     }
 
     public void Collect(RenderContext context)
@@ -365,6 +513,8 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         {
             EnsureMotionVectors(context);
             state.Temporal ??= new TemporalHistory();
+            // (more phases when upscaling: an output pixel sees fewer samples a frame)
+            state.Temporal.JitterCount = Math.Clamp((int)MathF.Ceiling(8.0f / (RenderScale * RenderScale)), 8, 32);
             state.Temporal.ApplyJitter(view, Antialiasing == PostFxAntialiasing.Taa);
         }
 
@@ -417,7 +567,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         if (Antialiasing == PostFxAntialiasing.Taa && state.Temporal != null && depth != null && motion != null)
         {
             var exposureScale = MathF.Pow(2.0f, ExposureEV(profile));
-            scene = temporal.Draw(context, state.Temporal, input, depth, motion, autoExposure, exposureScale, 0.08f);
+            scene = temporal.Draw(context, state.Temporal, input, depth, motion, autoExposure, exposureScale, 0.08f, output.ViewWidth, output.ViewHeight);
             temporalResolved = true;
         }
 
@@ -489,7 +639,8 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
 
         var antialias = Antialiasing == PostFxAntialiasing.Fxaa;
         var target = antialias ? NewScopedRenderTarget2D(output.ViewWidth, output.ViewHeight, output.ViewFormat) : output;
-        DrawFinal(context, scene, glow, streak, autoExposure, profile, target, antialias, temporalResolved ? Sharpness : 0.0f);
+        DrawFinal(context, scene, glow, streak, autoExposure, profile, target, antialias, temporalResolved ? Math.Min(Sharpness + 0.4f * (1.0f - RenderScale), 1.0f) : 0.0f);
+        EndTiming(context);
 
         if (antialias)
         {

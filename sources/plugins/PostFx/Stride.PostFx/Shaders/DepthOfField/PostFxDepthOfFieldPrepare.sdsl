@@ -15,6 +15,14 @@ namespace Stride.PostFx
         stage RWTexture2D<float4> DofHalfOutput;
         stage RWTexture2D<float2> DofTileOutput;
 
+        // (the depth may be smaller than the image: drawn at a lower resolution, upscaled)
+        stage SamplerState DofDepthPoint
+        {
+            Filter = MIN_MAG_MIP_POINT;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
         cbuffer PerDispatch
         {
             stage int2 DofHalfSize;
@@ -43,7 +51,7 @@ namespace Stride.PostFx
                     float w = 1.0 / (1.0 + PostFxLuminance(c));
                     color += c * w;
                     weight += w;
-                    float circle = DofCircle(DofDepth.Load(int3(tap, 0)));
+                    float circle = DofCircle(DofDepth.SampleLevel(DofDepthPoint, (tap + 0.5) / (float2)DofFullSize, 0));
                     nearest = min(nearest, circle);
                     farthest = max(farthest, circle);
                 }

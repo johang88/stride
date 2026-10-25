@@ -93,6 +93,11 @@ namespace Stride.PostFx
             float2 uv = streams.TexCoord;
             float exposure = TemporalExposure * PostFxTemporalAutoExposure[0].x;
             int2 pixel = (int2)(uv / TemporalInputTexel);
+            // The output pixel's center among the input's (whose centers are at whole numbers), and how many output pixels
+            // an input one spans (1: no upscaling)
+            float2 inputPosition = uv / TemporalInputTexel - 0.5;
+            float upscale = TemporalInputTexel.y / TemporalOutputTexel.y;
+            float nearest = 1e9;
 
             // The neighbourhood: its moments (for the clip), the reconstruction of the pixel at its unjittered center, and
             // the closest depth (its motion: edges move with the object in front)
@@ -115,8 +120,9 @@ namespace Stride.PostFx
                     mean += ycocg;
                     squares += ycocg * ycocg;
                     // (a sample's scene position is its center minus the jitter)
-                    float2 d = float2(x, y) - TemporalJitter;
+                    float2 d = float2(tap) - inputPosition - TemporalJitter;
                     float w = exp(-2.29 * dot(d, d));
+                    nearest = min(nearest, dot(d, d));
                     current += c * w;
                     currentWeight += w;
                     // (reversed depth: the closest has the largest value)
@@ -173,6 +179,9 @@ namespace Stride.PostFx
             // Faster to follow in motion (the history is resampled, and blurs) and where the history was rejected
             float pixelsMoved = length((uv - previousUv) / TemporalOutputTexel);
             float blend = saturate(TemporalBlend + pixelsMoved * 0.02 + saturate(clipAmount - 1.0) * 0.1);
+            // Upscaling: this frame's samples count as much as one lands on the output pixel (the history fills the rest)
+            if (upscale > 1.01)
+                blend *= lerp(0.25, 1.5, exp(-2.29 * nearest * upscale * upscale));
             float3 result = lerp(history, current, blend);
             return float4(Decompress(result, exposure), 1.0);
         }

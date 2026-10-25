@@ -15,7 +15,8 @@ namespace Stride.PostFx.Passes;
 /// </summary>
 internal sealed class TemporalHistory : IDisposable
 {
-    private const int JitterCount = 8;
+    // Phases of the jitter sequence: more when upscaling (each output pixel then sees fewer samples a frame)
+    public int JitterCount = 8;
 
     public readonly Texture[] Textures = new Texture[2];
     public int Index;
@@ -94,7 +95,8 @@ internal sealed class TemporalHistory : IDisposable
 }
 
 /// <summary>
-/// Temporal anti-aliasing: resolves the jittered scene with the reprojected history into the view's next history.
+/// Temporal anti-aliasing: resolves the jittered scene with the reprojected history into the view's next history, at the
+/// output's resolution (upscaling a scene drawn smaller).
 /// </summary>
 internal sealed class TemporalPass
 {
@@ -108,11 +110,9 @@ internal sealed class TemporalPass
     /// <summary>
     /// The anti-aliased scene (the view's new history).
     /// </summary>
-    public Texture Draw(RenderDrawContext context, TemporalHistory history, Texture scene, Texture depth, Texture motion, Buffer autoExposure, float exposure, float blend)
+    public Texture Draw(RenderDrawContext context, TemporalHistory history, Texture scene, Texture depth, Texture motion, Buffer autoExposure, float exposure, float blend, int width, int height)
     {
         var device = context.GraphicsDevice;
-        var width = scene.ViewWidth;
-        var height = scene.ViewHeight;
         for (int i = 0; i < 2; i++)
         {
             var texture = history.Textures[i];
@@ -135,7 +135,7 @@ internal sealed class TemporalPass
         Matrix.Invert(ref history.ViewProjection, out var inverseViewProjection);
         var parameters = shader.Parameters;
         parameters.Set(PostFxTemporalKeys.PostFxTemporalAutoExposure, autoExposure);
-        parameters.Set(PostFxTemporalKeys.TemporalInputTexel, new Vector2(1.0f / width, 1.0f / height));
+        parameters.Set(PostFxTemporalKeys.TemporalInputTexel, new Vector2(1.0f / scene.ViewWidth, 1.0f / scene.ViewHeight));
         parameters.Set(PostFxTemporalKeys.TemporalOutputTexel, new Vector2(1.0f / output.Width, 1.0f / output.Height));
         parameters.Set(PostFxTemporalKeys.TemporalJitter, history.Jitter);
         parameters.Set(PostFxTemporalKeys.TemporalJitterDelta, history.JitterNdc - history.PreviousJitterNdc);
