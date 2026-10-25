@@ -52,7 +52,7 @@ public sealed class FogVolumeProcessor : EntityProcessor<FogVolumeComponent, Ren
             volume.Bounds = (BoundingBox)bounds;
 
             volume.Shape = component.Shape;
-            volume.Density = component.Density;
+            volume.Density = FogDensity.ToExtinction(component.Density, FogDensity.LocalFogExtinction);
             volume.Albedo = component.Albedo;
             volume.Emissive = component.Emissive;
             volume.EdgeFade = component.EdgeFade;

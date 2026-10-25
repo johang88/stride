@@ -212,9 +212,9 @@ public sealed class TerrainFogLayerItemViewModel : TerrainDefinitionItemViewMode
     public IReadOnlyList<FogLayerHeightMode> HeightModes { get; } = Enum.GetValues<FogLayerHeightMode>();
 
     /// <summary>
-    /// Extinction per meter where fully painted.
+    /// Density where fully painted (see <see cref="Stride.Atmosphere.Fog.FogDensity"/>).
     /// </summary>
-    public float Density { get => Get<float>(nameof(TerrainFogLayer.Density)); set => Set(nameof(TerrainFogLayer.Density), Math.Clamp(value, 0.0f, 10.0f)); }
+    public float Density { get => Get<float>(nameof(TerrainFogLayer.Density)); set => Set(nameof(TerrainFogLayer.Density), Math.Clamp(value, 0.0f, 1.0f)); }
 
     public FogLayerHeightMode HeightMode { get => Get<FogLayerHeightMode>(nameof(TerrainFogLayer.HeightMode)); set => Set(nameof(TerrainFogLayer.HeightMode), value); }
 

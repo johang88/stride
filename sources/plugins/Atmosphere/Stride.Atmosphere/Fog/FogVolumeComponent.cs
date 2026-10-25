@@ -32,12 +32,12 @@ public sealed class FogVolumeComponent : ActivableEntityComponent
     public Vector3 Size { get; set; } = new(20.0f, 6.0f, 20.0f);
 
     /// <summary>
-    /// Density inside (extinction per meter).
+    /// Density inside (0.25 a thin mist, 0.5 a ground fog, 1 about 4 m of visibility, see <see cref="FogDensity"/>).
     /// </summary>
     [DataMember(30)]
-    [DefaultValue(0.05f)]
-    [DataMemberRange(0, 10, 0.005, 0.05, 3)]
-    public float Density { get; set; } = 0.05f;
+    [DefaultValue(0.37f)]
+    [DataMemberRange(0, 1, 0.01, 0.05, 3)]
+    public float Density { get; set; } = 0.37f;
 
     /// <summary>
     /// Color of the light the fog scatters.

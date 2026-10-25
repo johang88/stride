@@ -27,12 +27,13 @@ namespace Stride.Atmosphere.Fog;
 public sealed class VolumetricFogComponent : ActivableEntityComponent
 {
     /// <summary>
-    /// Density of the height fog at its base height (extinction per meter; 0: only fog volumes and painted fog).
+    /// Density of the height fog at its base height (0: only fog volumes and painted fog; 0.25 a clear day's haze, 0.5 mist,
+    /// 1 about 40 m of visibility, see <see cref="FogDensity"/>).
     /// </summary>
     [DataMember(10)]
-    [DefaultValue(0.004f)]
-    [DataMemberRange(0, 1, 0.001, 0.01, 4)]
-    public float Density { get; set; } = 0.004f;
+    [DefaultValue(0.34f)]
+    [DataMemberRange(0, 1, 0.01, 0.05, 3)]
+    public float Density { get; set; } = 0.34f;
 
     /// <summary>
     /// World height where the height fog has its density (it thickens below).

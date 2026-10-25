@@ -39,7 +39,7 @@ public sealed class VolumetricFogProcessor : EntityProcessor<VolumetricFogCompon
             return;
         }
 
-        renderFog.Density = active.Density;
+        renderFog.Density = FogDensity.ToExtinction(active.Density, FogDensity.HeightFogExtinction);
         renderFog.BaseHeight = active.BaseHeight;
         renderFog.HeightFalloff = active.HeightFalloff;
         renderFog.Albedo = active.Albedo;

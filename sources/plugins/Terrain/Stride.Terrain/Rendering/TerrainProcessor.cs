@@ -226,7 +226,7 @@ public sealed class TerrainProcessor : EntityProcessor<TerrainComponent, Terrain
                 var layer = component.Fog[i];
                 field.Layers[i] = new RenderFogLayer
                 {
-                    Density = layer.Density,
+                    Density = FogDensity.ToExtinction(layer.Density, FogDensity.LocalFogExtinction),
                     HeightMode = layer.HeightMode,
                     Height = layer.Height,
                     Softness = layer.Softness,

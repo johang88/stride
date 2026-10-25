@@ -399,9 +399,9 @@
         <StackPanel DataContext="{Binding SelectedFogLayer}" Visibility="{Binding CanEdit, Converter={sd:VisibleOrCollapsed}, FallbackValue={sd:Collapsed}}" Margin="8,0,0,4">
           <TextBlock Text="{sd:Localize Name}"/>
           <TextBox Text="{Binding Name, UpdateSourceTrigger=LostFocus}" Margin="0,2,0,6"/>
-          <TextBlock Text="{sd:Localize 'Density (per meter, fully painted)'}" TextWrapping="Wrap"/>
-          <sd:NumericTextBox Value="{Binding Density}" Minimum="0" Maximum="10" SmallChange="0.005" LargeChange="0.05" DecimalPlaces="3" Margin="0,2,0,6"
-                             ToolTip="{sd:Localize 'Light crossing d meters of fog keeps exp(-density × d) of its intensity: 0.1 lets a third through 10 m', Context=ToolTip}"/>
+          <TextBlock Text="{sd:Localize 'Density (fully painted)'}" TextWrapping="Wrap"/>
+          <sd:NumericTextBox Value="{Binding Density}" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.05" DecimalPlaces="3" Margin="0,2,0,6"
+                             ToolTip="{sd:Localize '0.25 a thin mist (250 m of visibility), 0.5 a ground fog (30 m), 1 about 4 m', Context=ToolTip}"/>
           <TextBlock Text="{sd:Localize Top}"/>
           <ComboBox ItemsSource="{Binding HeightModes}" SelectedItem="{Binding HeightMode}" Margin="0,2,0,2">
             <ComboBox.ItemTemplate>

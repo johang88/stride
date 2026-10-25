@@ -22,12 +22,12 @@ public sealed class TerrainFogLayer
     public string Name { get; set; } = "Fog";
 
     /// <summary>
-    /// Density where fully painted (extinction per meter: 0.1 lets a third of the light through 10 m of fog).
+    /// Density where fully painted (0.25 a thin mist, 0.5 a ground fog, 1 about 4 m of visibility, see <see cref="FogDensity"/>).
     /// </summary>
     [DataMember(20)]
-    [DefaultValue(0.08f)]
-    [DataMemberRange(0, 10, 0.005, 0.05, 3)]
-    public float Density { get; set; } = 0.08f;
+    [DefaultValue(0.43f)]
+    [DataMemberRange(0, 1, 0.01, 0.05, 3)]
+    public float Density { get; set; } = 0.43f;
 
     /// <summary>
     /// How <see cref="Height"/> sets the top of the fog.
