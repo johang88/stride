@@ -31,6 +31,11 @@ public sealed class RenderAtmosphere
     public Color3 MoonIlluminance;
 
     /// <summary>
+    /// The illuminance of the moon if it were full (the light of its disk).
+    /// </summary>
+    public Color3 FullMoonIlluminance;
+
+    /// <summary>
     /// The directional light of the scene's sun (lit by the moon at night), or null.
     /// </summary>
     public RenderLight KeyLight;
@@ -49,6 +54,8 @@ public sealed class RenderAtmosphere
     public float SunDiskIntensity;
 
     public float MoonDiskSize;
+
+    public float MoonDiskIntensity;
 
     public float StarBrightness;
 

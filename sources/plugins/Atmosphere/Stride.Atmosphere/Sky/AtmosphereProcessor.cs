@@ -92,6 +92,7 @@ public sealed class AtmosphereProcessor : EntityProcessor<AtmosphereComponent, A
         render.SunDiskSize = MathUtil.DegreesToRadians(active.SunDiskSize);
         render.SunDiskIntensity = active.SunDiskIntensity;
         render.MoonDiskSize = MathUtil.DegreesToRadians(active.MoonDiskSize);
+        render.MoonDiskIntensity = active.MoonDiskIntensity;
         render.StarBrightness = active.StarBrightness;
         render.NightSkyBrightness = active.NightSkyBrightness;
         render.KeyLight = sun;
@@ -110,7 +111,8 @@ public sealed class AtmosphereProcessor : EntityProcessor<AtmosphereComponent, A
             var lit = 0.5f * (1.0f - MathF.Cos(timeOfDay.MoonPhase * 2.0f * MathF.PI));
             var moonTint = (Vector3)active.MoonColor;
             var tintLuminance = Math.Max(Vector3.Dot(moonTint, new Vector3(0.2126f, 0.7152f, 0.0722f)), 1e-4f);
-            render.MoonIlluminance = (Color3)((Vector3)sunIlluminance * moonTint * (active.MoonBrightness * lit / tintLuminance));
+            render.FullMoonIlluminance = (Color3)((Vector3)sunIlluminance * moonTint * (active.MoonBrightness / tintLuminance));
+            render.MoonIlluminance = render.FullMoonIlluminance * lit;
             render.StarRotation = timeOfDay.ComputeStarRotation();
         }
         else
@@ -118,6 +120,7 @@ public sealed class AtmosphereProcessor : EntityProcessor<AtmosphereComponent, A
             render.SunDirection = sun != null ? -Vector3.Normalize(sun.Direction) : Vector3.Normalize(new Vector3(0.3f, 0.6f, 0.4f));
             render.MoonDirection = -render.SunDirection;
             render.MoonIlluminance = new Color3();
+            render.FullMoonIlluminance = new Color3();
             render.StarRotation = Matrix.Identity;
         }
         render.SunIlluminance = sunIlluminance;

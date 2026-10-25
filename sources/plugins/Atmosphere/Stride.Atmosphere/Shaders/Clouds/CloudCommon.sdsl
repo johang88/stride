@@ -430,8 +430,8 @@ namespace Stride.Atmosphere
             float h = saturate(heightFraction);
             // (the sky's light reaches a cloud's base through the rest of it: thick bases are much darker than the sky, which
             // is what makes a deck stand out against the twilight)
-            float occlusion = lerp(1.0, 0.3, profile);
-            float3 ambient = (ambientTop * lerp(0.25, 1.0, sqrt(h)) + ambientBottom * (1.0 - h) * 0.6) * occlusion * baseDarkening * CloudScattering.z;
+            float occlusion = lerp(1.0, 0.45, profile);
+            float3 ambient = (ambientTop * lerp(0.45, 1.0, sqrt(h)) + ambientBottom * (1.0 - h) * 0.9) * occlusion * baseDarkening * CloudScattering.z;
             return direct + ambient;
         }
 

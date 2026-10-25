@@ -21,7 +21,7 @@ namespace Stride.Atmosphere.Sky;
 [Display("Sky atmosphere", Expand = ExpandRule.Once)]
 [DefaultEntityComponentRenderer(typeof(AtmosphereProcessor))]
 [ComponentCategory("Environment")]
-[ComponentOrder(12000)]
+[ComponentOrder(12005)]
 public sealed class AtmosphereComponent : ActivableEntityComponent
 {
     /// <summary>
@@ -99,12 +99,20 @@ public sealed class AtmosphereComponent : ActivableEntityComponent
     public Color3 MoonColor { get; set; } = new Color3(0.55f, 0.72f, 1.0f);
 
     /// <summary>
-    /// Apparent diameter of the moon disk, degrees.
+    /// Apparent diameter of the moon disk, degrees (the real one is 0.52, a few pixels on screen).
     /// </summary>
     [DataMember(100)]
-    [DefaultValue(0.52f)]
+    [DefaultValue(1.4f)]
     [DataMemberRange(0.05, 20, 0.01, 0.1, 2)]
-    public float MoonDiskSize { get; set; } = 0.52f;
+    public float MoonDiskSize { get; set; } = 1.4f;
+
+    /// <summary>
+    /// Multiplies the luminance of the moon disk (1: a few times a white surface in full moonlight).
+    /// </summary>
+    [DataMember(105)]
+    [DefaultValue(1.0f)]
+    [DataMemberRange(0, 20, 0.05, 0.25, 2)]
+    public float MoonDiskIntensity { get; set; } = 1.0f;
 
     /// <summary>
     /// Brightness of the stars and the Milky Way at night.

@@ -171,9 +171,9 @@ internal sealed class SkyRenderer : RendererCoreBase
         parameters.Set(SkyCommonKeys.SunAngularRadius, sunRadius);
         parameters.Set(SkyCommonKeys.SunDiskLuminance, sunDisk);
 
-        // Moon disk: as bright as a screen allows while keeping its maria (the real one is blinding next to a moonlit scene)
-        var moonIlluminance = (Vector3)atmosphere.MoonIlluminance;
-        var moonDisk = moonIlluminance.LengthSquared() > 0 ? Vector3.Normalize(moonIlluminance) * (((Vector3)atmosphere.SunIlluminance).Length() * 0.03f * 70.0f) : Vector3.Zero;
+        // Moon disk: a few times a white surface in full moonlight, so its maria survive the exposure of a moonlit night (the
+        // real one is blinding next to the scene it lights) and it is a pale disk in the blue sky by day
+        var moonDisk = (Vector3)atmosphere.FullMoonIlluminance * (6.0f * atmosphere.MoonDiskIntensity);
         parameters.Set(SkyCommonKeys.MoonAngularRadius, atmosphere.MoonDiskSize * 0.5f);
         parameters.Set(SkyCommonKeys.MoonDiskLuminance, moonDisk);
 
