@@ -74,10 +74,16 @@ public sealed class TerrainQuadTree
     /// </summary>
     public float LodDistance { get; private set; }
 
+    /// <summary>
+    /// The distance last given to <see cref="SetLodDistance"/> (<see cref="LodDistance"/> may be raised from it).
+    /// </summary>
+    public float RequestedLodDistance { get; private set; }
+
     public void SetLodDistance(float lodDistance)
     {
         // Nodes at the edge of a level must not reach the morph area of the next level (which would open cracks)
         var minDistance = PatchQuads * Data.CellSize * 4.5f;
+        RequestedLodDistance = lodDistance;
         LodDistance = Math.Max(lodDistance, minDistance);
         for (int level = 0; level < LevelCount; level++)
             ranges[level] = LodDistance * (1 << level);

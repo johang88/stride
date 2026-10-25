@@ -434,17 +434,20 @@ namespace Stride.Rendering.UI
                 var aspectRatio = virtualResolution.X / virtualResolution.Y;
                 var verticalFov = MathF.Atan2(virtualResolution.Y / 2, zOffset) * 2;
 
-                var cameraComponent = new CameraComponent(nearPlane, farPlane)
-                {
-                    UseCustomAspectRatio = true,
-                    AspectRatio = aspectRatio,
-                    VerticalFieldOfView = MathUtil.RadiansToDegrees(verticalFov),
-                    ViewMatrix = Matrix.LookAtRH(new Vector3(0, 0, zOffset), Vector3.Zero, Vector3.UnitY),
-                    ProjectionMatrix = Matrix.PerspectiveFovReverseRH(verticalFov, aspectRatio, nearPlane, farPlane),
-                };
+                // (reused: drawn every frame)
+                var cameraComponent = virtualCamera ??= new CameraComponent();
+                cameraComponent.NearClipPlane = nearPlane;
+                cameraComponent.FarClipPlane = farPlane;
+                cameraComponent.UseCustomAspectRatio = true;
+                cameraComponent.AspectRatio = aspectRatio;
+                cameraComponent.VerticalFieldOfView = MathUtil.RadiansToDegrees(verticalFov);
+                cameraComponent.ViewMatrix = Matrix.LookAtRH(new Vector3(0, 0, zOffset), Vector3.Zero, Vector3.UnitY);
+                cameraComponent.ProjectionMatrix = Matrix.PerspectiveFovReverseRH(verticalFov, aspectRatio, nearPlane, farPlane);
 
                 Update(renderObject, cameraComponent);
             }
+
+            private CameraComponent virtualCamera;
         }
     }
 }

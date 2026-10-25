@@ -22,6 +22,8 @@ namespace Stride.Terrain.Vegetation;
 internal sealed class TerrainGrassVariant : IDisposable
 {
     // Most grid cells along each side of the scatter grid
+    // The counters' reset value (a span literal allocates in unoptimized builds)
+    private static readonly uint[] Zero = [0];
     private const int MaxGridSize = 1024;
     private const int CullThreadsPerGroup = 64;
 
@@ -145,7 +147,7 @@ internal sealed class TerrainGrassVariant : IDisposable
         if (terrain?.Data == null || density == null || layerDensity <= 0 || drawDistance <= 0)
         {
             // Nothing to scatter: the views cull nothing
-            instanceCounter?.SetData(context.CommandList, (ReadOnlySpan<uint>)[0u]);
+            instanceCounter?.SetData(context.CommandList, Zero);
             return;
         }
 
@@ -158,7 +160,7 @@ internal sealed class TerrainGrassVariant : IDisposable
         var expected = ThinnedArea(thinOutStart, drawDistance) * layerDensity / VariantCount;
         EnsureCapacity(Math.Min(gridSize * gridSize, (int)(expected * 1.25f) + 256));
 
-        instanceCounter.SetData(context.CommandList, (ReadOnlySpan<uint>)[0u]);
+        instanceCounter.SetData(context.CommandList, Zero);
 
         var origin = terrain.World.TranslationVector;
         var parameters = shader.Parameters;
@@ -220,7 +222,7 @@ internal sealed class TerrainGrassVariant : IDisposable
         argumentsShader.Draw(context, "TerrainGrass.CullArguments");
         commandList.Copy(dispatchArgsWritable, dispatchArgs);
 
-        visibleCounter.SetData(commandList, (ReadOnlySpan<uint>)[0u]);
+        visibleCounter.SetData(commandList, Zero);
         // The previous draws of the model still have the matrices bound for reading
         commandList.ResourceBarrierTransition(world, GraphicsResourceState.UnorderedAccess);
         commandList.ResourceBarrierTransition(worldInverse, GraphicsResourceState.UnorderedAccess);

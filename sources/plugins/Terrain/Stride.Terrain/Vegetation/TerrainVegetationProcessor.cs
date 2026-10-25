@@ -224,6 +224,8 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
         private void SyncGrass(GraphicsDevice device, TerrainVegetationState state)
         {
             // Rebuilt when a layer or its models change (the other settings are read as they are)
+            if (GrassMatchesLayers())
+                return;
             var layers = Component.Grass;
             var expected = new List<(TerrainGrassLayer Layer, int Index, Model Model, int Variant, int Count)>();
             for (int i = 0; i < layers.Count && i < TerrainData.MaxGrassLayers; i++)
@@ -253,6 +255,34 @@ public sealed class TerrainVegetationProcessor : EntityProcessor<TerrainComponen
                 grass.Add(grassVariant);
                 scene?.Entities.Add(grassVariant.Entity);
             }
+        }
+
+        // Whether the grass variants are those of the layers' models, compared in place (checked every frame)
+        private bool GrassMatchesLayers()
+        {
+            var layers = Component.Grass;
+            int next = 0;
+            for (int i = 0; i < layers.Count && i < TerrainData.MaxGrassLayers; i++)
+            {
+                var models = layers[i].Models;
+                int count = 0;
+                for (int m = 0; m < models.Count; m++)
+                {
+                    if (models[m] != null)
+                        count++;
+                }
+                for (int m = 0, variant = 0; m < models.Count; m++)
+                {
+                    if (models[m] == null)
+                        continue;
+                    if (next >= grass.Count)
+                        return false;
+                    var current = grass[next++];
+                    if (current.Layer != layers[i] || current.LayerIndex != i || current.Source != models[m] || current.Variant != variant++ || current.VariantCount != count)
+                        return false;
+                }
+            }
+            return next == grass.Count;
         }
 
         private void SyncTypes(GraphicsDevice device, ContentManager content)

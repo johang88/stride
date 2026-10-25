@@ -228,7 +228,7 @@ namespace Stride.Graphics
         /// <value>
         ///   <see langword="true"/> if the Texture View is a Render Target View; otherwise, <see langword="false"/>.
         /// </value>
-        public bool IsRenderTarget => ViewFlags.HasFlag(TextureFlags.RenderTarget);
+        public bool IsRenderTarget => (ViewFlags & TextureFlags.RenderTarget) != 0;
 
         /// <summary>
         ///   Gets a value indicating if the Texture View is a Depth-Stencil View.
@@ -236,7 +236,7 @@ namespace Stride.Graphics
         /// <value>
         ///   <see langword="true"/> if the Texture View is a Depth-Stencil View; otherwise, <see langword="false"/>.
         /// </value>
-        public bool IsDepthStencil => ViewFlags.HasFlag(TextureFlags.DepthStencil);
+        public bool IsDepthStencil => (ViewFlags & TextureFlags.DepthStencil) != 0;
 
         /// <summary>
         ///   Gets a value indicating if the Texture View is a read-only Depth-Stencil View.
@@ -252,7 +252,7 @@ namespace Stride.Graphics
         /// <value>
         ///   <see langword="true"/> if the Texture View is a Shader Resource View; otherwise, <see langword="false"/>.
         /// </value>
-        public bool IsShaderResource => ViewFlags.HasFlag(TextureFlags.ShaderResource);
+        public bool IsShaderResource => (ViewFlags & TextureFlags.ShaderResource) != 0;
 
         /// <summary>
         ///   Gets a value indicating if the Texture View is an Unordered Access View.
@@ -260,7 +260,7 @@ namespace Stride.Graphics
         /// <value>
         ///   <see langword="true"/> if the Texture View is an Unordered Access View; otherwise, <see langword="false"/>.
         /// </value>
-        public bool IsUnorderedAccess => ViewFlags.HasFlag(TextureFlags.UnorderedAccess);
+        public bool IsUnorderedAccess => (ViewFlags & TextureFlags.UnorderedAccess) != 0;
 
         /// <summary>
         ///   Computes the initial <see cref="BarrierLayout"/> a texture should be created in
@@ -2002,7 +2002,7 @@ namespace Stride.Graphics
         internal static GraphicsResourceUsage GetUsageWithFlags(GraphicsResourceUsage usage, TextureFlags flags)
         {
             // If we have a Texture supporting Render Target View or Unordered Access View, force GraphicsResourceUsage.Default
-            return flags.HasFlag(TextureFlags.RenderTarget) || flags.HasFlag(TextureFlags.UnorderedAccess)
+            return (flags & (TextureFlags.RenderTarget | TextureFlags.UnorderedAccess)) != 0
                 ? GraphicsResourceUsage.Default
                 : usage;
         }

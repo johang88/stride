@@ -928,16 +928,16 @@ namespace Stride.Graphics
             {
                 int bitsPerPixel;
 
-                if (flags.HasFlag(PitchFlags.Bpp24))
+                if ((flags & PitchFlags.Bpp24) != 0)
                     bitsPerPixel = 24;
-                else if (flags.HasFlag(PitchFlags.Bpp16))
+                else if ((flags & PitchFlags.Bpp16) != 0)
                     bitsPerPixel = 16;
-                else if (flags.HasFlag(PitchFlags.Bpp8))
+                else if ((flags & PitchFlags.Bpp8) != 0)
                     bitsPerPixel = 8;
                 else
                     bitsPerPixel = format.SizeInBits;
 
-                if (flags.HasFlag(PitchFlags.LegacyDword))
+                if ((flags & PitchFlags.LegacyDword) != 0)
                 {
                     // Special computation for some incorrectly created DDS files based on
                     // legacy DirectDraw assumptions about pitch alignment

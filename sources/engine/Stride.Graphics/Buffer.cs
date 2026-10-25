@@ -498,7 +498,7 @@ namespace Stride.Graphics
             if (Description.Usage == GraphicsResourceUsage.Default)
             {
                 // Set up the dest region inside the Buffer
-                if (Description.BufferFlags.HasFlag(BufferFlags.ConstantBuffer))
+                if ((Description.BufferFlags & BufferFlags.ConstantBuffer) != 0)
                 {
                     commandList.UpdateSubResource(this, subResourceIndex: 0, fromDataAsBytes);
                 }
@@ -665,7 +665,7 @@ namespace Stride.Graphics
         {
             int sizeOfT = sizeof(T);
             int bufferSize = sizeOfT;
-            int elementSize = bufferFlags.HasFlag(BufferFlags.StructuredBuffer) ? sizeOfT : 0;
+            int elementSize = (bufferFlags & BufferFlags.StructuredBuffer) != 0 ? sizeOfT : 0;
 
             viewFormat = CheckPixelFormat(bufferFlags, elementSize, viewFormat);
 

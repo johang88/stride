@@ -152,26 +152,26 @@ public partial struct TextureDescription : IEquatable<TextureDescription>
     ///   Gets a value indicating whether the Texture is a <strong>Render Target</strong>.
     /// </summary>
     /// <value><see langword="true"/> if the Texture is a Render Target; otherwise, <see langword="false"/>.</value>
-    public readonly bool IsRenderTarget => Flags.HasFlag(TextureFlags.RenderTarget);
+    public readonly bool IsRenderTarget => (Flags & TextureFlags.RenderTarget) != 0;
 
     /// <summary>
     ///   Gets a value indicating whether the Texture is a <strong>Depth-Stencil buffer</strong>.
     /// </summary>
     /// <value><see langword="true"/> if the Texture is a Depth-Stencil buffer; otherwise, <see langword="false"/>.</value>
-    public readonly bool IsDepthStencil => Flags.HasFlag(TextureFlags.DepthStencil);
+    public readonly bool IsDepthStencil => (Flags & TextureFlags.DepthStencil) != 0;
 
     /// <summary>
     ///   Gets a value indicating whether the Texture is a <strong>Shader Resource</strong>.
     /// </summary>
     /// <value><see langword="true"/> if the Texture is a Shader Resource; otherwise, <see langword="false"/>.</value>
-    public readonly bool IsShaderResource => Flags.HasFlag(TextureFlags.ShaderResource);
+    public readonly bool IsShaderResource => (Flags & TextureFlags.ShaderResource) != 0;
 
     /// <summary>
     ///   Gets a value indicating whether the Texture is a created to allow <strong>Unordered Access</strong>
     ///   when used as Shader Resource.
     /// </summary>
     /// <value><see langword="true"/> if the Texture allows Unordered Access; otherwise, <see langword="false"/>.</value>
-    public readonly bool IsUnorderedAccess => Flags.HasFlag(TextureFlags.UnorderedAccess);
+    public readonly bool IsUnorderedAccess => (Flags & TextureFlags.UnorderedAccess) != 0;
 
     /// <summary>
     ///   Gets a value indicating whether the Texture is a <strong>multi-sampled</strong> Texture.
@@ -218,7 +218,7 @@ public partial struct TextureDescription : IEquatable<TextureDescription>
         return description with
         {
             Flags = textureFlags,
-            Usage = textureFlags.HasFlag(TextureFlags.UnorderedAccess)
+            Usage = (textureFlags & TextureFlags.UnorderedAccess) != 0
                 ? GraphicsResourceUsage.Default
                 : usage
         };

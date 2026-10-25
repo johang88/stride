@@ -45,7 +45,14 @@ public sealed class TerrainVirtualTexture : IDisposable
     private readonly ImageEffectShader composeEffect;
     private readonly TerrainDecalRegistry decalRegistry;
     private readonly TerrainVirtualTextureDecals decals;
-    private int frame;
+    // Feedbacks processed (a frame whose readback is not ready has none), and how many of the last ones keep a page
+    // resident: pages on the edges of the visible set (mip transitions, the low resolution feedback) drop out of single
+    // feedbacks, and a full cache evicting them reloaded them a frame later, rendering pages every frame
+    private int feedbackCount;
+    private const int VisibleFeedbacks = 8;
+    private int updateCount, appliedUpdate = -1;
+    // The dirty part of a page table level, copied for its upload
+    private ushort[] uploadRegion = [];
     private int topPagesResident;
     private bool layersDirty = true;
 
@@ -226,6 +233,7 @@ public sealed class TerrainVirtualTexture : IDisposable
     /// </summary>
     public void ProcessFeedback(ReadOnlySpan<uint> feedback)
     {
+        feedbackCount++;
         wantedPages.Clear();
         uint previous = 0;
         foreach (var value in feedback)
@@ -251,7 +259,7 @@ public sealed class TerrainVirtualTexture : IDisposable
                 var key = MakeKey(x >> (m - mip), y >> (m - mip), m);
                 if (residentPages.TryGetValue(key, out var slot))
                 {
-                    slots[slot].LastUsed = frame;
+                    slots[slot].LastUsed = feedbackCount;
                 }
                 else
                 {
@@ -275,14 +283,7 @@ public sealed class TerrainVirtualTexture : IDisposable
     /// </summary>
     public void Update(RenderDrawContext context)
     {
-        frame++;
-        // Applied every frame pages are rendered: the parameter layout is rebuilt once the effect is compiled
-        if (layersDirty || refreshPages.Count > 0 || pendingPages.Count > 0)
-        {
-            TerrainMaterialParameters.Apply(composeEffect.Parameters, terrain);
-            layersDirty = false;
-        }
-
+        updateCount++;
         var budget = MaxPageUpdatesPerFrame;
         var rendered = false;
 
@@ -338,6 +339,14 @@ public sealed class TerrainVirtualTexture : IDisposable
 
     private void RenderPage(RenderDrawContext context, long key, int slot)
     {
+        // Applied every frame pages are rendered: the parameter layout is rebuilt once the effect is compiled
+        if (layersDirty || appliedUpdate != updateCount)
+        {
+            TerrainMaterialParameters.Apply(composeEffect.Parameters, terrain);
+            layersDirty = false;
+            appliedUpdate = updateCount;
+        }
+
         var mip = GetMip(key);
         var x = GetX(key);
         var y = GetY(key);
@@ -365,13 +374,13 @@ public sealed class TerrainVirtualTexture : IDisposable
         if (freeSlots.Count > 0)
             return freeSlots.Pop();
 
-        // Evict the least recently used page not requested by the last feedback
+        // Evict the least recently used page not requested by the last feedbacks
         var best = -1;
         var bestFrame = int.MaxValue;
         for (int i = 0; i < slots.Length; i++)
         {
             ref var slot = ref slots[i];
-            if (!slot.InUse || slot.Locked || slot.LastUsed >= frame - 1)
+            if (!slot.InUse || slot.Locked || slot.LastUsed > feedbackCount - VisibleFeedbacks)
                 continue;
             if (slot.LastUsed < bestFrame)
             {
@@ -386,7 +395,7 @@ public sealed class TerrainVirtualTexture : IDisposable
 
     private void MakeResident(long key, int slot, bool locked)
     {
-        slots[slot] = new Slot { Key = key, LastUsed = frame, Locked = locked, InUse = true };
+        slots[slot] = new Slot { Key = key, LastUsed = feedbackCount, Locked = locked, InUse = true };
         residentPages[key] = slot;
 
         var mip = GetMip(key);
@@ -476,10 +485,12 @@ public sealed class TerrainVirtualTexture : IDisposable
 
             var rect = dirtyRects[mip];
             var size = PagesAtMip0 >> mip;
-            var region = new ushort[rect.Width * rect.Height];
+            var count = rect.Width * rect.Height;
+            if (uploadRegion.Length < count)
+                uploadRegion = new ushort[PagesAtMip0 * PagesAtMip0];
             for (int y = 0; y < rect.Height; y++)
-                Array.Copy(table[mip], (rect.Y + y) * size + rect.X, region, y * rect.Width, rect.Width);
-            PageTable.SetData(commandList, (ReadOnlySpan<ushort>)region, 0, mip, new ResourceRegion(rect.X, rect.Y, 0, rect.Right, rect.Bottom, 1));
+                Array.Copy(table[mip], (rect.Y + y) * size + rect.X, uploadRegion, y * rect.Width, rect.Width);
+            PageTable.SetData(commandList, new ReadOnlySpan<ushort>(uploadRegion, 0, count), 0, mip, new ResourceRegion(rect.X, rect.Y, 0, rect.Right, rect.Bottom, 1));
         }
         if (uploaded)
             commandList.ResourceBarrierTransition(PageTable, BarrierLayout.ShaderResource);

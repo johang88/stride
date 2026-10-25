@@ -22,6 +22,8 @@ namespace Stride.Rendering
     {
         public TransformRenderFeature TransformRenderFeature;
 
+        private static readonly ShaderClassSource VelocityShader = new("MeshVelocity");
+
         private StaticObjectPropertyKey<StaticObjectInfo> previousTransformationInfoKey;
         private ViewObjectPropertyKey<PreviousObjectViewInfo> previousTransformationViewInfoKey;
 
@@ -79,7 +81,7 @@ namespace Stride.Rendering
 
                     if (renderEffect != null)
                     {
-                        renderEffect.EffectValidator.ValidateParameter(StrideEffectBaseKeys.ComputeVelocityShader, new ShaderClassSource("MeshVelocity"));
+                        renderEffect.EffectValidator.ValidateParameter(StrideEffectBaseKeys.ComputeVelocityShader, VelocityShader);
                     }
                 }
             });

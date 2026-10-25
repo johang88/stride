@@ -172,7 +172,7 @@ public sealed class TerrainProcessor : EntityProcessor<TerrainComponent, Terrain
             if (component.CastShadows)
                 activeShadowCaster ??= renderObject;
 
-            if (Math.Abs(renderObject.QuadTree.LodDistance - component.LodDistance) > 1e-3f)
+            if (renderObject.QuadTree.RequestedLodDistance != component.LodDistance)
                 UpdateLodDistance(renderObject, component.LodDistance);
 
             // Terrains are only translated
