@@ -17,12 +17,13 @@ namespace Stride.Rendering
     {
         private Material fallbackMaterial;
         private ModelDeformationRenderer deformationRenderer;
+        private bool computeAvailable;
 
         public Dictionary<ModelComponent, RenderModel> RenderModels => ComponentDatas;
 
         /// <summary>
         /// Forces the mesh deformation path, for benchmarks and tests. <c>null</c> (the default) deforms meshes with morph
-        /// targets in compute when the device supports it, and leaves skinning-only meshes to the vertex shader.
+        /// targets or skinning in compute when the device supports it.
         /// </summary>
         internal static MeshDeformationOverride DeformationOverride { get; set; }
 
@@ -41,6 +42,7 @@ namespace Stride.Rendering
         protected internal override void OnSystemAdd()
         {
             var graphicsDevice = Services.GetSafeServiceAs<IGraphicsDeviceService>().GraphicsDevice;
+            computeAvailable = ModelDeformationRenderer.SupportsCompute(graphicsDevice);
 
             fallbackMaterial = Material.New(graphicsDevice, new MaterialDescriptor
             {
@@ -103,7 +105,7 @@ namespace Stride.Rendering
 
             // Schedules the deformation of each model; MeshRenderFeature deforms the ones a view collects.
             var deformationOverride = DeformationOverride;
-            bool computeSkinning = deformationOverride?.Mode == MeshDeformationMode.Compute;
+            bool computeSkinning = deformationOverride?.Mode == MeshDeformationMode.Compute || (deformationOverride == null && computeAvailable);
             deformationRenderer?.Configure(deformationOverride);
             deformationRenderer?.BeginFrame();
             foreach (var item in ComponentDatas)

@@ -20,7 +20,9 @@ namespace Stride.Rendering;
 // Rendering owns shared immutable inputs. Meshes with morph targets deform in compute when the device supports it:
 // instances of the same mesh share batches of up to MaxBatchSize output slots, so one dispatch deforms every instance
 // in a batch, skinning included. Otherwise each instance only owns its morph weights, and its render meshes apply them
-// in TransformationMorph. Skinning-only meshes keep vertex shader skinning unless an override forces compute.
+// in TransformationMorph. Skinned meshes skin in compute too, so the passes drawing them (depth prepass, opaque, every
+// shadow cascade) draw the deformed vertices instead of each skinning them again with the bones in its draw constants;
+// a mesh whose vertex layout the kernel cannot read keeps vertex shader skinning.
 // ModelRenderProcessor schedules every model each frame; MeshRenderFeature then deforms only the models a view
 // collected, after every view is culled and before any is drawn.
 internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
@@ -65,6 +67,8 @@ internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
     private readonly FrameArena<Vector4> records = new();
     private readonly FrameArena<float> weights = new();
     private readonly Dictionary<SkeletonUpdater, int> poseOffsets = new();
+    // Whether the kernel reads the vertex layout of a skinned mesh, see CanDeformInCompute.
+    private readonly Dictionary<MeshDraw, bool> computeLayouts = new();
     private MeshDeformationOverride deformationOverride;
 
     public ModelDeformationRenderer(RenderDrawContext context)
@@ -76,14 +80,48 @@ internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
     /// Compute deformation needs compute shaders on the device and a shader profile with a compute stage:
     /// effects compile for the requested profile, which may be lower than what the device supports.
     /// </summary>
-    private bool ComputeAvailable
+    private bool ComputeAvailable => SupportsCompute(context.GraphicsDevice);
+
+    internal static bool SupportsCompute(GraphicsDevice device)
     {
-        get
+        var shaderProfile = device.ShaderProfile ?? device.Features.RequestedProfile;
+        return device.Features.HasComputeShaders && shaderProfile >= GraphicsProfile.Level_11_0;
+    }
+
+    /// <summary>
+    /// Whether the compute kernel reads the vertices of <paramref name="mesh"/>: one interleaved buffer with float
+    /// positions, normals and tangents and 8 or 16-bit blend indices (see <see cref="SharedMesh"/>).
+    /// </summary>
+    private bool CanDeformInCompute(Mesh mesh)
+    {
+        if (!computeLayouts.TryGetValue(mesh.Draw, out bool readable))
+            computeLayouts.Add(mesh.Draw, readable = IsComputeLayout(mesh.Draw));
+        return readable;
+    }
+
+    private static bool IsComputeLayout(MeshDraw draw)
+    {
+        if (draw.VertexBuffers.Length != 1 || draw.VertexBuffers[0].Stride % DwordSize != 0)
+            return false;
+        bool hasPosition = false;
+        foreach (var placed in draw.VertexBuffers[0].Declaration.EnumerateWithOffsets())
         {
-            var device = context.GraphicsDevice;
-            var shaderProfile = device.ShaderProfile ?? device.Features.RequestedProfile;
-            return device.Features.HasComputeShaders && shaderProfile >= GraphicsProfile.Level_11_0;
+            var element = placed.VertexElement;
+            if (element.SemanticIndex != 0)
+                continue;
+            bool? supported = element.SemanticName switch
+            {
+                "POSITION" or "NORMAL" => element.Format == PixelFormat.R32G32B32_Float,
+                "TANGENT" => element.Format is PixelFormat.R32G32B32_Float or PixelFormat.R32G32B32A32_Float,
+                "BLENDINDICES" => element.Format is PixelFormat.R8G8B8A8_UInt or PixelFormat.R16G16B16A16_UInt,
+                "BLENDWEIGHT" => element.Format == PixelFormat.R32G32B32A32_Float,
+                _ => null,
+            };
+            if (supported == false || (supported == true && placed.Offset % DwordSize != 0))
+                return false;
+            hasPosition |= element.SemanticName == "POSITION";
         }
+        return hasPosition;
     }
 
     public void Configure(MeshDeformationOverride value)
@@ -152,7 +190,7 @@ internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
         {
             var mesh = meshes[meshIndex];
             bool deformMorph = morphEnabled && mesh.MorphTargets?.VertexCount > 0;
-            bool deformSkin = mesh.Skinning != null && (forced == MeshDeformationMode.Compute || (deformMorph && morphCompute));
+            bool deformSkin = mesh.Skinning != null && morphCompute && (deformMorph || forced == MeshDeformationMode.Compute || CanDeformInCompute(mesh));
             bool compute = deformSkin || (deformMorph && morphCompute);
             bool deformed = deformMorph || deformSkin;
             // Release an instance prepared for the other path, or of a mesh that is no longer deformed.
