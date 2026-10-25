@@ -1,5 +1,6 @@
 // Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net) and Tebjan Halm
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+using System;
 using System.Collections.Generic;
 using Stride.Core.Annotations;
 using Stride.Core.Mathematics;
@@ -124,26 +125,49 @@ namespace Stride.Engine.Processors
         private static void BoundingBoxIgnoreWorld(InstancingData instancingData, IInstancing instancing, ModelComponent.MeshInfo meshInfo, Mesh mesh)
         {
             // We need to remove the world transformation component
+            BoundingBoxExt mbb;
             if (instancingData.ModelComponent.Skeleton != null)
             {
-                var ibb = instancing.BoundingBox;
-                var mbb = new BoundingBoxExt(meshInfo.BoundingBox);
-
+                mbb = new BoundingBoxExt(meshInfo.BoundingBox);
                 Matrix.Invert(ref instancingData.ModelComponent.Skeleton.NodeTransformations[0].LocalMatrix, out var invWorld);
                 mbb.Transform(invWorld);
+            }
+            else // Just take the original mesh one
+            {
+                mbb = new BoundingBoxExt(mesh.BoundingBox);
+            }
 
+            if (instancing is InstancingUserArray userArray)
+            {
+                // The mesh bounds placed by every instance matrix: the pivot of a mesh is rarely its center (trees stand on
+                // theirs) and instances can be scaled
+                meshInfo.BoundingBox = InstancesBounds(userArray.WorldMatrices, userArray.InstanceCount, mbb.Center, mbb.Extent);
+            }
+            else
+            {
+                var ibb = instancing.BoundingBox;
                 var center = ibb.Center;
                 var extend = ibb.Extent + mbb.Extent;
                 meshInfo.BoundingBox = new BoundingBox(center - extend, center + extend);
             }
-            else // Just take the original mesh one
-            {
-                var ibb = instancing.BoundingBox;
+        }
 
-                var center = ibb.Center;
-                var extend = ibb.Extent + mesh.BoundingBox.Extent;
-                meshInfo.BoundingBox = new BoundingBox(center - extend, center + extend);
+        private static BoundingBox InstancesBounds(Matrix[] matrices, int count, Vector3 localCenter, Vector3 localExtent)
+        {
+            var min = new Vector3(float.MaxValue);
+            var max = new Vector3(float.MinValue);
+            for (int i = 0; i < count; i++)
+            {
+                ref var m = ref matrices[i];
+                Vector3.TransformCoordinate(ref localCenter, ref m, out var center);
+                var extent = new Vector3(
+                    MathF.Abs(m.M11) * localExtent.X + MathF.Abs(m.M21) * localExtent.Y + MathF.Abs(m.M31) * localExtent.Z,
+                    MathF.Abs(m.M12) * localExtent.X + MathF.Abs(m.M22) * localExtent.Y + MathF.Abs(m.M32) * localExtent.Z,
+                    MathF.Abs(m.M13) * localExtent.X + MathF.Abs(m.M23) * localExtent.Y + MathF.Abs(m.M33) * localExtent.Z);
+                min = Vector3.Min(min, center - extent);
+                max = Vector3.Max(max, center + extent);
             }
+            return new BoundingBox(min, max);
         }
 
         private static void BoundingBoxPreMultiplyWorld(InstancingData instancingData, IInstancing instancing, ModelComponent.MeshInfo meshInfo, Mesh mesh)
