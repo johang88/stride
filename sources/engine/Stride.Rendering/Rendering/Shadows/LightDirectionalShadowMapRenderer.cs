@@ -351,10 +351,43 @@ namespace Stride.Rendering.Shadows
                 shadowRenderView.ViewProjection = viewProjectionMatrix;
                 shadowRenderView.NearClipPlane = nearClip;
                 shadowRenderView.FarClipPlane = farClip;
+                SetReceivers(shadowRenderView, sourceView, viewToWorld, direction, shaderData.CascadeSplits, cascadeLevel,
+                    (cascadeMaxBoundLS.X - cascadeMinBoundLS.X) / lightShadowMap.Size);
 
                 // Add the render view for the current frame
                 context.RenderSystem.Views.Add(shadowRenderView);
             }
+        }
+
+        /// <summary>
+        /// The receivers of a cascade: the part of the camera frustum whose depth selects the cascade (or blends it in at the
+        /// end of the previous one), so a caster whose shadow falls elsewhere is left out of it.
+        /// </summary>
+        private static void SetReceivers(ShadowMapRenderView shadowView, RenderView sourceView, in Matrix viewToWorld, Vector3 lightDirection, float[] splits, int cascadeLevel, float texelSize)
+        {
+            var frustum = new BoundingFrustum(in sourceView.ViewProjection);
+            var planes = shadowView.ReceiverPlanes;
+            planes[0] = frustum.LeftPlane;
+            planes[1] = frustum.RightPlane;
+            planes[2] = frustum.TopPlane;
+            planes[3] = frustum.BottomPlane;
+
+            // Depth planes (the projection's may be reversed or infinite): depth along the camera forward axis
+            var forward = Vector3.Normalize(viewToWorld.Forward);
+            float eyeDepth = Vector3.Dot(viewToWorld.TranslationVector, forward);
+            float start = 0;
+            if (cascadeLevel > 0)
+            {
+                float previousSize = splits[cascadeLevel - 1] - (cascadeLevel > 1 ? splits[cascadeLevel - 2] : 0);
+                // (the receiver shader blends the next cascade in over the last 20% of a cascade)
+                start = splits[cascadeLevel - 1] - 0.2f * previousSize;
+            }
+            planes[4] = new Plane(forward, -(eyeDepth + start));
+            planes[5] = new Plane(-forward, eyeDepth + splits[cascadeLevel]);
+            shadowView.ReceiverPlaneCount = 6;
+            shadowView.LightDirection = lightDirection;
+            // The PCF kernel (up to 7x7 texels) and the normal offset of the lookup
+            shadowView.CasterMargin = 8 * texelSize;
         }
 
         private void UpdateFrustum(RenderView renderView)

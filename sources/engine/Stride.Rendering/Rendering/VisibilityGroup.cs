@@ -128,6 +128,7 @@ namespace Stride.Rendering
             // Note sure this is really a good mechanism long term (it forces to recreate multiple time the same view, instead of using RenderStage + selectors or a similar mechanism)
             // This is still supported so that existing gizmo code kept working with new graphics refactor. Might be reconsidered at some point.
             var cullingMask = view.CullingMask;
+            var shadowView = cullingMode == CameraCullingMode.Frustum && view is Shadows.ShadowMapRenderView { ReceiverPlaneCount: > 0 } receiving ? receiving : null;
 
             // Process objects
             //foreach (var renderObject in RenderObjects)
@@ -175,6 +176,10 @@ namespace Stride.Rendering
                 {
                     return;
                 }
+
+                // A shadow caster whose shadow falls outside the part of the scene reading this shadow map
+                if (shadowView != null && renderObject.BoundingBox.Extent != Vector3.Zero && !shadowView.CastsOnReceivers(ref renderObject.BoundingBox))
+                    return;
 
                 // Add object to list of visible objects
                 // TODO GRAPHICS REFACTOR we should be able to push multiple elements with future VisibilityObject

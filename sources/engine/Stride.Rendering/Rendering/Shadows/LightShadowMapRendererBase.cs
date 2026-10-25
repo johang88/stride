@@ -101,6 +101,7 @@ namespace Stride.Rendering.Shadows
         public virtual ShadowMapRenderView CreateRenderView()
         {
             var shadowRenderView = shadowRenderViews.Add();
+            shadowRenderView.ReceiverPlaneCount = 0;
             shadowRenderView.RenderStages.Add(ShadowCasterRenderStage);
             return shadowRenderView;
         }
