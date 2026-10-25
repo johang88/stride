@@ -41,7 +41,7 @@ public enum PostFxVolumeShape
 [Display("Post-processing volume", Expand = ExpandRule.Once)]
 [DefaultEntityComponentProcessor(typeof(PostFxVolumeProcessor))]
 [ComponentCategory("Post-processing")]
-[ComponentOrder(12100)]
+[ComponentOrder(12200)]
 public sealed class PostFxVolumeComponent : ActivableEntityComponent
 {
     /// <summary>

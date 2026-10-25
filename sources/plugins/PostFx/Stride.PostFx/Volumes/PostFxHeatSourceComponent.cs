@@ -17,7 +17,7 @@ namespace Stride.PostFx;
 [Display("Heat haze source", Expand = ExpandRule.Once)]
 [DefaultEntityComponentProcessor(typeof(PostFxHeatSourceProcessor))]
 [ComponentCategory("Post-processing")]
-[ComponentOrder(12110)]
+[ComponentOrder(12210)]
 public sealed class PostFxHeatSourceComponent : ActivableEntityComponent
 {
     /// <summary>
