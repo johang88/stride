@@ -1,6 +1,7 @@
 // Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
+using System;
 using System.ComponentModel;
 using Stride.Core;
 using Stride.Core.Annotations;
@@ -240,9 +241,50 @@ public sealed class PostFxGradingSettings : PostFxSettingsGroup
     [DataMember(70)]
     public Color3 Highlights { get; set; } = new(1.0f);
 
+    /// <summary>
+    /// A look table graded in an image editor or a grading tool from the neutral one: a strip of square slices, blue across
+    /// the slices, red across a slice, green down it (1024x32 for 32 levels, 256x16 for 16), uncompressed, without mipmaps
+    /// or sRGB sampling. It changes the displayed colors (after the display transform).
+    /// </summary>
+    [DataMember(80)]
+    [DefaultValue(null)]
+    public Texture Lut { get; set; }
+
+    /// <summary>
+    /// How much of the look table is applied.
+    /// </summary>
+    [DataMember(90)]
+    [DefaultValue(1.0f)]
+    [DataMemberRange(0, 1, 0.01, 0.1, 2)]
+    public float LutContribution { get; set; } = 1.0f;
+
+    // The look tables of the volumes blended into a resolved profile (the two weighing most) and their weights: volumes
+    // with different tables cross-fade them
+    internal Texture BlendedLut0;
+    internal float BlendedWeight0;
+    internal Texture BlendedLut1;
+    internal float BlendedWeight1;
+
     internal override void BlendTowards(PostFxSettingsGroup target, float amount)
     {
         var t = (PostFxGradingSettings)target;
+        BlendedWeight0 *= 1.0f - amount;
+        BlendedWeight1 *= 1.0f - amount;
+        if (t.Lut != null)
+        {
+            var weight = amount * Math.Clamp(t.LutContribution, 0.0f, 1.0f);
+            if (t.Lut == BlendedLut0)
+                BlendedWeight0 += weight;
+            else if (t.Lut == BlendedLut1)
+                BlendedWeight1 += weight;
+            else if (BlendedLut0 == null || BlendedWeight0 < BlendedWeight1 && BlendedWeight0 < weight)
+                (BlendedLut0, BlendedWeight0) = (t.Lut, weight);
+            else if (BlendedLut1 == null || BlendedWeight1 < weight)
+                (BlendedLut1, BlendedWeight1) = (t.Lut, weight);
+        }
+        if (amount >= 0.5f)
+            Lut = t.Lut;
+        LutContribution = MathUtil.Lerp(LutContribution, t.LutContribution, amount);
         Temperature = MathUtil.Lerp(Temperature, t.Temperature, amount);
         Tint = MathUtil.Lerp(Tint, t.Tint, amount);
         Contrast = MathUtil.Lerp(Contrast, t.Contrast, amount);
@@ -262,6 +304,12 @@ public sealed class PostFxGradingSettings : PostFxSettingsGroup
         Filter = s.Filter;
         Shadows = s.Shadows;
         Highlights = s.Highlights;
+        Lut = s.Lut;
+        LutContribution = s.LutContribution;
+        BlendedLut0 = s.Lut;
+        BlendedWeight0 = s.Lut != null ? Math.Clamp(s.LutContribution, 0.0f, 1.0f) : 0.0f;
+        BlendedLut1 = null;
+        BlendedWeight1 = 0.0f;
     }
 }
 

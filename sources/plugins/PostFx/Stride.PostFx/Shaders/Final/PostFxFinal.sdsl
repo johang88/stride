@@ -7,7 +7,8 @@ namespace Stride.PostFx
     /// The last full-screen pass: the scene's light becomes the displayed image. Chromatic aberration, the glow (blended:
     /// energy conserving) and lens dirt, the exposure, white balance and grading, natural vignetting, the display transform
     /// (AgX or Tony McMapface), then film grain and dithering in display space (no banding in the sky's gradients).
-    /// Texture0 = the scene (HDR), Texture1 = the glow, Texture2 = the lens dirt, Texture3 = the anamorphic streak.
+    /// Texture0 = the scene (HDR), Texture1 = the glow, Texture2 = the lens dirt, Texture3 = the anamorphic streak, Texture4 and
+    /// Texture5 = the look tables.
     /// </summary>
     shader PostFxFinal : ImageEffectShader, PostFxCommon
     {
@@ -32,6 +33,9 @@ namespace Stride.PostFx
             stage float3 PostFxBloomTint;
             // Strength of the anamorphic streak (of the highlights, added), and its tint
             stage float PostFxStreakIntensity;
+            // Weights of the two look tables, and their sizes (levels per channel)
+            stage float2 PostFxLutWeights;
+            stage float2 PostFxLutSizes;
             stage float3 PostFxStreakTint;
             stage float PostFxLensDirtIntensity;
             // White balance: linear sRGB to linear sRGB (rows)
@@ -113,6 +117,19 @@ namespace Stride.PostFx
             return PostFxTonyMcMapface.SampleLevel(PostFxLinearClamp, uvw, 0).rgb;
         }
 
+        // A look table strip: blue across the slices, red across a slice, green down it
+        stage float3 SampleLut(Texture2D lut, float3 color, float size)
+        {
+            float3 c = saturate(color) * (size - 1.0);
+            float slice = floor(c.b);
+            float f = c.b - slice;
+            float width = size * size;
+            float2 uv = float2((slice * size + c.r + 0.5) / width, (c.g + 0.5) / size);
+            float3 a = lut.SampleLevel(PostFxLinearClamp, uv, 0).rgb;
+            float3 b = lut.SampleLevel(PostFxLinearClamp, uv + float2(size / width, 0.0), 0).rgb;
+            return lerp(a, b, f);
+        }
+
         stage override float4 Shading()
         {
             float2 uv = streams.TexCoord;
@@ -178,9 +195,20 @@ namespace Stride.PostFx
             else
                 display = AgX(color, PostFxDisplayTransform == 1);
 
-            // Film grain and dithering, on the display values
+            // The look tables, on the displayed colors
             float2 pixel = streams.ShadingPosition.xy;
-            float3 encoded = PostFxLinearToSrgb(display);
+            float3 encoded = PostFxLinearToSrgb(saturate(display));
+            if (PostFxLutWeights.x > 0.0 || PostFxLutWeights.y > 0.0)
+            {
+                float3 graded = encoded * (1.0 - PostFxLutWeights.x - PostFxLutWeights.y);
+                if (PostFxLutWeights.x > 0.0)
+                    graded += SampleLut(Texture4, encoded, PostFxLutSizes.x) * PostFxLutWeights.x;
+                if (PostFxLutWeights.y > 0.0)
+                    graded += SampleLut(Texture5, encoded, PostFxLutSizes.y) * PostFxLutWeights.y;
+                encoded = graded;
+            }
+
+            // Film grain and dithering, on the display values
             if (PostFxGrain > 0.0)
             {
                 float grain = PostFxFrameNoise(pixel, PostFxFrame, 1.0) + PostFxFrameNoise(pixel, PostFxFrame, 2.0) - 1.0;

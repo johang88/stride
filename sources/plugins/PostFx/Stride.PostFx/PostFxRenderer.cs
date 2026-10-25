@@ -177,6 +177,8 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
     private readonly List<RenderView> staleViews = new();
     private ImageEffectShader finalShader;
     private ImageEffectShader debugShader;
+    private readonly PostFxGradingSettings neutralGrading = new();
+    private readonly PostFxLensSettings noLens = new() { Vignette = 0.0f };
     private BloomPass bloom;
     private ExposurePass exposure;
     private FXAAEffect fxaa;
@@ -331,6 +333,13 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
     public bool HeatHaze { get; set; } = true;
 
     /// <summary>
+    /// Whether the lens shows itself: vignetting, chromatic aberration, film grain, lens dirt, the anamorphic streak.
+    /// </summary>
+    [DataMember(53)]
+    [DefaultValue(true)]
+    public bool LensEffects { get; set; } = true;
+
+    /// <summary>
     /// Whether the bright light glows.
     /// </summary>
     [DataMember(50)]
@@ -357,6 +366,30 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
     /// </summary>
     [DataMemberIgnore]
     public float ExposureOffset { get; set; }
+
+    /// <summary>
+    /// The player's brightness: exposure added to all (EV, not saved).
+    /// </summary>
+    [DataMemberIgnore]
+    public float UserExposure { get; set; }
+
+    /// <summary>
+    /// The player's contrast, multiplying the grading's (not saved).
+    /// </summary>
+    [DataMemberIgnore]
+    public float UserContrast { get; set; } = 1.0f;
+
+    /// <summary>
+    /// The player's saturation, multiplying the grading's (not saved).
+    /// </summary>
+    [DataMemberIgnore]
+    public float UserSaturation { get; set; } = 1.0f;
+
+    /// <summary>
+    /// Whether the volumes' color grading applies (white balance, contrast, saturation, tints, look tables; not saved).
+    /// </summary>
+    [DataMemberIgnore]
+    public bool ColorGrading { get; set; } = true;
 
     /// <summary>
     /// A buffer shown instead of the image (not saved).
@@ -634,7 +667,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
             // (white: the scene luminance the exposure shows as 1; the automatic exposure's part isn't known here, its
             // middle is assumed)
             var white = MathF.Pow(2.0f, -ExposureEV(profile)) * (ExposureMode == PostFxExposureMode.Histogram ? 0.18f * MathF.Pow(2.0f, 3.0f) : 1.0f);
-            (glow, streak) = bloom.Draw(context, (w, h, f) => NewScopedRenderTarget2D(w, h, f), scene, profile.Bloom.Scatter, profile.Bloom.AnamorphicIntensity > 0.0f, white);
+            (glow, streak) = bloom.Draw(context, (w, h, f) => NewScopedRenderTarget2D(w, h, f), scene, profile.Bloom.Scatter, LensEffects && profile.Bloom.AnamorphicIntensity > 0.0f, white);
         }
 
         var antialias = Antialiasing == PostFxAntialiasing.Fxaa;
@@ -681,20 +714,25 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         parameters.Set(PostFxFinalKeys.PostFxBloomTint, (Vector3)bloomSettings.Tint);
         parameters.Set(PostFxFinalKeys.PostFxStreakIntensity, streak != null ? Math.Clamp(bloomSettings.AnamorphicIntensity, 0.0f, 1.0f) : 0.0f);
         parameters.Set(PostFxFinalKeys.PostFxStreakTint, (Vector3)bloomSettings.AnamorphicTint);
-        parameters.Set(PostFxFinalKeys.PostFxLensDirtIntensity, glow != null && bloomSettings.LensDirt != null ? bloomSettings.LensDirtIntensity : 0.0f);
+        parameters.Set(PostFxFinalKeys.PostFxLensDirtIntensity, LensEffects && glow != null && bloomSettings.LensDirt != null ? bloomSettings.LensDirtIntensity : 0.0f);
 
-        var grading = profile.Grading;
+        // (without the color grading: neutral, the player's contrast and saturation only)
+        var grading = ColorGrading ? profile.Grading : neutralGrading;
         var whiteBalance = WhiteBalance(grading.Temperature, grading.Tint);
         parameters.Set(PostFxFinalKeys.PostFxWhiteBalance0, new Vector4(whiteBalance.M11, whiteBalance.M12, whiteBalance.M13, 0));
         parameters.Set(PostFxFinalKeys.PostFxWhiteBalance1, new Vector4(whiteBalance.M21, whiteBalance.M22, whiteBalance.M23, 0));
         parameters.Set(PostFxFinalKeys.PostFxWhiteBalance2, new Vector4(whiteBalance.M31, whiteBalance.M32, whiteBalance.M33, 0));
         parameters.Set(PostFxFinalKeys.PostFxFilter, (Vector3)grading.Filter);
-        parameters.Set(PostFxFinalKeys.PostFxContrast, Math.Max(grading.Contrast, 0.0f));
-        parameters.Set(PostFxFinalKeys.PostFxSaturation, Math.Max(grading.Saturation, 0.0f));
+        parameters.Set(PostFxFinalKeys.PostFxContrast, Math.Max(grading.Contrast * UserContrast, 0.0f));
+        parameters.Set(PostFxFinalKeys.PostFxSaturation, Math.Max(grading.Saturation * UserSaturation, 0.0f));
+        var lut0 = grading.BlendedWeight0 > 0.001f ? grading.BlendedLut0 : null;
+        var lut1 = grading.BlendedWeight1 > 0.001f ? grading.BlendedLut1 : null;
+        parameters.Set(PostFxFinalKeys.PostFxLutWeights, new Vector2(lut0 != null ? grading.BlendedWeight0 : 0.0f, lut1 != null ? grading.BlendedWeight1 : 0.0f));
+        parameters.Set(PostFxFinalKeys.PostFxLutSizes, new Vector2(lut0?.Height ?? 1, lut1?.Height ?? 1));
         parameters.Set(PostFxFinalKeys.PostFxShadows, (Vector3)grading.Shadows);
         parameters.Set(PostFxFinalKeys.PostFxHighlights, (Vector3)grading.Highlights);
 
-        var lens = profile.Lens;
+        var lens = LensEffects ? profile.Lens : noLens;
         parameters.Set(PostFxFinalKeys.PostFxVignette, Math.Max(lens.Vignette, 0.0f));
         parameters.Set(PostFxFinalKeys.PostFxAspect, target.ViewWidth / (float)Math.Max(target.ViewHeight, 1));
         parameters.Set(PostFxFinalKeys.PostFxChromaticAberration, Math.Max(lens.ChromaticAberration, 0.0f));
@@ -710,6 +748,8 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         finalShader.SetInput(1, glow ?? black);
         finalShader.SetInput(2, bloomSettings.LensDirt ?? black);
         finalShader.SetInput(3, streak ?? black);
+        finalShader.SetInput(4, lut0 ?? black);
+        finalShader.SetInput(5, lut1 ?? black);
         finalShader.SetOutput(target);
         finalShader.Draw(context, "PostFx.Final");
     }
@@ -721,7 +761,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
     private float ExposureEV(PostFxProfile profile)
     {
         var fixedExposure = ExposureMode == PostFxExposureMode.Fixed ? Exposure : 0.0f;
-        return fixedExposure + ExposureOffset + profile.Exposure.Compensation;
+        return fixedExposure + ExposureOffset + UserExposure + profile.Exposure.Compensation;
     }
 
     private ViewState GetState(RenderView view, int frameCounter)
