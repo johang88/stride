@@ -41,7 +41,7 @@ namespace Stride.Assets.Models
             AnimationRepeatMode = AnimationRepeatMode.LoopInfinite;
             ScaleImport = 1.0f;
 
-            Version = 3;
+            Version = 4;
         }
 
         private string ContextAsString => $"model [{Location}] from import [{SourcePath}]";
@@ -225,7 +225,7 @@ namespace Stride.Assets.Models
                             continue;
                         if ((object1 == null && object2 != null) || (object2 == null && object1 != null))
                             return false;
-                        if (object1.Equals(object2))
+                        if (!object1.Equals(object2))
                             return false;
                     }
                 }

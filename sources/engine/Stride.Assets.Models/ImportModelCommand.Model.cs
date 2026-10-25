@@ -208,6 +208,9 @@ namespace Stride.Assets.Models
                 }
             }
 
+            if (MergeMeshes)
+                ShareSkinningPalettes(model);
+
             // Merge meshes with same parent nodes, material and skinning
             var meshesByNodes = model.Meshes.GroupBy(x => x.NodeIndex).ToList();
 
@@ -366,6 +369,108 @@ namespace Stride.Assets.Models
 
             // Convert to Entity
             return model;
+        }
+
+        /// <summary>
+        /// Skinned meshes follow their bones, not their node: gives the skinned meshes of a material (a character made of
+        /// parts, each skinned to its own bones) one bone palette and node, remapping their blend indices, so the merge
+        /// below draws them as one mesh (their draws rewritten in the layout it merges: own buffers, 32-bit indices).
+        /// </summary>
+        private static void ShareSkinningPalettes(Model model)
+        {
+            var groups = model.Meshes
+                .Where(x => x.Skinning != null && x.MorphTargets == null && x.Draw.VertexBuffers.Length == 1 && x.Draw.IndexBuffer != null && x.Draw.PrimitiveType == PrimitiveType.TriangleList)
+                .GroupBy(x => x, new AnonymousEqualityComparer<Mesh>((x, y) =>
+                    x.MaterialIndex == y.MaterialIndex
+                    && CompareParameters(model, x, y)
+                    && CompareShadowOptions(model, x, y),
+                    x => x.MaterialIndex))
+                .Where(x => x.Count() > 1);
+
+            foreach (var group in groups)
+            {
+                var meshes = group.ToList();
+                // A bone is a node and its bind matrix: parts in different mesh spaces keep separate entries
+                var palette = new List<MeshBoneDefinition>();
+                var remaps = meshes.Select(mesh => mesh.Skinning.Bones.Select(bone =>
+                {
+                    int index = palette.FindIndex(x => x.NodeIndex == bone.NodeIndex && x.LinkToMeshMatrix == bone.LinkToMeshMatrix);
+                    if (index < 0)
+                    {
+                        index = palette.Count;
+                        palette.Add(bone);
+                    }
+                    return index;
+                }).ToArray()).ToList();
+
+                // (8-bit blend indices address 256 bones)
+                if (palette.Count > 256 && meshes.Any(x => BlendIndicesFormat(x.Draw) != PixelFormat.R16G16B16A16_UInt))
+                    continue;
+                if (meshes.Any(x => BlendIndicesFormat(x.Draw) == PixelFormat.None))
+                    continue;
+
+                var bones = palette.ToArray();
+                for (int i = 0; i < meshes.Count; i++)
+                {
+                    meshes[i].Draw = SimpleDraw(meshes[i].Draw, remaps[i]);
+                    meshes[i].Skinning = new MeshSkinningDefinition { Bones = bones };
+                    meshes[i].NodeIndex = meshes[0].NodeIndex;
+                }
+            }
+        }
+
+        private static PixelFormat BlendIndicesFormat(MeshDraw draw)
+        {
+            var element = draw.VertexBuffers[0].Declaration.VertexElements.FirstOrDefault(x => x.SemanticName == "BLENDINDICES" && x.SemanticIndex == 0);
+            return element.Format is PixelFormat.R8G8B8A8_UInt or PixelFormat.R16G16B16A16_UInt ? element.Format : PixelFormat.None;
+        }
+
+        // An indexed draw in its own vertex buffer and a 32-bit index buffer of the drawn range (the layout the merge takes),
+        // with the blend indices of its vertices rewritten to their palette entries
+        private static MeshDraw SimpleDraw(MeshDraw draw, int[] remap)
+        {
+            var binding = draw.VertexBuffers[0];
+            int stride = binding.Stride != 0 ? binding.Stride : binding.Declaration.VertexStride;
+            var vertices = binding.Buffer.GetSerializationData().Content.AsSpan(binding.Offset, binding.Count * stride).ToArray();
+            var placed = binding.Declaration.EnumerateWithOffsets().First(x => x.VertexElement.SemanticName == "BLENDINDICES" && x.VertexElement.SemanticIndex == 0);
+            bool wide = placed.VertexElement.Format == PixelFormat.R16G16B16A16_UInt;
+            for (int vertex = 0; vertex < binding.Count; vertex++)
+            {
+                int address = vertex * stride + placed.Offset;
+                for (int influence = 0; influence < 4; influence++)
+                {
+                    if (wide)
+                    {
+                        int index = BitConverter.ToUInt16(vertices, address + influence * 2);
+                        BitConverter.TryWriteBytes(vertices.AsSpan(address + influence * 2), (ushort)(index < remap.Length ? remap[index] : 0));
+                    }
+                    else
+                    {
+                        int index = vertices[address + influence];
+                        vertices[address + influence] = (byte)(index < remap.Length ? remap[index] : 0);
+                    }
+                }
+            }
+
+            var indexBinding = draw.IndexBuffer;
+            var source = indexBinding.Buffer.GetSerializationData().Content;
+            var indices = new int[draw.DrawCount];
+            for (int i = 0; i < indices.Length; i++)
+            {
+                int address = indexBinding.Offset + (draw.StartLocation + i) * (indexBinding.Is32Bit ? sizeof(int) : sizeof(ushort));
+                indices[i] = indexBinding.Is32Bit ? BitConverter.ToInt32(source, address) : BitConverter.ToUInt16(source, address);
+            }
+            var indexBytes = new byte[indices.Length * sizeof(int)];
+            System.Buffer.BlockCopy(indices, 0, indexBytes, 0, indexBytes.Length);
+
+            var result = new MeshDraw
+            {
+                PrimitiveType = draw.PrimitiveType,
+                VertexBuffers = [new VertexBufferBinding(new BufferData(BufferFlags.VertexBuffer, vertices).ToSerializableVersion(), binding.Declaration, binding.Count, stride)],
+                IndexBuffer = new IndexBufferBinding(new BufferData(BufferFlags.IndexBuffer, indexBytes).ToSerializableVersion(), true, indices.Length),
+                DrawCount = indices.Length,
+            };
+            return result;
         }
 
         private static void TransformMorphTargets(Mesh mesh, Matrix matrix)
