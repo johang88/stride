@@ -48,6 +48,9 @@ namespace Stride.Rendering.Compositing
         protected Texture viewOutputTarget;
         protected Texture viewDepthStencil;
 
+        // Share of the output's resolution the view is drawn at this frame (upscaling post effects)
+        private float renderScale = 1.0f;
+
         protected int ViewCount { get; private set; }
 
         protected int ViewIndex { get; private set; }
@@ -418,6 +421,16 @@ namespace Stride.Rendering.Compositing
                     //write params to view
                     SceneCameraRenderer.UpdateCameraToRenderView(context, context.RenderView, camera);
 
+                    // Drawn at a share of the output's resolution when the post effects upscale
+                    renderScale = PostEffects is IUpscalingEffects upscaling && actualMultisampleCount == MultisampleCount.None
+                        ? Math.Clamp(upscaling.UpdateRenderScale(context), 0.25f, 1.0f)
+                        : 1.0f;
+                    if (renderScale < 1.0f)
+                    {
+                        var size = ScaledSize(new Size2((int)context.RenderView.ViewSize.X, (int)context.RenderView.ViewSize.Y));
+                        context.RenderView.ViewSize = new Vector2(size.Width, size.Height);
+                    }
+
                     CollectView(context);
 
                     LightShafts?.Collect(context);
@@ -662,11 +675,24 @@ namespace Stride.Rendering.Compositing
             }
         }
 
+        /// <summary>
+        /// The size the view is drawn at for an output's size (the render scale's share of it).
+        /// </summary>
+        private Size2 ScaledSize(Size2 outputSize)
+        {
+            if (renderScale >= 1.0f)
+                return outputSize;
+            return new Size2(Math.Max(1, (int)MathF.Round(outputSize.Width * renderScale)), Math.Max(1, (int)MathF.Round(outputSize.Height * renderScale)));
+        }
+
         protected override void DrawCore(RenderContext context, RenderDrawContext drawContext)
         {
             using var _ = Profiler.Begin(DrawCoreKey);
 
             var viewport = drawContext.CommandList.Viewport;
+            if (VRSettings.Enabled && VRSettings.VRDevice != null)
+                renderScale = 1.0f;
+            (PostEffects as IUpscalingEffects)?.BeginDraw(drawContext);
 
             using (drawContext.PushRenderTargetsAndRestore())
             {
@@ -791,7 +817,11 @@ namespace Stride.Rendering.Compositing
 
                     using (drawContext.PushRenderTargetsAndRestore())
                     {
-                        drawContext.CommandList.SetRenderTargets(currentDepthStencil, CollectionsMarshal.AsSpan(currentRenderTargets));
+                        // (the viewport of the targets: smaller than the output's when upscaling)
+                        if (renderScale < 1.0f)
+                            drawContext.CommandList.SetRenderTargetsAndViewport(currentDepthStencil, CollectionsMarshal.AsSpan(currentRenderTargets));
+                        else
+                            drawContext.CommandList.SetRenderTargets(currentDepthStencil, CollectionsMarshal.AsSpan(currentRenderTargets));
 
                         // Clear render target and depth stencil
                         Clear?.Draw(drawContext);
@@ -907,19 +937,21 @@ namespace Stride.Rendering.Compositing
                 return;
 
             var renderTargets = OpaqueRenderStage.OutputValidator.RenderTargets;
+            var renderSize = ScaledSize(new Size2(outputRenderTarget.Width, outputRenderTarget.Height));
+            var scaled = renderSize.Width != outputRenderTarget.Width || renderSize.Height != outputRenderTarget.Height;
 
             CollectionsMarshal.SetCount(currentRenderTargets, renderTargets.Count);
 
             for (int index = 0; index < renderTargets.Count; index++)
             {
-                if (renderTargets[index].Semantic is ColorTargetSemantic && PostEffects == null && actualMultisampleCount == MultisampleCount.None)
+                if (renderTargets[index].Semantic is ColorTargetSemantic && PostEffects == null && actualMultisampleCount == MultisampleCount.None && !scaled)
                 {
                     currentRenderTargets[index] = outputRenderTarget;
                 }
                 else
                 {
                     var description = renderTargets[index];
-                    var textureDescription = TextureDescription.New2D(outputRenderTarget.Width, outputRenderTarget.Height, 1, description.Format, TextureFlags.RenderTarget | TextureFlags.ShaderResource, 1, GraphicsResourceUsage.Default, actualMultisampleCount);
+                    var textureDescription = TextureDescription.New2D(renderSize.Width, renderSize.Height, 1, description.Format, TextureFlags.RenderTarget | TextureFlags.ShaderResource, 1, GraphicsResourceUsage.Default, actualMultisampleCount);
                     currentRenderTargets[index] = PushScopedResource(drawContext.GraphicsContext.Allocator.GetTemporaryTexture2D(textureDescription));
                 }
 
@@ -927,7 +959,12 @@ namespace Stride.Rendering.Compositing
             }
 
             // Prepare depth buffer
-            if (actualMultisampleCount == MultisampleCount.None)
+            if (actualMultisampleCount == MultisampleCount.None && scaled)
+            {
+                var textureDescription = TextureDescription.New2D(renderSize.Width, renderSize.Height, 1, DepthBufferFormat, TextureFlags.DepthStencil | TextureFlags.ShaderResource);
+                currentDepthStencil = PushScopedResource(drawContext.GraphicsContext.Allocator.GetTemporaryTexture2D(textureDescription));
+            }
+            else if (actualMultisampleCount == MultisampleCount.None)
             {
                 currentDepthStencil = outputDepthStencil;
             }
