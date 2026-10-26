@@ -551,6 +551,13 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
             state.Temporal.ApplyJitter(view, Antialiasing == PostFxAntialiasing.Taa);
         }
 
+        // A cut: nothing on screen came from the previous frame's view
+        if (context.Services.GetService<PostFxVolumes>()?.IsCut(context.RenderSystem.FrameCounter) == true)
+        {
+            state.Temporal?.Restart();
+            state.ScreenSpaceTargets?.Restart();
+        }
+
         PublishScreenSpace(context, view, state);
     }
 

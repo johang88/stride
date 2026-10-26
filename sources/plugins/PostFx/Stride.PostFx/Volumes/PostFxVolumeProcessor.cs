@@ -25,10 +25,32 @@ public sealed class PostFxVolumes
 
     internal List<PostFxHeatSourceComponent> HeatSources { get; } = new();
 
+    private bool cutPending;
+    private int cutFrame = -1;
+
+    /// <summary>
+    /// Tells the renderer the camera cut to another shot this frame: the views start their histories over (temporal
+    /// anti-aliasing, screen-space light) and don't blur with the jump.
+    /// </summary>
+    public void CameraCut() => cutPending = true;
+
+    /// <summary>
+    /// Whether the views of a frame are the first after a cut.
+    /// </summary>
+    internal bool IsCut(int frame)
+    {
+        if (cutPending)
+        {
+            cutPending = false;
+            cutFrame = frame;
+        }
+        return cutFrame == frame;
+    }
+
     /// <summary>
     /// The service of a game, created when missing.
     /// </summary>
-    internal static PostFxVolumes GetOrCreate(IServiceRegistry services)
+    public static PostFxVolumes GetOrCreate(IServiceRegistry services)
     {
         var volumes = services.GetService<PostFxVolumes>();
         if (volumes == null)

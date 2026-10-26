@@ -70,6 +70,18 @@ internal sealed class TemporalHistory : IDisposable
         ViewProjection = view.ViewProjection;
     }
 
+    /// <summary>
+    /// Forgets the previous frame (a camera cut): no reprojection, no motion from the jump.
+    /// </summary>
+    public void Restart()
+    {
+        PreviousUnjitteredViewProjection = UnjitteredViewProjection;
+        PreviousEye = Eye;
+        PreviousJitterNdc = JitterNdc;
+        HasPrevious = false;
+        Valid = false;
+    }
+
     public void Dispose()
     {
         for (int i = 0; i < Textures.Length; i++)

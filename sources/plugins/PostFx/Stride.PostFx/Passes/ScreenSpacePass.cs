@@ -70,6 +70,15 @@ internal sealed class ScreenSpaceTargets : IDisposable
         IndirectValid = false;
     }
 
+    /// <summary>
+    /// Forgets the light found in the previous frames (a camera cut).
+    /// </summary>
+    public void Restart()
+    {
+        ReflectionsValid = false;
+        IndirectValid = false;
+    }
+
     public void Dispose()
     {
         for (int i = 0; i < PyramidLevels; i++)
