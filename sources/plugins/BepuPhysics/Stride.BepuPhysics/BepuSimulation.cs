@@ -783,6 +783,11 @@ public sealed class BepuSimulation : IDisposable
             }
         }
 
+        // Out of steps for this frame: the time left over is dropped, not caught up on later frames,
+        // which would run the simulation faster than real time (up to MaxStepPerFrame times) after any slow frame
+        if (_remainingUpdateTime >= FixedTimeStep)
+            _remainingUpdateTime = TimeSpan.FromTicks(_remainingUpdateTime.Ticks % FixedTimeStep.Ticks);
+
         InterpolateTransforms();
     }
 
