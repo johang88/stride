@@ -11,6 +11,7 @@ using Stride.Core.Reflection;
 [assembly: InternalsVisibleTo("Stride.BepuPhysics.Soft")]
 [assembly: InternalsVisibleTo("Stride.BepuPhysics.Tests")]
 [assembly: InternalsVisibleTo("Stride.Terrain")]
+[assembly: InternalsVisibleTo("Stride.Blockout")]
 
 namespace Stride.BepuPhysics;
 

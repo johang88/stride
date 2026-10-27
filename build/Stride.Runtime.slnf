@@ -21,6 +21,7 @@
       "..\\sources\\plugins\\Atmosphere\\Stride.Atmosphere\\Stride.Atmosphere.csproj",
       "..\\sources\\plugins\\Particles\\Stride.Particles\\Stride.Particles.csproj",
       "..\\sources\\plugins\\SpriteStudio\\Stride.SpriteStudio.Runtime\\Stride.SpriteStudio.Runtime.csproj",
+      "..\\sources\\plugins\\Blockout\\Stride.Blockout\\Stride.Blockout.csproj",
       "..\\sources\\plugins\\Terrain\\Stride.Terrain\\Stride.Terrain.csproj",
       "..\\sources\\plugins\\UI\\Stride.UI\\Stride.UI.csproj",
       "..\\sources\\plugins\\Video\\Stride.Video\\Stride.Video.csproj",

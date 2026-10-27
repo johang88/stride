@@ -31,6 +31,9 @@
     <ProjectReference Include="..\..\sources\plugins\Terrain\Stride.Terrain.Assets\Stride.Terrain.Assets.csproj" Private="false" />
     <ProjectReference Include="..\..\sources\plugins\Terrain\Stride.Terrain\Stride.Terrain.csproj" Private="false" />
     <ProjectReference Include="..\..\sources\plugins\BepuPhysics\Stride.BepuPhysics\Stride.BepuPhysics.csproj" Private="false" />
+    <!-- The blockout tests drive the blockout tools -->
+    <ProjectReference Include="..\..\sources\plugins\Blockout\Stride.Blockout.Editor\Stride.Blockout.Editor.csproj" Private="false" />
+    <ProjectReference Include="..\..\sources\plugins\Blockout\Stride.Blockout\Stride.Blockout.csproj" Private="false" />
     <!-- Build-time triggers so bin/packages has all three Stride.Templates.* nupkgs available
          for the GameStudio bridge to find via PackageStore. Without these, the screenshot tests
          that instantiate genre-starter templates (TopDownRPG, etc.) fail at template-lookup time. -->

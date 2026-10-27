@@ -225,6 +225,11 @@
     <Project Path="../sources/plugins/SpriteStudio/Stride.SpriteStudio.Editor/Stride.SpriteStudio.Editor.csproj" />
     <Project Path="../sources/plugins/SpriteStudio/Stride.SpriteStudio.Runtime/Stride.SpriteStudio.Runtime.csproj" />
   </Folder>
+  <Folder Name="/80-Plugins/Blockout/">
+    <Project Path="../sources/plugins/Blockout/Stride.Blockout.Editor/Stride.Blockout.Editor.csproj" />
+    <Project Path="../sources/plugins/Blockout/Stride.Blockout.Editor.Wpf/Stride.Blockout.Editor.Wpf.csproj" />
+    <Project Path="../sources/plugins/Blockout/Stride.Blockout/Stride.Blockout.csproj" />
+  </Folder>
   <Folder Name="/80-Plugins/PostFx/">
     <Project Path="../sources/plugins/PostFx/Stride.PostFx/Stride.PostFx.csproj" />
   </Folder>

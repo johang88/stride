@@ -1,0 +1,154 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Blockout
+{
+    /// <summary>
+    /// The procedural pattern of the blockout shapes, in meters. Flat faces project it along their normal in the frame of the
+    /// object's rotation, anchored to the world (not the object) so that neighboring shapes line up; curved faces use their
+    /// texture coordinates. The vertex texture coordinate 1 tells which (see BlockoutMapping).
+    /// </summary>
+    shader ComputeColorBlockoutPattern : ComputeColor, Transformation, PositionStream4, NormalStream, Texturing
+    {
+        cbuffer PerMaterial
+        {
+            stage float4 BlockoutColor;
+            stage float4 BlockoutAccent;
+            // x: cell size (m), y: pattern, z: tone variation between tiles/bricks/planks
+            stage float4 BlockoutParameters;
+        }
+
+        // Pattern ids (BlockoutPattern)
+        static const float PatternGrid = 0;
+        static const float PatternChecker = 1;
+        static const float PatternStripes = 2;
+        static const float PatternBricks = 3;
+        static const float PatternTiles = 4;
+        static const float PatternPlanks = 5;
+        static const float PatternSolid = 6;
+
+        float Hash(float2 p)
+        {
+            p = frac(p * float2(0.1031, 0.1030));
+            p += dot(p, p.yx + 33.33);
+            return frac((p.x + p.y) * p.x);
+        }
+
+        // Lines at the integer coordinates, width in cells per axis; fades to their average coverage when cells shrink
+        // to a few pixels (no moire)
+        float Lines(float2 uv, float2 width)
+        {
+            float2 w = max(fwidth(uv), 1e-5);
+            float2 distance = abs(frac(uv + 0.5) - 0.5);
+            float2 lines = 1 - smoothstep(width * 0.5 - w * 0.5, width * 0.5 + w * 0.5, distance);
+            lines = lerp(lines, width, saturate((w - 0.25) * 4));
+            return max(lines.x, lines.y);
+        }
+
+        // Box filtered checker (0 or 1 per cell)
+        float Checker(float2 uv)
+        {
+            float2 w = fwidth(uv) + 1e-4;
+            float2 i = 2.0 * (abs(frac((uv - 0.5 * w) * 0.5) - 0.5) - abs(frac((uv + 0.5 * w) * 0.5) - 0.5)) / w;
+            return 0.5 - 0.5 * i.x * i.y;
+        }
+
+        // Box filtered square wave: 1 on the second half of each period
+        float Square(float x)
+        {
+            float w = fwidth(x) + 1e-4;
+            float a = x - 0.5 * w;
+            float b = x + 0.5 * w;
+            float fa = floor(a) * 0.5 + max(frac(a) - 0.5, 0);
+            float fb = floor(b) * 0.5 + max(frac(b) - 0.5, 0);
+            return saturate((fb - fa) / w);
+        }
+
+        // The texture axes of a flat face, as BlockoutMeshBuilder.GetFaceAxes
+        void FaceAxes(float3 n, out float3 u, out float3 v)
+        {
+            float3 a = abs(n);
+            if (a.y >= a.x && a.y >= a.z)
+            {
+                u = normalize(float3(1, 0, 0) - n * n.x);
+                v = cross(u, n);
+            }
+            else
+            {
+                v = normalize(float3(0, 1, 0) - n * n.y);
+                u = cross(v, n);
+            }
+        }
+
+        override float4 Compute()
+        {
+            // The rotation frame of the object, without its scale
+            float3 ax = normalize(World[0].xyz);
+            float3 ay = normalize(World[1].xyz);
+            float3 az = normalize(World[2].xyz);
+            float3 p = streams.PositionWS.xyz;
+            float3 pf = float3(dot(p, ax), dot(p, ay), dot(p, az));
+
+            float2 uv;
+            float mapping = streams.TexCoord1.x;
+            if (mapping < 0.5)
+            {
+                float3 n = normalize(streams.meshNormalWS);
+                float3 nf = normalize(float3(dot(n, ax), dot(n, ay), dot(n, az)));
+                float3 u, v;
+                FaceAxes(nf, u, v);
+                uv = float2(dot(pf, u), dot(pf, v));
+            }
+            else if (mapping < 1.5)
+            {
+                uv = float2(streams.TexCoord.x, pf.y);
+            }
+            else
+            {
+                uv = streams.TexCoord;
+            }
+            uv /= max(BlockoutParameters.x, 1e-3);
+
+            float pattern = BlockoutParameters.y;
+            float accent = 0;
+            float tone = 0;
+            if (pattern == PatternGrid)
+            {
+                accent = max(Lines(uv, 0.035), 0.4 * Lines(uv * 4, 0.06));
+            }
+            else if (pattern == PatternChecker)
+            {
+                accent = Checker(uv);
+            }
+            else if (pattern == PatternStripes)
+            {
+                accent = Square(uv.x + uv.y);
+            }
+            else if (pattern == PatternBricks)
+            {
+                // Bricks a cell long and half a cell high, every other row shifted by half a brick
+                float row = floor(uv.y * 2);
+                float2 brick = float2(uv.x + 0.5 * fmod(abs(row), 2), uv.y * 2);
+                accent = Lines(brick, float2(0.05, 0.1));
+                tone = Hash(float2(floor(brick.x), row)) - 0.5;
+            }
+            else if (pattern == PatternTiles)
+            {
+                accent = Lines(uv, 0.04);
+                tone = Hash(floor(uv)) - 0.5;
+            }
+            else if (pattern == PatternPlanks)
+            {
+                // Boards a quarter of a cell wide, two cells long, joints staggered per board
+                float board = floor(uv.y * 4);
+                float along = uv.x * 0.5 + Hash(float2(board, 7.0));
+                accent = Lines(float2(along, uv.y * 4), float2(0.02, 0.08));
+                tone = Hash(float2(floor(along), board)) - 0.5;
+            }
+
+            float4 color = lerp(BlockoutColor, BlockoutAccent, saturate(accent));
+            color.rgb *= 1 + tone * BlockoutParameters.z;
+            return float4(color.rgb, 1);
+        }
+    };
+}
