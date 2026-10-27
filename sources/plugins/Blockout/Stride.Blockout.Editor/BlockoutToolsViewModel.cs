@@ -144,7 +144,7 @@ public sealed class BlockoutToolsViewModel : EntityHierarchyEditorToolViewModel
     public bool Snap { get => snap; set => SetValue(ref snap, value, PushSettings); }
 
     public string Hint => $"Drag on the ground, the terrain or a shape to draw a {selectedShape?.Name.ToLowerInvariant()}. Release, move the mouse up or down for the height, click to finish. "
-        + "T turns it, Esc cancels, Shift toggles snapping. A click selects as usual: drag the handles of a selected shape to resize it (Ctrl: both sides).";
+        + "Ctrl keeps it as wide as deep, T turns it, Esc cancels, Shift toggles snapping. A click selects as usual: drag the handles of a selected shape to resize it (Ctrl: both sides).";
 
     #endregion
 

@@ -248,6 +248,42 @@ public class BlockoutTools : IUITest
         var archRotation = await session.Dispatcher.InvokeAsync(() => arch.AssetSideEntity.Transform.Rotation);
         var across = Vector3.Transform(Vector3.UnitX, archRotation);
         Check(MathF.Abs(across.Z) > 0.99f, $"arch drawn along Z spans Z ({across})");
+
+        // Ctrl: a footprint as wide as deep (the longer side of the drag)
+        var boxItem = await session.Dispatcher.InvokeAsync(() => tools.Shapes.First(x => x.Name == "Box"));
+        var square = await service.ComputeDrawing(boxItem, position + new Vector3(-12, 0, 8), position + new Vector3(-9, 0, 9.5f), 2, square: true);
+        Check(square is { Size: var squareSize } && MathF.Abs(squareSize.X - 3) < 1e-3f && MathF.Abs(squareSize.Z - 3) < 1e-3f, $"square footprint from a 3 x 1.5 m drag: {square?.Size}");
+
+        // The same with the mouse, Ctrl held
+        var countBeforeSquare = await session.Dispatcher.InvokeAsync(ShapeCount);
+        await session.Dispatcher.InvokeAsync(() => { editor.ClearSelection(); tools.SelectedShape = boxItem; });
+        Move(view, width, height, 0.25, 0.8);
+        await Frames(service, 3);
+        await service.InvokeOnGameThread(() => SetControlKeyState(true));
+        Post(view, WM_KEYDOWN, VK_CONTROL, 0x001D0001);
+        Post(view, WM_LBUTTONDOWN, MK_LBUTTON | MK_CONTROL, width, height, 0.25, 0.8);
+        await Frames(service, 2);
+        for (int i = 1; i <= 8; i++)
+        {
+            Post(view, WM_MOUSEMOVE, MK_LBUTTON | MK_CONTROL, width, height, 0.25 + 0.1 * i / 8, 0.8 + 0.03 * i / 8);
+            await Frames(service, 1);
+        }
+        await Frames(service, 2);
+        Post(view, WM_LBUTTONUP, MK_CONTROL, width, height, 0.35, 0.83);
+        await Frames(service, 2);
+        Post(view, WM_KEYUP, VK_CONTROL, unchecked((int)0xC01D0001));
+        await service.InvokeOnGameThread(() => SetControlKeyState(false));
+        Move(view, width, height, 0.35, 0.78);
+        await Frames(service, 3);
+        Post(view, WM_LBUTTONDOWN, MK_LBUTTON, width, height, 0.35, 0.78);
+        await Frames(service, 2);
+        Post(view, WM_LBUTTONUP, 0, width, height, 0.35, 0.78);
+        await Frames(service, 3);
+        await ctx.WaitIdle();
+        var squareBox = await session.Dispatcher.InvokeAsync(() => editor.SelectedContent.OfType<EntityViewModel>().LastOrDefault(x => x.AssetSideEntity.Get<BlockoutComponent>() != null));
+        var squareBoxSize = await session.Dispatcher.InvokeAsync(() => squareBox?.AssetSideEntity.Get<BlockoutComponent>().Size);
+        Check(await session.Dispatcher.InvokeAsync(ShapeCount) == countBeforeSquare + 1 && squareBoxSize is { } drawnSquare && MathF.Abs(drawnSquare.X - drawnSquare.Z) < 1e-3f,
+            $"box drawn with the mouse, Ctrl held: {squareBoxSize}");
         await ctx.Screenshot("shapes");
 
         // Styles: preset, pattern, color on the selection
@@ -287,7 +323,7 @@ public class BlockoutTools : IUITest
 
         // Undo everything drawn, then redo
         var countBeforeUndo = await session.Dispatcher.InvokeAsync(ShapeCount);
-        Check(countBeforeUndo == before + 5, $"{countBeforeUndo - before} shapes drawn");
+        Check(countBeforeUndo == before + 6, $"{countBeforeUndo - before} shapes drawn");
 
         // Save and check the scene file
         await ctx.WaitForShaders();
@@ -367,6 +403,19 @@ public class BlockoutTools : IUITest
 
     private static void Move(IntPtr view, int width, int height, double x, double y) => Post(view, WM_MOUSEMOVE, 0, width, height, x, y);
 
+    /// <summary>
+    /// Marks Ctrl down or up in the key state of the calling thread only (the viewport's input releases keys that state says are up).
+    /// </summary>
+    private static void SetControlKeyState(bool down)
+    {
+        var state = new byte[256];
+        GetKeyboardState(state);
+        state[VK_CONTROL] = state[VK_LCONTROL] = down ? (byte)0x80 : (byte)0;
+        SetKeyboardState(state);
+    }
+
+    private static void Post(IntPtr view, uint message, int wParam, int lParam) => PostMessage(view, message, (IntPtr)wParam, (IntPtr)lParam);
+
     private static void Post(IntPtr view, uint message, int buttons, int width, int height, double x, double y)
     {
         var px = (int)(width * x);
@@ -402,7 +451,12 @@ public class BlockoutTools : IUITest
     private const uint WM_MOUSEMOVE = 0x0200;
     private const uint WM_LBUTTONDOWN = 0x0201;
     private const uint WM_LBUTTONUP = 0x0202;
+    private const uint WM_KEYDOWN = 0x0100;
+    private const uint WM_KEYUP = 0x0101;
     private const int MK_LBUTTON = 0x0001;
+    private const int MK_CONTROL = 0x0008;
+    private const int VK_CONTROL = 0x11;
+    private const int VK_LCONTROL = 0xA2;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT
@@ -412,6 +466,12 @@ public class BlockoutTools : IUITest
 
     [DllImport("user32.dll")]
     private static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetKeyboardState(byte[] state);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetKeyboardState(byte[] state);
 
     [DllImport("user32.dll")]
     private static extern bool GetClientRect(IntPtr hwnd, out RECT rect);

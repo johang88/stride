@@ -302,7 +302,7 @@ public sealed class EditorGameBlockoutService : EditorGameMouseServiceBase, Stri
         }
         else if (drawState != DrawState.Idle)
         {
-            UpdateDrawing(current, ray, mouse, leftDown, leftPressed, escape, snap, grid, input.IsKeyPressed(Keys.T));
+            UpdateDrawing(current, ray, mouse, leftDown, leftPressed, escape, snap, grid, input.IsKeyPressed(Keys.T), ctrl);
         }
         else
         {
@@ -384,7 +384,7 @@ public sealed class EditorGameBlockoutService : EditorGameMouseServiceBase, Stri
 
     #region Drawing
 
-    private void UpdateDrawing(BlockoutToolSettings current, Ray ray, Vector2 mouse, bool leftDown, bool leftPressed, bool escape, bool snap, float grid, bool rotate)
+    private void UpdateDrawing(BlockoutToolSettings current, Ray ray, Vector2 mouse, bool leftDown, bool leftPressed, bool escape, bool snap, float grid, bool rotate, bool square)
     {
         if (escape)
         {
@@ -414,7 +414,11 @@ public sealed class EditorGameBlockoutService : EditorGameMouseServiceBase, Stri
             case DrawState.Footprint:
             {
                 if (IntersectHorizontal(ray, baseHeight, out var point))
+                {
                     cornerB = SnapPoint(frame.ToLocal(point), snap, grid);
+                    if (square)
+                        cornerB = SquareCorner(cornerA, cornerB);
+                }
                 if (!leftDown)
                 {
                     drawState = DrawState.Height;
@@ -446,6 +450,17 @@ public sealed class EditorGameBlockoutService : EditorGameMouseServiceBase, Stri
         var placement = ComputePlacement(drawItem, frame, cornerA, cornerB, baseHeight, height, rotationSteps, snap ? grid : 0);
         UpdatePreview(placement, current.Style);
         DrawFootprint(placement);
+    }
+
+    /// <summary>
+    /// The corner of the square footprint from <paramref name="a"/> toward <paramref name="b"/>: as wide as deep, the longer side of
+    /// the dragged one (on the grid when both corners are).
+    /// </summary>
+    private static Vector2 SquareCorner(Vector2 a, Vector2 b)
+    {
+        var delta = b - a;
+        var side = Math.Max(MathF.Abs(delta.X), MathF.Abs(delta.Y));
+        return a + new Vector2(delta.X < 0 ? -side : side, delta.Y < 0 ? -side : side);
     }
 
     private void FinishDrawing(BlockoutToolSettings current)
@@ -956,6 +971,11 @@ public sealed class EditorGameBlockoutService : EditorGameMouseServiceBase, Stri
     }
 
     /// <summary>
+    /// Runs an action on the game thread (the thread of the viewport's window and its input), for tests and scripts.
+    /// </summary>
+    public Task InvokeOnGameThread(Action action) => controller.InvokeAsync(action);
+
+    /// <summary>
     /// The surface under a ray (game thread work; for tests and scripts).
     /// </summary>
     public Task<SurfaceHit?> Raycast(Ray ray, float maxDistance = 10000)
@@ -965,9 +985,10 @@ public sealed class EditorGameBlockoutService : EditorGameMouseServiceBase, Stri
 
     /// <summary>
     /// Computes the shape the tool would draw by dragging from a point to another of the surface under the first one, up to a
-    /// height (as with the mouse, on the shape's grid when it starts on a shape), without creating it.
+    /// height (as with the mouse, on the shape's grid when it starts on a shape), without creating it. <paramref name="square"/> keeps
+    /// the footprint as wide as deep (Ctrl).
     /// </summary>
-    public Task<BlockoutPlacementResult?> ComputeDrawing(BlockoutShapeItemViewModel item, Vector3 start, Vector3 end, float shapeHeight, int turns = 0)
+    public Task<BlockoutPlacementResult?> ComputeDrawing(BlockoutShapeItemViewModel item, Vector3 start, Vector3 end, float shapeHeight, int turns = 0, bool square = false)
     {
         return controller.InvokeAsync(() =>
         {
@@ -979,6 +1000,8 @@ public sealed class EditorGameBlockoutService : EditorGameMouseServiceBase, Stri
             var grid = current.Snap ? Math.Max(current.GridSize, 0.01f) : 0;
             var a = SnapPoint(drawFrame.ToLocal(hit.Point), grid > 0, grid);
             var b = SnapPoint(drawFrame.ToLocal(end), grid > 0, grid);
+            if (square)
+                b = SquareCorner(a, b);
             return ComputePlacement(item, drawFrame, a, b, hit.Point.Y, shapeHeight, turns, grid);
         });
     }
