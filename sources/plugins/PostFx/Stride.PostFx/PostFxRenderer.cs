@@ -11,6 +11,7 @@ using Stride.Core.Annotations;
 using Stride.Core.Mathematics;
 using Stride.Graphics;
 using Stride.Engine;
+using Stride.Engine.Design;
 using Stride.PostFx.Passes;
 using Stride.PostFx.ScreenSpace;
 using Stride.Rendering.Lights;
@@ -548,7 +549,10 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
             state.Temporal ??= new TemporalHistory();
             // (more phases when upscaling: an output pixel sees fewer samples a frame)
             state.Temporal.JitterCount = Math.Clamp((int)MathF.Ceiling(8.0f / (RenderScale * RenderScale)), 8, 32);
-            state.Temporal.ApplyJitter(view, Antialiasing == PostFxAntialiasing.Taa);
+            // (no jitter in the editor: its grid and gizmos are drawn after the resolve against this depth, and the ones lying on
+            // surfaces, like a collider on its mesh, would pass and fail the depth test from one frame to the next)
+            var editor = (SceneInstance.GetCurrent(context)?.ExecutionMode & ExecutionMode.Editor) == ExecutionMode.Editor;
+            state.Temporal.ApplyJitter(view, Antialiasing == PostFxAntialiasing.Taa && !editor);
         }
 
         // A cut: nothing on screen came from the previous frame's view

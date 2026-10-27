@@ -14,6 +14,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using Stride.Assets.Presentation.AssetEditors.EntityHierarchyEditor.ViewModels;
 using Stride.Assets.Presentation.AssetEditors.SceneEditor.ViewModels;
 using Stride.BepuPhysics;
@@ -297,6 +298,58 @@ public class BlockoutTools : IUITest
         var yaml = File.Exists(scenePath) ? File.ReadAllText(scenePath) : "";
         Check(saved && yaml.Contains("!BlockoutComponent") && yaml.Contains("!BlockoutCollider") && yaml.Contains("!BlockoutWall") && yaml.Contains("!BlockoutStairs"),
             $"scene saved with the shapes ({scenePath})");
+
+        // Selected shapes render the same from frame to frame (their collider gizmo lies on their faces: no depth flicker)
+        Move(view, width, height, 0.02, 0.02);
+        await ctx.WaitForShaders();
+        foreach (var (name, selected) in new[] { ("selected", box), ("unselected", (EntityViewModel)null) })
+        {
+            await session.Dispatcher.InvokeAsync(() =>
+            {
+                editor.ClearSelection();
+                if (selected != null)
+                    editor.SelectedContent.Add(selected);
+            });
+            await Frames(service, 90, 120);
+            var changed = new List<int>();
+            byte[] previous = null;
+            for (int i = 0; i < 4; i++)
+            {
+                await ctx.ScreenshotHwnd(view, $"{name}-{i}");
+                var pixels = LoadScreenshot($"{name}-{i}");
+                if (previous != null && pixels != null)
+                    changed.Add(CountChangedPixels(previous, pixels));
+                previous = pixels;
+                await Frames(service, 1);
+            }
+            Check(changed.Count == 3 && changed.Max() < 1000, $"{name}: steady frames (pixels changed between frames: {string.Join(", ", changed)})");
+        }
+    }
+
+    private static byte[] LoadScreenshot(string name)
+    {
+        var directory = Path.GetDirectoryName(typeof(BlockoutTools).Assembly.Location);
+        var path = Directory.GetFiles(directory, name + ".png", SearchOption.AllDirectories).OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+        if (path == null)
+            return null;
+        using var stream = File.OpenRead(path);
+        var frame = new FormatConvertedBitmap(BitmapDecoder.Create(stream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad).Frames[0], PixelFormats.Bgra32, null, 0);
+        var pixels = new byte[frame.PixelWidth * frame.PixelHeight * 4];
+        frame.CopyPixels(pixels, frame.PixelWidth * 4, 0);
+        return pixels;
+    }
+
+    private static int CountChangedPixels(byte[] a, byte[] b)
+    {
+        if (a.Length != b.Length)
+            return int.MaxValue;
+        var count = 0;
+        for (int i = 0; i < a.Length; i += 4)
+        {
+            if (Math.Abs(a[i] - b[i]) > 24 || Math.Abs(a[i + 1] - b[i + 1]) > 24 || Math.Abs(a[i + 2] - b[i + 2]) > 24)
+                count++;
+        }
+        return count;
     }
 
     /// <summary>
