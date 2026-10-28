@@ -226,7 +226,11 @@ namespace Stride.UI
             get => width;
             set
             {
-                width = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                var clamped = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                // (Equals: an unset size is NaN)
+                if (clamped.Equals(width))
+                    return;
+                width = clamped;
                 InvalidateMeasure();
             }
         }
@@ -245,7 +249,10 @@ namespace Stride.UI
             get => height;
             set
             {
-                height = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                var clamped = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                if (clamped.Equals(height))
+                    return;
+                height = clamped;
                 InvalidateMeasure();
             }
         }
@@ -264,7 +271,10 @@ namespace Stride.UI
             get => depth;
             set
             {
-                depth = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                var clamped = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                if (clamped.Equals(depth))
+                    return;
+                depth = clamped;
                 InvalidateMeasure();
             }
         }
@@ -296,6 +306,8 @@ namespace Stride.UI
             get => horizontalAlignment;
             set
             {
+                if (horizontalAlignment == value)
+                    return;
                 horizontalAlignment = value;
                 InvalidateArrange();
             }
@@ -313,6 +325,8 @@ namespace Stride.UI
             get => verticalAlignment;
             set
             {
+                if (verticalAlignment == value)
+                    return;
                 verticalAlignment = value;
                 InvalidateArrange();
             }
@@ -330,6 +344,8 @@ namespace Stride.UI
             get => depthAlignment;
             set
             {
+                if (depthAlignment == value)
+                    return;
                 depthAlignment = value;
                 InvalidateArrange();
             }
@@ -346,6 +362,8 @@ namespace Stride.UI
             get => MarginInternal;
             set
             {
+                if (MarginInternal == value)
+                    return;
                 MarginInternal = value;
                 InvalidateMeasure();
             }
@@ -367,7 +385,10 @@ namespace Stride.UI
             {
                 if (float.IsNaN(value))
                     return;
-                minimumWidth = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                var clamped = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                if (clamped.Equals(minimumWidth))
+                    return;
+                minimumWidth = clamped;
                 InvalidateMeasure();
             }
         }
@@ -388,7 +409,10 @@ namespace Stride.UI
             {
                 if (float.IsNaN(value))
                     return;
-                minimumHeight = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                var clamped = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                if (clamped.Equals(minimumHeight))
+                    return;
+                minimumHeight = clamped;
                 InvalidateMeasure();
             }
         }
@@ -409,7 +433,10 @@ namespace Stride.UI
             {
                 if (float.IsNaN(value))
                     return;
-                minimumDepth = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                var clamped = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                if (clamped.Equals(minimumDepth))
+                    return;
+                minimumDepth = clamped;
                 InvalidateMeasure();
             }
         }
@@ -430,7 +457,10 @@ namespace Stride.UI
             {
                 if (float.IsNaN(value))
                     return;
-                maximumWidth = MathUtil.Clamp(value, 0.0f, float.PositiveInfinity);
+                var clamped = MathUtil.Clamp(value, 0.0f, float.PositiveInfinity);
+                if (clamped.Equals(maximumWidth))
+                    return;
+                maximumWidth = clamped;
                 InvalidateMeasure();
             }
         }
@@ -451,7 +481,10 @@ namespace Stride.UI
             {
                 if (float.IsNaN(value))
                     return;
-                maximumHeight = MathUtil.Clamp(value, 0.0f, float.PositiveInfinity);
+                var clamped = MathUtil.Clamp(value, 0.0f, float.PositiveInfinity);
+                if (clamped.Equals(maximumHeight))
+                    return;
+                maximumHeight = clamped;
                 InvalidateMeasure();
             }
         }
@@ -472,7 +505,10 @@ namespace Stride.UI
             {
                 if (float.IsNaN(value))
                     return;
-                maximumDepth = MathUtil.Clamp(value, 0.0f, float.PositiveInfinity);
+                var clamped = MathUtil.Clamp(value, 0.0f, float.PositiveInfinity);
+                if (clamped.Equals(maximumDepth))
+                    return;
+                maximumDepth = clamped;
                 InvalidateMeasure();
             }
         }
@@ -493,7 +529,10 @@ namespace Stride.UI
             {
                 if (float.IsNaN(value))
                     return;
-                defaultWidth = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                var clamped = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                if (clamped.Equals(defaultWidth))
+                    return;
+                defaultWidth = clamped;
                 InvalidateMeasure();
             }
         }
@@ -514,7 +553,10 @@ namespace Stride.UI
             {
                 if (float.IsNaN(value))
                     return;
-                defaultHeight = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                var clamped = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                if (clamped.Equals(defaultHeight))
+                    return;
+                defaultHeight = clamped;
                 InvalidateMeasure();
             }
         }
@@ -535,7 +577,10 @@ namespace Stride.UI
             {
                 if (float.IsNaN(value))
                     return;
-                defaultDepth = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                var clamped = MathUtil.Clamp(value, 0.0f, float.MaxValue);
+                if (clamped.Equals(defaultDepth))
+                    return;
+                defaultDepth = clamped;
                 InvalidateMeasure();
             }
         }

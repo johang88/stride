@@ -25,6 +25,8 @@ namespace Stride.UI.Controls
             get { return padding; }
             set
             {
+                if (padding == value)
+                    return;
                 padding = value;
                 InvalidateMeasure();
             }

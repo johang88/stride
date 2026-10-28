@@ -38,6 +38,8 @@ namespace Stride.UI.Controls
             get { return borderThickness; }
             set
             {
+                if (borderThickness == value)
+                    return;
                 borderThickness = value;
                 InvalidateMeasure();
             }
