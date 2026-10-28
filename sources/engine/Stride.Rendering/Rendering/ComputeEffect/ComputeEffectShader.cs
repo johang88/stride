@@ -19,6 +19,17 @@ namespace Stride.Rendering.ComputeEffect
         private bool pipelineStateDirty = true;
         private EffectBytecode previousBytecode;
 
+        // The textures and buffers the effect binds, and whether it writes them (from its reflection, once per bytecode:
+        // walking the reflection at every dispatch cost more than the dispatches themselves)
+        private BoundResource[] boundResources = [];
+
+        private readonly struct BoundResource(ParameterKey key, bool isTexture, bool isUnorderedAccess)
+        {
+            public readonly ParameterKey Key = key;
+            public readonly bool IsTexture = isTexture;
+            public readonly bool IsUnorderedAccess = isUnorderedAccess;
+        }
+
         public ComputeEffectShader(RenderContext context)
             : base(context, null)
         {
@@ -118,6 +129,7 @@ namespace Stride.Rendering.ComputeEffect
                 pipelineState.State.EffectBytecode = EffectInstance.Effect.Bytecode;
                 pipelineState.Update();
                 pipelineStateDirty = false;
+                UpdateBoundResources(previousBytecode);
             }
 
             // Apply pipeline state
@@ -145,18 +157,12 @@ namespace Stride.Rendering.ComputeEffect
         /// </summary>
         private void TransitionBoundResources(CommandList commandList, bool afterDispatch)
         {
-            foreach (var binding in EffectInstance.Effect.Bytecode.Reflection.ResourceBindings)
+            foreach (var binding in boundResources)
             {
-                bool isUnorderedAccess = binding.Class == EffectParameterClass.UnorderedAccessView;
-                if (!isUnorderedAccess && binding.Class != EffectParameterClass.ShaderResourceView)
-                    continue;
-
-                GraphicsResource resource = binding.KeyInfo.Key switch
-                {
-                    ObjectParameterKey<Texture> textureKey => Parameters.Get(textureKey),
-                    ObjectParameterKey<Stride.Graphics.Buffer> bufferKey => Parameters.Get(bufferKey),
-                    _ => null,
-                };
+                var isUnorderedAccess = binding.IsUnorderedAccess;
+                GraphicsResource resource = binding.IsTexture
+                    ? Parameters.Get((ObjectParameterKey<Texture>)binding.Key)
+                    : Parameters.Get((ObjectParameterKey<Stride.Graphics.Buffer>)binding.Key);
                 if (resource is null)
                     continue;
 
@@ -172,6 +178,22 @@ namespace Stride.Rendering.ComputeEffect
                     commandList.ResourceBarrierTransition(resource, isUnorderedAccess ? BarrierLayout.UnorderedAccess : BarrierLayout.ShaderResource);
                 }
             }
+        }
+
+        private void UpdateBoundResources(EffectBytecode bytecode)
+        {
+            var resources = new List<BoundResource>();
+            foreach (var binding in bytecode.Reflection.ResourceBindings)
+            {
+                var isUnorderedAccess = binding.Class == EffectParameterClass.UnorderedAccessView;
+                if (!isUnorderedAccess && binding.Class != EffectParameterClass.ShaderResourceView)
+                    continue;
+                if (binding.KeyInfo.Key is ObjectParameterKey<Texture>)
+                    resources.Add(new BoundResource(binding.KeyInfo.Key, true, isUnorderedAccess));
+                else if (binding.KeyInfo.Key is ObjectParameterKey<Stride.Graphics.Buffer>)
+                    resources.Add(new BoundResource(binding.KeyInfo.Key, false, isUnorderedAccess));
+            }
+            boundResources = resources.ToArray();
         }
     }
 }
