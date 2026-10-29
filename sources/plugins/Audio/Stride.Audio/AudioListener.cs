@@ -132,7 +132,13 @@ namespace Stride.Audio
 #endif
         }
 
-        internal void Update()
+        /// <summary>
+        /// Sends <see cref="Position"/>, <see cref="Velocity"/>, <see cref="Forward"/> and <see cref="Up"/> to the audio device.
+        /// The <see cref="AudioListenerProcessor"/> does it for the listeners of <see cref="AudioListenerComponent"/>s; listeners
+        /// created in code (for sounds positioned with <see cref="SoundInstance.Apply3D"/>) call it after moving.
+        /// </summary>
+        /// <remarks>A spatialized instance computes its mix when <see cref="SoundInstance.Apply3D"/> is called: apply it again after.</remarks>
+        public void Update()
         {
             if (Listener.Ptr == IntPtr.Zero) return;
             AudioLayer.ListenerPush3D(Listener, ref Position, ref forward, ref up, ref Velocity, ref WorldTransform);
