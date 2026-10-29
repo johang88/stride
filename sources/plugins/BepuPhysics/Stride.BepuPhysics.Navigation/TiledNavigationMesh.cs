@@ -203,8 +203,15 @@ public sealed class TiledNavigationMesh : GameSystemBase
         var endPos = end.ToDotRecastVector();
         query.FindNearestPoly(startPos, extents, filter, out var startRef, out var startNearest, out _);
         query.FindNearestPoly(endPos, extents, filter, out var endRef, out var endNearest, out _);
-        if (startRef == 0)
-            return false;
+        var offMesh = startRef == 0;
+        if (offMesh)
+        {
+            // Wider search for agents pressed against a wall (inside the agent radius the mesh is eroded by), as for targets:
+            // without a path they'd walk straight at the target into the wall
+            query.FindNearestPoly(startPos, new RcVec3f(8, 16, 8), filter, out startRef, out startNearest, out _);
+            if (startRef == 0)
+                return false;
+        }
         if (endRef == 0)
         {
             // Wider search for targets slightly off the mesh
@@ -225,7 +232,8 @@ public sealed class TiledNavigationMesh : GameSystemBase
         status = query.FindStraightPath(startNearest, target, pathPolys, polyCount, straightPath, out var cornerCount, straightPath.Length, 0);
         if (status.Failed())
             return false;
-        for (int i = 1; i < cornerCount; i++)
+        // (the first corner is the start: kept when the agent is off the mesh, to get back on it first)
+        for (int i = offMesh ? 0 : 1; i < cornerCount; i++)
             corners.Add(straightPath[i].pos.ToStrideVector());
         return corners.Count > 0;
     }
