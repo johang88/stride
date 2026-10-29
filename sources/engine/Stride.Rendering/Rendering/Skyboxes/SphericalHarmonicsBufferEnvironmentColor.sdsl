@@ -11,7 +11,9 @@ namespace Stride.Rendering.Skyboxes
     {
         rgroup PerView.Lighting
         {
-            stage Buffer<float4> SphericalHarmonicsBuffer;
+            // (not stage: like the colors of SphericalHarmonicsEnvironmentColor, the key is per composition, as the skybox
+            // light renderer sets it; a stage key was never bound and the sky light read zeros)
+            Buffer<float4> SphericalHarmonicsBuffer;
         }
 
         override float4 Compute(float3 direction)
