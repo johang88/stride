@@ -115,15 +115,14 @@ public sealed class BlockoutStairs : BlockoutShape
             Build(builder, size);
             return;
         }
-        // A slope through the middle of the treads (half a step under the noses), flat on the last tread
+        // A slope from the floor at the foot to the middle of the last tread, flat after it. No lip at the foot: a character
+        // capsule stops at a vertical edge (its contact isn't a support), even one of half a step
         var zBack = size.Z * 0.5f;
         var count = GetStepCount(size.Y);
-        var rise = size.Y / count;
         var run = size.Z / count;
         builder.AddExtrudedX(stackalloc[]
         {
             new Vector2(zBack, 0),
-            new Vector2(zBack, rise * 0.5f),
             new Vector2(-zBack + run * 0.5f, size.Y),
             new Vector2(-zBack, size.Y),
             new Vector2(-zBack, 0),
