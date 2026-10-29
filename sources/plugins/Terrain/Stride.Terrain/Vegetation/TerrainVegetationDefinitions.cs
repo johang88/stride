@@ -143,4 +143,20 @@ public sealed class TerrainVegetationType
     [DataMember(90)]
     [DefaultValue(true)]
     public bool ImpostorsCastShadows { get; set; } = true;
+
+    /// <summary>
+    /// Radius of the trunk collided with (at scale 1, meters; 0: walked through). Used by <see cref="Physics.TerrainVegetationCollider"/>.
+    /// </summary>
+    [DataMember(100)]
+    [DefaultValue(0.0f)]
+    [DataMemberRange(0, 5, 0.05, 0.1, 2)]
+    public float TrunkRadius { get; set; }
+
+    /// <summary>
+    /// Height of the trunk collided with (at scale 1, meters).
+    /// </summary>
+    [DataMember(110)]
+    [DefaultValue(4.0f)]
+    [DataMemberRange(0.5, 50, 0.5, 1, 1)]
+    public float TrunkHeight { get; set; } = 4.0f;
 }
