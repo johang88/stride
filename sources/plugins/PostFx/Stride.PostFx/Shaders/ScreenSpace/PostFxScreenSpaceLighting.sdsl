@@ -65,8 +65,11 @@ namespace Stride.PostFx
                 }
                 if (PostFxIndirectStrength > 0.0)
                 {
+                    // (premultiplied by the share of rays that found light, so filtering between pixels that found some and
+                    // pixels that didn't keeps the light found)
                     float4 indirect = PostFxIndirect.SampleLevel(PostFxScreenLinear, previousUv, 0);
-                    streams.screenSpaceDiffuse = float4(indirect.rgb * streams.matAmbientOcclusion, saturate(indirect.a * onScreen * PostFxIndirectStrength));
+                    float3 light = indirect.rgb / max(indirect.a, 1e-4);
+                    streams.screenSpaceDiffuse = float4(light * streams.matAmbientOcclusion, saturate(indirect.a * onScreen * PostFxIndirectStrength));
                 }
             }
         }

@@ -1,0 +1,70 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// A pass of the edge-aware filter of the accumulated indirect light (a-trous: 5x5 taps FilterStep pixels apart with
+    /// B3 spline weights, run with steps 1 to 8; a 3x3 kernel at wide steps left blocks): the light of the neighbours on the same surface (near its plane, facing the same way) is
+    /// averaged, so what is left of the rays' noise doesn't show as blotches. Half resolution, premultiplied light.
+    /// Groups of 8x8 threads.
+    /// </summary>
+    shader PostFxIndirectFilter : ComputeShaderBase, PostFxViewSpace
+    {
+        stage Texture2D<float4> FilterSource;
+        // View space normal and distance of the pixels (one load a tap)
+        stage Texture2D<float4> FilterNormal;
+        stage RWTexture2D<float4> FilterOutput;
+
+        cbuffer PerDispatch
+        {
+            stage int2 FilterSize;
+            stage int FilterStep;
+        };
+
+        override void Compute()
+        {
+            int2 pixel = (int2)streams.DispatchThreadId.xy;
+            if (any(pixel >= FilterSize))
+                return;
+            float4 center = FilterNormal.Load(int3(pixel, 0));
+            float distance = center.w;
+            if (IsSky(distance))
+            {
+                FilterOutput[pixel] = 0.0;
+                return;
+            }
+            float2 texel = ViewSize.zw;
+            float3 position = ViewPosition((pixel * 2 + 0.5) * texel, distance);
+            float3 normal = center.xyz;
+            // (the distance to the plane allowed grows with the distance: the depth is less precise there)
+            float tolerance = 0.01 * distance + 0.03;
+
+            float4 sum = 0.0;
+            float weights = 0.0;
+            [unroll]
+            for (int y = -2; y <= 2; y++)
+            {
+                [unroll]
+                for (int x = -2; x <= 2; x++)
+                {
+                    int2 tap = pixel + int2(x, y) * FilterStep;
+                    if (any(tap < 0) || any(tap >= FilterSize))
+                        continue;
+                    float4 tapGeometry = FilterNormal.Load(int3(tap, 0));
+                    if (IsSky(tapGeometry.w))
+                        continue;
+                    float3 tapPosition = ViewPosition((tap * 2 + 0.5) * texel, tapGeometry.w);
+                    float3 tapNormal = tapGeometry.xyz;
+                    float kernel = (x == 0 ? 6.0 : (abs(x) == 1 ? 4.0 : 1.0)) * (y == 0 ? 6.0 : (abs(y) == 1 ? 4.0 : 1.0));
+                    float plane = abs(dot(normal, tapPosition - position)) / tolerance;
+                    float facing = pow(saturate(dot(normal, tapNormal)), 16.0);
+                    float w = kernel * exp(-plane * plane) * facing;
+                    sum += FilterSource.Load(int3(tap, 0)) * w;
+                    weights += w;
+                }
+            }
+            FilterOutput[pixel] = weights > 0.0 ? sum / weights : FilterSource.Load(int3(pixel, 0));
+        }
+    };
+}

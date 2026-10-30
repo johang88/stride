@@ -630,7 +630,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
                 var viewProjection = state.Temporal?.ViewProjection ?? renderContext.RenderView.ViewProjection;
                 Matrix.Invert(ref viewProjection, out var inverseViewProjection);
                 var previous = state.Temporal?.HasPrevious == true ? state.Temporal.PreviousUnjitteredViewProjection : viewProjection;
-                screenSpacePass.DrawIndirect(context, renderContext.RenderView, targets, scene, inverseViewProjection, previous, frame);
+                screenSpacePass.DrawIndirect(context, renderContext.RenderView, targets, scene, inverseViewProjection, previous, frame, MathF.Pow(2.0f, ExposureEV(profile)));
             }
             else
             {
@@ -705,6 +705,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         {
             debugShader.Parameters.Set(PostFxDebugViewKeys.DebugColor, DebugView is PostFxDebugView.Reflections or PostFxDebugView.IndirectLight);
             debugShader.Parameters.Set(PostFxDebugViewKeys.DebugScale, MathF.Pow(2.0f, ExposureEV(profile)));
+            debugShader.Parameters.Set(PostFxDebugViewKeys.DebugPremultiplied, DebugView is PostFxDebugView.IndirectLight);
             debugShader.SetInput(0, debugTexture);
             debugShader.SetOutput(output);
             debugShader.Draw(context, "PostFx.DebugView");

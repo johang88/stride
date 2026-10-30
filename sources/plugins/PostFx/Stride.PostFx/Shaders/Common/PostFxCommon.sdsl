@@ -35,5 +35,26 @@ namespace Stride.PostFx
         {
             return PostFxGradientNoise(pixel + float2(0.7548776662, 0.5698402910) * (frame * 113.0 + salt * 41.0));
         }
+
+        // PCG 3D hash (Jarzynski and Olano 2020): three independent values in [0, 1)
+        stage float3 PostFxHash3(uint3 v)
+        {
+            v = v * 1664525u + 1013904223u;
+            v.x += v.y * v.z;
+            v.y += v.z * v.x;
+            v.z += v.x * v.y;
+            v = v ^ (v >> 16u);
+            v.x += v.y * v.z;
+            v.y += v.z * v.x;
+            v.z += v.x * v.y;
+            return float3(v) * (1.0 / 4294967296.0);
+        }
+
+        // Three independent values per pixel, moved along the R3 sequence each frame (for stochastic rays: unlike the
+        // gradient noise with offsets, the dimensions aren't correlated, and each pixel spreads its values over frames)
+        stage float3 PostFxFrameNoise3(int2 pixel, float frame)
+        {
+            return frac(PostFxHash3(uint3(pixel + 4096, 7)) + frame * float3(0.8191725134, 0.6710436067, 0.5497004779));
+        }
     };
 }

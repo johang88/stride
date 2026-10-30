@@ -4,23 +4,21 @@
 namespace Stride.PostFx
 {
     /// <summary>
-    /// Accumulates the screen-space indirect light over frames: this frame's rays (blurred over a few pixels of the same
-    /// surface) blended into the history reprojected by the camera. rgb = the light of the hits (averaged over them only),
-    /// a = the share of rays that hit something. Groups of 8x8 threads.
+    /// Accumulates the screen-space indirect light over frames: this frame's rays (averaged over the 3x3 pixels of the same
+    /// surface) blended into the history reprojected by the camera, where the history saw the same surface (each of its
+    /// four taps is checked against the distance it was traced at: no light dragged across edges in motion), with a running
+    /// average over up to a maximum of frames. Premultiplied: rgb = the
+    /// light of the hits x the share of rays that hit something, a = that share. Groups of 8x8 threads.
+    /// Also writes the distance and the number of frames accumulated of each pixel, for the next frame.
     /// </summary>
     shader PostFxIndirectTemporal : ComputeShaderBase, PostFxViewSpace
     {
         stage Texture2D<float4> IndirectCurrent;
         stage Texture2D<float4> IndirectHistory;
+        stage Texture2D<float2> IndirectHistoryInfo;
         stage Texture2D<float> IndirectTemporalDistance;
         stage RWTexture2D<float4> IndirectAccumulated;
-
-        stage SamplerState IndirectHistorySampler
-        {
-            Filter = MIN_MAG_MIP_LINEAR;
-            AddressU = Clamp;
-            AddressV = Clamp;
-        };
+        stage RWTexture2D<float2> IndirectAccumulatedInfo;
 
         cbuffer PerDispatch
         {
@@ -29,6 +27,8 @@ namespace Stride.PostFx
             stage float4x4 IndirectInverseViewProjection;
             stage float4x4 IndirectPreviousViewProjection;
             stage float IndirectHistoryValid;
+            // Most frames averaged
+            stage float IndirectMaxFrames;
         };
 
         override void Compute()
@@ -37,15 +37,15 @@ namespace Stride.PostFx
             if (any(pixel >= IndirectTemporalSize))
                 return;
             float center = IndirectTemporalDistance.Load(int3(pixel * 2, 0));
-            if (center > 5000.0)
+            if (IsSky(center))
             {
                 IndirectAccumulated[pixel] = 0.0;
+                IndirectAccumulatedInfo[pixel] = float2(center, 0.0);
                 return;
             }
 
             // This frame: the rays of the 3x3 neighbours on the same surface
-            float3 light = 0.0;
-            float hits = 0.0;
+            float4 sum = 0.0;
             float samples = 0.0;
             [unroll]
             for (int y = -1; y <= 1; y++)
@@ -57,31 +57,60 @@ namespace Stride.PostFx
                     float distance = IndirectTemporalDistance.Load(int3(tap * 2, 0));
                     float w = saturate(1.0 - abs(distance - center) / (center * 0.05 + 0.05));
                     float4 ray = IndirectCurrent.Load(int3(tap, 0));
-                    light += ray.rgb * ray.a * w;
-                    hits += ray.a * w;
+                    float4 premultiplied = float4(ray.rgb * ray.a, ray.a);
+                    sum += premultiplied * w;
                     samples += w;
                 }
             }
-            float4 current = float4(hits > 0.0 ? light / hits : 0.0, hits / max(samples, 1e-4));
+            float4 current = sum / max(samples, 1e-4);
 
-            // Where this surface was
-            float2 uv = (pixel * 2 + 1.0) * ViewSize.zw;
+            // Where this surface was, and the distance it was at then
+            float2 uv = (pixel * 2 + 0.5) * ViewSize.zw;
             float depth = ViewDepthInfo.y / center - ViewDepthInfo.x;
             float4 world = mul(float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0), IndirectInverseViewProjection);
             float4 previousClip = mul(world, IndirectPreviousViewProjection);
-            float2 previousUv = float2(previousClip.x / previousClip.w * 0.5 + 0.5, 0.5 - previousClip.y / previousClip.w * 0.5);
-            bool inside = IndirectHistoryValid > 0.5 && previousClip.w > 0.0 && all(previousUv > 0.0) && all(previousUv < 1.0);
-            if (!inside)
+            float4 history = 0.0;
+            float frames = 0.0;
+            if (IndirectHistoryValid > 0.5 && previousClip.w > 0.0)
             {
-                IndirectAccumulated[pixel] = current;
-                return;
+                float2 previousUv = float2(previousClip.x / previousClip.w * 0.5 + 0.5, 0.5 - previousClip.y / previousClip.w * 0.5);
+                float2 previousPixel = previousUv * IndirectTemporalSize - 0.5;
+                int2 corner = (int2)floor(previousPixel);
+                float2 f = previousPixel - corner;
+                float expected = previousClip.w;
+                float weight = 0.0;
+                [unroll]
+                for (int i = 0; i < 4; i++)
+                {
+                    int2 offset = int2(i & 1, i >> 1);
+                    int2 tap = corner + offset;
+                    if (any(tap < 0) || any(tap >= IndirectTemporalSize))
+                        continue;
+                    float2 info = IndirectHistoryInfo.Load(int3(tap, 0));
+                    if (abs(info.x - expected) > expected * 0.03 + 0.05)
+                        continue;
+                    float w = (offset.x != 0 ? f.x : 1.0 - f.x) * (offset.y != 0 ? f.y : 1.0 - f.y);
+                    history += IndirectHistory.Load(int3(tap, 0)) * w;
+                    frames += info.y * w;
+                    weight += w;
+                }
+                if (weight > 0.05)
+                {
+                    history /= weight;
+                    frames /= weight;
+                }
+                else
+                {
+                    frames = 0.0;
+                }
             }
-            float4 history = IndirectHistory.SampleLevel(IndirectHistorySampler, previousUv, 0);
-            // The light blended by the hits each brings (a miss doesn't darken the light found before)
-            float blend = 0.08;
-            float hitShare = lerp(history.a, current.a, blend);
-            float3 blended = (history.rgb * history.a * (1.0 - blend) + current.rgb * current.a * blend) / max(hitShare, 1e-4);
-            IndirectAccumulated[pixel] = float4(hitShare > 0.0 ? blended : 0.0, hitShare);
+
+            // A running average (a fresh history follows this frame). Not clamped to this frame's rays: a few agreeing
+            // rays would throw the history away (flicker); where the surface changed, the distance check already did
+            frames = min(frames + 1.0, IndirectMaxFrames);
+            float4 accumulated = lerp(history, current, 1.0 / frames);
+            IndirectAccumulated[pixel] = max(accumulated, 0.0);
+            IndirectAccumulatedInfo[pixel] = float2(center, frames);
         }
     };
 }

@@ -28,14 +28,19 @@ internal sealed class ScreenSpaceTargets : IDisposable
     public readonly Texture[] ReflectionLevelViews = new Texture[ReflectionLevels];
     public bool ReflectionsValid;
     public Texture IndirectRaw;
+    public Texture IndirectNormal;
+    // Accumulated light (premultiplied by the share of hits) and, per pixel, the distance it was traced at and the frames
+    // it holds
     public readonly Texture[] IndirectHistory = new Texture[2];
+    public readonly Texture[] IndirectHistoryInfo = new Texture[2];
+    public readonly Texture[] IndirectFiltered = new Texture[2];
     public int IndirectIndex;
     public bool IndirectValid;
 
     /// <summary>
-    /// The accumulated indirect light of the last frame.
+    /// The accumulated and filtered indirect light of the last frame: rgb = light x share of the rays that found some, a = that share.
     /// </summary>
-    public Texture Indirect => IndirectValid ? IndirectHistory[IndirectIndex] : null;
+    public Texture Indirect => IndirectValid ? IndirectFiltered[0] : null;
 
     public void Ensure(GraphicsDevice device, int width, int height)
     {
@@ -61,10 +66,16 @@ internal sealed class ScreenSpaceTargets : IDisposable
             ReflectionLevelViews[i] = Reflections.ToTextureView(ViewType.Single, 0, i);
         IndirectRaw = Texture.New2D(device, halfWidth, halfHeight, PixelFormat.R16G16B16A16_Float, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
         IndirectRaw.Name = "PostFxIndirectRaw";
+        IndirectNormal = Texture.New2D(device, halfWidth, halfHeight, PixelFormat.R16G16B16A16_Float, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
+        IndirectNormal.Name = "PostFxIndirectNormal";
         for (int i = 0; i < 2; i++)
         {
             IndirectHistory[i] = Texture.New2D(device, halfWidth, halfHeight, PixelFormat.R16G16B16A16_Float, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
-            IndirectHistory[i].Name = "PostFxIndirect";
+            IndirectHistory[i].Name = "PostFxIndirectHistory";
+            IndirectHistoryInfo[i] = Texture.New2D(device, halfWidth, halfHeight, PixelFormat.R16G16_Float, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
+            IndirectHistoryInfo[i].Name = "PostFxIndirectHistoryInfo";
+            IndirectFiltered[i] = Texture.New2D(device, halfWidth, halfHeight, PixelFormat.R16G16B16A16_Float, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
+            IndirectFiltered[i].Name = "PostFxIndirect";
         }
         ReflectionsValid = false;
         IndirectValid = false;
@@ -93,12 +104,17 @@ internal sealed class ScreenSpaceTargets : IDisposable
         }
         Reflections?.Dispose();
         IndirectRaw?.Dispose();
+        IndirectNormal?.Dispose();
         for (int i = 0; i < 2; i++)
         {
             IndirectHistory[i]?.Dispose();
             IndirectHistory[i] = null;
+            IndirectHistoryInfo[i]?.Dispose();
+            IndirectHistoryInfo[i] = null;
+            IndirectFiltered[i]?.Dispose();
+            IndirectFiltered[i] = null;
         }
-        Reflections = IndirectRaw = null;
+        Reflections = IndirectRaw = IndirectNormal = null;
         ReflectionsValid = IndirectValid = false;
         Pyramid?.Dispose();
         AmbientOcclusion?.Dispose();
@@ -122,6 +138,7 @@ internal sealed class ScreenSpacePass
     private readonly ComputeEffectShader mip;
     private readonly ComputeEffectShader indirect;
     private readonly ComputeEffectShader indirectTemporal;
+    private readonly ComputeEffectShader indirectFilter;
 
     public ScreenSpacePass(RenderContext context)
     {
@@ -133,6 +150,7 @@ internal sealed class ScreenSpacePass
         mip = new ComputeEffectShader(context) { ShaderSourceName = "PostFxScreenMip", ThreadNumbers = new Int3(8, 8, 1) };
         indirect = new ComputeEffectShader(context) { ShaderSourceName = "PostFxIndirect", ThreadNumbers = new Int3(8, 8, 1) };
         indirectTemporal = new ComputeEffectShader(context) { ShaderSourceName = "PostFxIndirectTemporal", ThreadNumbers = new Int3(8, 8, 1) };
+        indirectFilter = new ComputeEffectShader(context) { ShaderSourceName = "PostFxIndirectFilter", ThreadNumbers = new Int3(8, 8, 1) };
     }
 
     /// <summary>
@@ -168,9 +186,10 @@ internal sealed class ScreenSpacePass
     }
 
     /// <summary>
-    /// Traces the indirect light of the frame and accumulates it over frames, for the next frame.
+    /// Traces the indirect light of the frame, accumulates it over frames and filters it, for the next frame.
     /// </summary>
-    public void DrawIndirect(RenderDrawContext context, RenderView view, ScreenSpaceTargets targets, Texture scene, Matrix inverseViewProjection, Matrix previousViewProjection, int frame)
+    /// <param name="exposure">Scene light to screen brightness: the light a ray brings is limited on screen.</param>
+    public void DrawIndirect(RenderDrawContext context, RenderView view, ScreenSpaceTargets targets, Texture scene, Matrix inverseViewProjection, Matrix previousViewProjection, int frame, float exposure)
     {
         var width = targets.Pyramid.Width;
         var height = targets.Pyramid.Height;
@@ -180,10 +199,13 @@ internal sealed class ScreenSpacePass
         parameters.Set(PostFxIndirectKeys.IndirectDistance, targets.Pyramid);
         parameters.Set(PostFxIndirectKeys.IndirectScene, scene);
         parameters.Set(PostFxIndirectKeys.IndirectOutput, targets.IndirectRaw);
+        parameters.Set(PostFxIndirectKeys.IndirectNormal, targets.IndirectNormal);
         parameters.Set(PostFxIndirectKeys.IndirectSize, size);
         parameters.Set(PostFxIndirectKeys.IndirectMaxDistance, 8.0f);
-        parameters.Set(PostFxIndirectKeys.IndirectSteps, 12);
+        parameters.Set(PostFxIndirectKeys.IndirectSteps, 16);
         parameters.Set(PostFxIndirectKeys.IndirectFrame, (float)(frame % 1024));
+        parameters.Set(PostFxIndirectKeys.IndirectExposure, exposure);
+        parameters.Set(PostFxIndirectKeys.IndirectMaxBrightness, 2.0f);
         indirect.ThreadGroupCounts = Groups(size.X, size.Y);
         indirect.Draw(context, "PostFx.Indirect");
 
@@ -193,14 +215,36 @@ internal sealed class ScreenSpacePass
         SetView(temporal, view, width, height);
         temporal.Set(PostFxIndirectTemporalKeys.IndirectCurrent, targets.IndirectRaw);
         temporal.Set(PostFxIndirectTemporalKeys.IndirectHistory, previous);
+        temporal.Set(PostFxIndirectTemporalKeys.IndirectHistoryInfo, targets.IndirectHistoryInfo[targets.IndirectIndex]);
         temporal.Set(PostFxIndirectTemporalKeys.IndirectTemporalDistance, targets.PyramidLevelViews[0]);
-        temporal.Set(PostFxIndirectTemporalKeys.IndirectAccumulated, next);
+        // (accumulated into a filter target: the first filter pass writes the history)
+        temporal.Set(PostFxIndirectTemporalKeys.IndirectAccumulated, targets.IndirectFiltered[1]);
+        temporal.Set(PostFxIndirectTemporalKeys.IndirectAccumulatedInfo, targets.IndirectHistoryInfo[1 - targets.IndirectIndex]);
+        temporal.Set(PostFxIndirectTemporalKeys.IndirectMaxFrames, 32.0f);
         temporal.Set(PostFxIndirectTemporalKeys.IndirectTemporalSize, size);
         temporal.Set(PostFxIndirectTemporalKeys.IndirectInverseViewProjection, inverseViewProjection);
         temporal.Set(PostFxIndirectTemporalKeys.IndirectPreviousViewProjection, previousViewProjection);
         temporal.Set(PostFxIndirectTemporalKeys.IndirectHistoryValid, targets.IndirectValid ? 1.0f : 0.0f);
         indirectTemporal.ThreadGroupCounts = Groups(size.X, size.Y);
         indirectTemporal.Draw(context, "PostFx.IndirectTemporal");
+
+        // The edge-aware filter: 4 passes (steps 1 to 8 pixels); the first is the history of the next frame (its noise
+        // filtered before it accumulates: SVGF), the last ends in the first filtered target, which the surfaces read
+        var filter = indirectFilter.Parameters;
+        SetView(filter, view, width, height);
+        filter.Set(PostFxIndirectFilterKeys.FilterNormal, targets.IndirectNormal);
+        filter.Set(PostFxIndirectFilterKeys.FilterSize, size);
+        indirectFilter.ThreadGroupCounts = Groups(size.X, size.Y);
+        var source = targets.IndirectFiltered[1];
+        for (int pass = 0; pass < 4; pass++)
+        {
+            var output = pass == 0 ? next : targets.IndirectFiltered[pass & 1 ^ 1];
+            filter.Set(PostFxIndirectFilterKeys.FilterSource, source);
+            filter.Set(PostFxIndirectFilterKeys.FilterOutput, output);
+            filter.Set(PostFxIndirectFilterKeys.FilterStep, 1 << pass);
+            indirectFilter.Draw(context, "PostFx.IndirectFilter");
+            source = output;
+        }
         targets.IndirectIndex = 1 - targets.IndirectIndex;
         targets.IndirectValid = true;
     }
