@@ -178,6 +178,8 @@ namespace Stride.Rendering
             }
 
             renderMesh.ReceiveDecals = modelComponent.ReceiveDecals && (materialPass?.Parameters?.Get(MaterialKeys.ReceiveDecals) ?? true);
+            // (the model's mesh: the one drawn loses its skinning when it is skinned in a compute pass)
+            renderMesh.IsSkinned = sourceMesh?.Skinning != null;
             renderMesh.MaterialPass = materialPass;
             // Account for any changes made to the individual meshes
             renderMesh.Mesh = sourceMesh;

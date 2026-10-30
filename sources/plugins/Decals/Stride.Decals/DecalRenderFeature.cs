@@ -51,7 +51,7 @@ public sealed class DecalRenderFeature : SubRenderFeature
             var renderObject = RootRenderFeature.GetObjectNode(objectNodeReference).RenderObject;
             if (stage.Index >= renderObject.ActiveRenderStages.Length || !renderObject.ActiveRenderStages[stage.Index].Active)
                 return;
-            if (renderObject is not RenderMesh { ReceiveDecals: true } renderMesh || (!skinnedMeshesReceive && renderMesh.Mesh?.Skinning != null))
+            if (renderObject is not RenderMesh { ReceiveDecals: true } renderMesh || (!skinnedMeshesReceive && renderMesh.IsSkinned))
                 return;
             var renderEffect = renderEffects[renderObject.StaticObjectNode * effectSlotCount + effectSlot.Index];
             renderEffect?.EffectValidator.ValidateParameter(ForwardShadingKeys.Decals, Shader);

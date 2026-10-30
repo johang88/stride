@@ -36,6 +36,12 @@ namespace Stride.Rendering
         /// </summary>
         public bool ReceiveDecals = true;
 
+        /// <summary>
+        /// Whether the mesh is deformed by a skeleton (also when it is skinned in a compute pass, which leaves the
+        /// <see cref="Mesh"/> it draws without <see cref="Mesh.Skinning"/>).
+        /// </summary>
+        public bool IsSkinned;
+
         public bool IsScalingNegative;
 
         public bool IsPreviousScalingNegative;
