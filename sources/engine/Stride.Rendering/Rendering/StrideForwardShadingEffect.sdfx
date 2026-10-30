@@ -94,6 +94,15 @@ namespace Stride.Rendering
         }
 
         // -----------------------------------------------
+        // Decals of opaque surfaces
+        // -----------------------------------------------
+        ShaderSource decals = ForwardShadingKeys.Decals;
+        if (decals != null)
+        {
+            mixin (decals);
+        }
+
+        // -----------------------------------------------
         // Shading extensions (e.g. the fog of transparent surfaces: the opaque ones are fogged in a full-screen pass)
         // -----------------------------------------------
         ShaderSourceCollection shadingExtensions = ForwardShadingKeys.ShadingExtensions;

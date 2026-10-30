@@ -23,6 +23,11 @@ namespace Stride.Rendering.Materials
 
         public static readonly PermutationParameterKey<ShaderSource> PixelStageSurfaceFilter = ParameterKeys.NewPermutation<ShaderSource>();
 
+        /// <summary>
+        /// Whether the surfaces of the material receive decals (see <see cref="ForwardShadingKeys.Decals"/>); only set when they don't.
+        /// </summary>
+        public static readonly ValueParameterKey<bool> ReceiveDecals = ParameterKeys.NewValue(true);
+
         public static readonly ObjectParameterKey<Texture> BlendMap = ParameterKeys.NewObject<Texture>();
         public static readonly ValueParameterKey<float> BlendValue = ParameterKeys.NewValue<float>();
 

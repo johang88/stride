@@ -103,6 +103,12 @@ namespace Stride.Rendering.Compositing
         public IAtmosphereRenderer Atmosphere { get; set; }
 
         /// <summary>
+        /// The decals projected onto the opaque surfaces of the scene.
+        /// </summary>
+        /// <remarks>Needs the depth prepass (<see cref="LightProbes"/> and a <see cref="GBufferRenderStage"/>, no MSAA). Not drawn in virtual reality.</remarks>
+        public IDecalRenderer Decals { get; set; }
+
+        /// <summary>
         /// Virtual Reality related settings
         /// </summary>
         public VRRendererSettings VRSettings { get; set; } = new VRRendererSettings();
@@ -440,6 +446,8 @@ namespace Stride.Rendering.Compositing
 
                     Atmosphere?.Collect(context, TransparentRenderStage);
                     CollectDepthPrepass(context);
+                    if (depthPrepassStages.DepthPrepass != null)
+                        Decals?.Collect(context, OpaqueRenderStage);
                     if (PostEffects is IScreenSpaceLightingEffects screenSpaceLighting)
                         screenSpaceLighting.OpaqueRenderStage = OpaqueRenderStage;
 
@@ -570,6 +578,17 @@ namespace Stride.Rendering.Compositing
 
                 // Bake lightprobes against Z-buffer
                 BakeLightProbes(context, drawContext);
+
+                // Decals the opaque surfaces apply, projected onto the depth
+                if (Decals != null && depthPrepassStages.DepthPrepass != null && eyeCount == 1)
+                {
+                    using (drawContext.PushRenderTargetsAndRestore())
+                    {
+                        var depthStencil = drawContext.CommandList.DepthStencilBuffer;
+                        drawContext.CommandList.SetRenderTargets(null, []);
+                        Decals.Draw(drawContext, depthStencil);
+                    }
+                }
 
                 // Screen-space terms the opaque surfaces' lighting reads (ambient occlusion, contact shadows), from the depth
                 if (PostEffects is IScreenSpaceLightingEffects screenSpaceLighting)
@@ -1037,6 +1056,7 @@ namespace Stride.Rendering.Compositing
         {
             PostEffects?.Dispose();
             Atmosphere?.Dispose();
+            Decals?.Dispose();
             depthStencilROCached?.Dispose();
         }
 

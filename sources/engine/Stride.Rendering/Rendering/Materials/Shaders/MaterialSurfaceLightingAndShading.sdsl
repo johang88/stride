@@ -26,6 +26,9 @@ namespace Stride.Rendering.Materials
             // Make sure that light stream is reset
             ResetLightStream();
 
+            // Decals of the view on the surface (albedo, normal, roughness, emissive light)
+            ApplyDecals();
+
             // Prepare the material for lighting (allows to pre-compute things which are reused during lighting computation)
             PrepareMaterialForLightingAndShading();
 

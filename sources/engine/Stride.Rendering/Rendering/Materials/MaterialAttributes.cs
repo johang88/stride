@@ -186,6 +186,15 @@ namespace Stride.Rendering.Materials
         public CompareFunction DepthFunction { get; set; } = CompareFunction.Greater;
 
         /// <summary>
+        /// Whether decals are projected onto the surfaces of the material.
+        /// </summary>
+        /// <userdoc>Draw decals (markers, dirt, cracks...) on surfaces with this material. Opaque surfaces only.</userdoc>
+        [Display("Receive Decals", "Misc")]
+        [DataMember(137)]
+        [DefaultValue(true)]
+        public bool ReceiveDecals { get; set; } = true;
+
+        /// <summary>
         /// Gets or sets the clear coat shading features for the material.
         /// </summary>
         /// <userdoc>Use clear-coat shading to simulate vehicle paint</userdoc>
@@ -257,6 +266,11 @@ namespace Stride.Rendering.Materials
                 {
                     context.MaterialPass.CullMode = CullMode;
                 }
+            }
+
+            if (context.Step == MaterialGeneratorStep.GenerateShader && !ReceiveDecals)
+            {
+                context.MaterialPass.Parameters.Set(MaterialKeys.ReceiveDecals, false);
             }
 
             // Only set the DepthFunction when the pass is not overriden (Only based on assumptions from how CullMode operates, not exactly sure how/when this would be used) 

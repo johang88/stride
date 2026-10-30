@@ -31,6 +31,11 @@ namespace Stride.Rendering
 
         public bool IsShadowCaster;
 
+        /// <summary>
+        /// Whether decals are projected onto the mesh (when its material receives them too).
+        /// </summary>
+        public bool ReceiveDecals = true;
+
         public bool IsScalingNegative;
 
         public bool IsPreviousScalingNegative;

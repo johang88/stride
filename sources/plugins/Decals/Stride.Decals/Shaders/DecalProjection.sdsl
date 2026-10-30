@@ -1,0 +1,179 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Decals
+{
+    /// <summary>
+    /// Draws the boxes of the decals of a view into its decal buffer (see DecalRenderer): each pixel inside a box projects the
+    /// surface found in the depth into the box, down its Y axis, and blends the decal over what the earlier ones left:
+    /// premultiplied albedo, normal offset and roughness / metalness / occlusion over the remaining share of the surface
+    /// (alpha), emitted light added.
+    /// </summary>
+    shader DecalProjection : ShaderBase
+    {
+        stage stream uint VertexID : SV_VertexID;
+        // The decal of the box (an integer: not interpolated)
+        stage stream uint DecalIndex : TEXCOORD0;
+
+        cbuffer PerDraw
+        {
+            stage float4x4 DecalViewProjection;
+            stage float4x4 DecalInverseViewProjection;
+            stage float3 DecalEye;
+            // Size of the view (pixels), and its inverse
+            stage float4 DecalViewSize;
+            // The first decal of the draw in the instance buffer
+            stage uint DecalFirstInstance;
+        }
+
+        // 11 float4 per decal: world to box (3 columns), box to world (3 columns), color (alpha: opacity), emitted light +
+        // normal strength, roughness + metalness + occlusion + channels, texture scale + offset, depth fade + cosines of the
+        // angle fade (start, end)
+        stage StructuredBuffer<float4> DecalInstances;
+        stage Texture2D DecalDepth;
+        stage Texture2D DecalAlbedoMap;
+        stage Texture2D DecalNormalMap;
+        stage Texture2D DecalSurfaceMap;
+        stage Texture2D DecalEmissiveMap;
+
+        stage SamplerState DecalSampler
+        {
+            Filter = ANISOTROPIC;
+            MaxAnisotropy = 8;
+            AddressU = Wrap;
+            AddressV = Wrap;
+        };
+
+        stage override void VSMain()
+        {
+            uint instance = DecalFirstInstance + streams.InstanceID;
+            uint first = instance * 11;
+            float4 toBox0 = DecalInstances[first];
+            float4 toBox1 = DecalInstances[first + 1];
+            float4 toBox2 = DecalInstances[first + 2];
+
+            // The corner of a face of the unit box: 6 faces (+x, -x, +y, -y, +z, -z) of 2 triangles
+            uint face = streams.VertexID / 6;
+            uint vertex = streams.VertexID % 6;
+            uint corner = vertex == 3 ? 0 : (vertex == 4 ? 2 : (vertex == 5 ? 3 : vertex));
+            uint axis = face / 2;
+            float side = (face & 1) != 0 ? -0.5 : 0.5;
+            float2 quad = float2(corner == 1 || corner == 2 ? 0.5 : -0.5, corner >= 2 ? 0.5 : -0.5);
+            float3 position = axis == 0 ? float3(side, quad.x, quad.y) : (axis == 1 ? float3(quad.x, side, quad.y) : float3(quad.x, quad.y, side));
+
+            // The faces the camera sees from outside are dropped, whatever their winding: the far ones cover the box once,
+            // also from inside it
+            float4 eye = float4(DecalEye, 1.0);
+            float3 eyeInBox = float3(dot(eye, toBox0), dot(eye, toBox1), dot(eye, toBox2));
+            float eyeAlongAxis = axis == 0 ? eyeInBox.x : (axis == 1 ? eyeInBox.y : eyeInBox.z);
+            if (eyeAlongAxis * sign(side) > 0.5)
+            {
+                // (outside the clip volume)
+                streams.ShadingPosition = float4(-2.0, -2.0, -2.0, 1.0);
+            }
+            else
+            {
+                float4 corner4 = float4(position, 1.0);
+                float3 world = float3(dot(corner4, DecalInstances[first + 3]), dot(corner4, DecalInstances[first + 4]), dot(corner4, DecalInstances[first + 5]));
+                streams.ShadingPosition = mul(float4(world, 1.0), DecalViewProjection);
+            }
+            streams.DecalIndex = instance;
+        }
+
+        // World position of a pixel at a depth
+        stage float3 WorldAt(int2 pixel, float depth)
+        {
+            float2 uv = (pixel + 0.5) * DecalViewSize.zw;
+            float4 world = mul(float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0), DecalInverseViewProjection);
+            return world.xyz / world.w;
+        }
+
+        stage override void PSMain()
+        {
+            uint first = streams.DecalIndex * 11;
+            float4 toBox0 = DecalInstances[first];
+            float4 toBox1 = DecalInstances[first + 1];
+            float4 toBox2 = DecalInstances[first + 2];
+
+            int2 pixel = int2(streams.ShadingPosition.xy);
+            float depth = DecalDepth.Load(int3(pixel, 0)).r;
+            // (nothing there: the sky)
+            if (depth <= 0.0)
+                discard;
+            float3 world = WorldAt(pixel, depth);
+            float3 box = float3(dot(float4(world, 1.0), toBox0), dot(float4(world, 1.0), toBox1), dot(float4(world, 1.0), toBox2));
+            if (any(abs(box) > 0.5))
+                discard;
+
+            // The surface around the pixel, towards the neighbors on the same surface (the nearer depth on each axis): its
+            // normal, and texture gradients that don't jump at depth edges
+            float right = DecalDepth.Load(int3(pixel + int2(1, 0), 0)).r;
+            float left = DecalDepth.Load(int3(pixel - int2(1, 0), 0)).r;
+            float below = DecalDepth.Load(int3(pixel + int2(0, 1), 0)).r;
+            float above = DecalDepth.Load(int3(pixel - int2(0, 1), 0)).r;
+            float3 dx = abs(right - depth) < abs(left - depth) ? WorldAt(pixel + int2(1, 0), right) - world : world - WorldAt(pixel - int2(1, 0), left);
+            float3 dy = abs(below - depth) < abs(above - depth) ? WorldAt(pixel + int2(0, 1), below) - world : world - WorldAt(pixel - int2(0, 1), above);
+            float3 normal = normalize(cross(dy, dx));
+            if (dot(normal, DecalEye - world) < 0.0)
+                normal = -normal;
+
+            float4 color = DecalInstances[first + 6];
+            float4 emissive = DecalInstances[first + 7];
+            float4 material = DecalInstances[first + 8];
+            float4 textureTransform = DecalInstances[first + 9];
+            float4 fades = DecalInstances[first + 10];
+            uint channels = (uint)material.w;
+
+            // Box axes in the world
+            float3 axisX = float3(DecalInstances[first + 3].x, DecalInstances[first + 4].x, DecalInstances[first + 5].x);
+            float3 axisY = float3(DecalInstances[first + 3].y, DecalInstances[first + 4].y, DecalInstances[first + 5].y);
+
+            // Fades: near the top and bottom of the box, and on surfaces steep to the projection
+            float depthFade = fades.x > 0.0 ? saturate((0.5 - abs(box.y)) * 2.0 / fades.x) : 1.0;
+            float angleFade = saturate((dot(normal, normalize(axisY)) - fades.z) / max(fades.y - fades.z, 1e-4));
+
+            // Texture coordinates: U along X, V along Z (the texture's top towards -Z)
+            float2 uv = (box.xz + 0.5) * textureTransform.xy + textureTransform.zw;
+            float2 uvDx = float2(dot(dx, toBox0.xyz), dot(dx, toBox2.xyz)) * textureTransform.xy;
+            float2 uvDy = float2(dot(dy, toBox0.xyz), dot(dy, toBox2.xyz)) * textureTransform.xy;
+
+            float4 albedo = DecalAlbedoMap.SampleGrad(DecalSampler, uv, uvDx, uvDy) * color;
+            float coverage = saturate(albedo.a * depthFade * angleFade);
+            if (coverage <= 1.0 / 512.0)
+                discard;
+
+            float4 albedoOut = 0;
+            if ((channels & 1) != 0)
+                albedoOut = float4(albedo.rgb * coverage, coverage);
+
+            float4 normalOut = 0;
+            if ((channels & 2) != 0)
+            {
+                // The decal's bumps on the surface, as an offset of its normal
+                float3 tangent = normalize(axisX - normal * dot(axisX, normal));
+                float3 bitangent = cross(normal, tangent);
+                float3 bump = DecalNormalMap.SampleGrad(DecalSampler, uv, uvDx, uvDy).xyz * 2.0 - 1.0;
+                bump.xy *= emissive.w;
+                float3 decalNormal = normalize(tangent * bump.x + bitangent * bump.y + normal * max(bump.z, 1e-3));
+                normalOut = float4(((decalNormal - normal) * 0.25 + 0.5) * coverage, coverage);
+            }
+
+            float4 surfaceOut = 0;
+            if ((channels & 4) != 0)
+            {
+                float3 surface = DecalSurfaceMap.SampleGrad(DecalSampler, uv, uvDx, uvDy).rgb;
+                float3 values = float3(material.x * surface.g, material.y * surface.b, lerp(1.0, surface.r, material.z));
+                surfaceOut = float4(values * coverage, coverage);
+            }
+
+            float3 light = 0;
+            if ((channels & 8) != 0)
+                light = emissive.rgb * DecalEmissiveMap.SampleGrad(DecalSampler, uv, uvDx, uvDy).rgb * coverage;
+
+            streams.ColorTarget = albedoOut;
+            streams.ColorTarget1 = normalOut;
+            streams.ColorTarget2 = surfaceOut;
+            streams.ColorTarget3 = float4(light, 0.0);
+        }
+    };
+}

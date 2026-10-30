@@ -24,6 +24,13 @@ public static class ForwardShadingKeys
     public static readonly PermutationParameterKey<ShaderSource> ScreenSpaceLighting = ParameterKeys.NewPermutation((ShaderSource)null);
 
     /// <summary>
+    /// A shader mixed in before the lighting of opaque surfaces that receive decals, overriding <c>ApplyDecals()</c> to
+    /// change the material streams (albedo, normal, roughness...) and add emissive light where the decals of the view cover
+    /// the surface.
+    /// </summary>
+    public static readonly PermutationParameterKey<ShaderSource> Decals = ParameterKeys.NewPermutation((ShaderSource)null);
+
+    /// <summary>
     /// The depth prepass resolved the visibility of the surface (drawn on its depth, equal): the alpha discard of cutoff
     /// materials is left out (see <see cref="DepthPrepassStages"/>).
     /// </summary>

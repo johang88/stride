@@ -177,6 +177,7 @@ namespace Stride.Rendering
                 VisibilityGroup.NeedActiveRenderStageReevaluation = true;
             }
 
+            renderMesh.ReceiveDecals = modelComponent.ReceiveDecals && (materialPass?.Parameters?.Get(MaterialKeys.ReceiveDecals) ?? true);
             renderMesh.MaterialPass = materialPass;
             // Account for any changes made to the individual meshes
             renderMesh.Mesh = sourceMesh;

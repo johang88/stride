@@ -1,0 +1,63 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Decals
+{
+    /// <summary>
+    /// The decals of the view on an opaque surface (a mixin of the forward shading, see ForwardShadingKeys.Decals): the decal
+    /// buffer at the pixel changes the material before its lighting and adds the light the decals emit.
+    /// </summary>
+    shader DecalShading : MaterialPixelShadingStream, ShaderBaseStream
+    {
+        rgroup PerView.Decals
+        {
+            // Premultiplied albedo, normal offset, roughness / metalness / occlusion (alpha: share of the surface left), light
+            stage Texture2D DecalAlbedoBuffer;
+            stage Texture2D DecalNormalBuffer;
+            stage Texture2D DecalSurfaceBuffer;
+            stage Texture2D DecalEmissiveBuffer;
+        }
+
+        cbuffer PerView.Decals
+        {
+            // Whether the decals of the view wrote the albedo, normal, surface and emissive channels (1 or 0)
+            stage float4 DecalChannels;
+        }
+
+        stage override void ApplyDecals()
+        {
+            base.ApplyDecals();
+            int3 pixel = int3(streams.ShadingPosition.xy, 0);
+
+            if (DecalChannels.x > 0.0)
+            {
+                // The decal color, not metal, over what is left of the surface
+                float4 albedo = DecalAlbedoBuffer.Load(pixel);
+                streams.matDiffuse.rgb = streams.matDiffuse.rgb * albedo.a + albedo.rgb;
+                streams.matSpecular = streams.matSpecular * albedo.a + 0.02 * (1.0 - albedo.a);
+            }
+
+            if (DecalChannels.z > 0.0)
+            {
+                float4 surface = DecalSurfaceBuffer.Load(pixel);
+                float roughness = (1.0 - streams.matGlossiness) * surface.a + surface.r;
+                streams.matGlossiness = 1.0 - saturate(roughness);
+                // Metal: the color goes to the reflection
+                streams.matSpecular = lerp(streams.matSpecular, streams.matDiffuse.rgb, surface.g);
+                streams.matDiffuse.rgb *= 1.0 - surface.g;
+                streams.matAmbientOcclusion *= surface.a + surface.b;
+            }
+
+            if (DecalChannels.y > 0.0)
+            {
+                float3 offset = (DecalNormalBuffer.Load(pixel).rgb - 0.5) * 4.0;
+                streams.normalWS = normalize(streams.normalWS + offset);
+            }
+
+            if (DecalChannels.w > 0.0)
+            {
+                streams.shadingColor += DecalEmissiveBuffer.Load(pixel).rgb;
+            }
+        }
+    };
+}

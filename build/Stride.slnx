@@ -230,6 +230,10 @@
     <Project Path="../sources/plugins/Blockout/Stride.Blockout.Editor.Wpf/Stride.Blockout.Editor.Wpf.csproj" />
     <Project Path="../sources/plugins/Blockout/Stride.Blockout/Stride.Blockout.csproj" />
   </Folder>
+  <Folder Name="/80-Plugins/Decals/">
+    <Project Path="../sources/plugins/Decals/Stride.Decals.Editor/Stride.Decals.Editor.csproj" />
+    <Project Path="../sources/plugins/Decals/Stride.Decals/Stride.Decals.csproj" />
+  </Folder>
   <Folder Name="/80-Plugins/PostFx/">
     <Project Path="../sources/plugins/PostFx/Stride.PostFx/Stride.PostFx.csproj" />
   </Folder>

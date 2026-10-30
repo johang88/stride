@@ -145,6 +145,15 @@ namespace Stride.Engine
         public bool IsShadowCaster { get; set; }
 
         /// <summary>
+        /// Gets or sets a boolean indicating if decals are projected onto this model.
+        /// </summary>
+        /// <userdoc>Draw decals (markers, dirt, cracks...) on this model. Skinned models never receive the decals of the default decal renderer.</userdoc>
+        [DataMember(35)]
+        [DefaultValue(true)]
+        [Display("Receive decals")]
+        public bool ReceiveDecals { get; set; } = true;
+
+        /// <summary>
         /// The render group for this component.
         /// </summary>
         [DataMember(20)]
