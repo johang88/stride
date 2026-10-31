@@ -4,11 +4,11 @@
 namespace Stride.Atmosphere
 {
     /// <summary>
-    /// Renders the faces of the sky capture (the light of the sky for the surfaces) side by side in one target (six times
-    /// as wide as tall: one pass, enough pixels to keep the GPU busy): the sky with its clouds (a cheaper march) and
+    /// Renders faces of the sky capture (the light of the sky for the surfaces) into their places side by side in one target
+    /// (six times as wide as tall; the viewport covers the faces drawn): the sky with its clouds (a cheaper march) and
     /// without the sun disk, whose light comes from the directional light. Each capture samples another point of every texel
-    /// and another march jitter; SkyCaptureAccumulate averages the captures (smooth cloud edges and no march noise in mirror
-    /// reflections of the sky).
+    /// and another march jitter, blended into the average of the previous captures with
+    /// the weight in alpha (smooth cloud edges, no march noise in mirror reflections of the sky).
     /// </summary>
     /// <remarks>
     /// The faces are laid out as Stride's skybox lighting samples them: cube direction (x, y, z) holds world direction
@@ -22,6 +22,10 @@ namespace Stride.Atmosphere
         // Where in its texel this capture samples (texels, in [-0.5, 0.5]), and the size of a face
         stage float2 CaptureJitter;
         stage float CaptureSize;
+        // The faces drawn (the viewport's), and the weight of this capture in their average
+        stage float CaptureFaceStart;
+        stage float CaptureFaceCount;
+        stage float CaptureWeight;
 
         float3 CubeFaceDirection(int face, float2 uv)
         {
@@ -37,7 +41,9 @@ namespace Stride.Atmosphere
 
         stage override float4 Shading()
         {
-            float faceCoordinate = streams.TexCoord.x * 6.0;
+            float faceCoordinate = CaptureFaceStart + streams.TexCoord.x * CaptureFaceCount;
+            // (the texel's place in the whole target, for its noise)
+            float2 atlasUv = float2(faceCoordinate / 6.0, streams.TexCoord.y);
             int face = min((int)faceCoordinate, 5);
             float2 faceUv = saturate(float2(faceCoordinate - face, streams.TexCoord.y) + CaptureJitter / CaptureSize);
             float3 cubeDirection = normalize(CubeFaceDirection(face, faceUv));
@@ -47,12 +53,12 @@ namespace Stride.Atmosphere
             if (CaptureClouds > 0 && direction.y > -0.02)
             {
                 // (another jitter each capture: the captures are averaged)
-                float jitter = frac(Hash12(streams.TexCoord * 1024.0) + CaptureFrame * 0.6180339887);
+                float jitter = frac(Hash12(atlasUv * 1024.0) + CaptureFrame * 0.6180339887);
                 float meanDistance;
                 float4 clouds = MarchClouds(CaptureOrigin, normalize(float3(direction.x, max(direction.y, 0.0), direction.z)), CaptureOrigin, 18.0, 2, 60000.0, jitter, false, 0.04, meanDistance);
                 sky = sky * clouds.a + clouds.rgb;
             }
-            return float4(sky, 1.0);
+            return float4(sky, CaptureWeight);
         }
     };
 }

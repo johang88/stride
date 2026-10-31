@@ -176,13 +176,22 @@ public sealed class AtmosphereRenderer : RendererCoreBase, IAtmosphereRenderer
     public float CloudShadowDistance { get; set; } = 10000.0f;
 
     /// <summary>
-    /// Size of the faces of the sky capture lighting the surfaces (all faces every few frames; its mips are the reflections of
-    /// rougher surfaces, prefiltered with their GGX lobe).
+    /// Size of the faces of the sky capture lighting the surfaces (spread over frames, see <see cref="SkyCaptureFacesPerFrame"/>;
+    /// its mips are the reflections of rougher surfaces, prefiltered with their GGX lobe).
     /// </summary>
     [DataMember(90)]
     [DefaultValue(128)]
     [DataMemberRange(32, 512, 32, 64, 0)]
     public int SkyCaptureSize { get; set; } = 128;
+
+    /// <summary>
+    /// Faces of the sky capture drawn per frame (1 to 6): the capture is spread over that many frames plus two (its mips,
+    /// its reflection levels), so every frame costs the same.
+    /// </summary>
+    [DataMember(91)]
+    [DefaultValue(1)]
+    [DataMemberRange(1, 6, 1, 1, 0)]
+    public int SkyCaptureFacesPerFrame { get; set; } = 1;
 
     /// <summary>
     /// Debug view of the clouds (0: none, 1-2: shape noise slices, 3: detail noise, 4: weather map).
@@ -394,6 +403,7 @@ public sealed class AtmosphereRenderer : RendererCoreBase, IAtmosphereRenderer
                 {
                     preparedFrame = frame;
                     sky.CaptureSize = SkyCaptureSize;
+                    sky.CaptureFacesPerFrame = SkyCaptureFacesPerFrame;
                     sky.Update(context, atmosphere, haze, frameEye);
                     if (sceneClouds != null)
                     {

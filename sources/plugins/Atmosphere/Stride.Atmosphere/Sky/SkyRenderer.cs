@@ -38,20 +38,18 @@ internal sealed class SkyRenderer : RendererCoreBase
     private ComputeEffectShader cameraVolumeEffect;
     private ComputeEffectShader harmonicsEffect;
     private ComputeEffectShader prefilterEffect;
-    private ImageEffectShader accumulateEffect;
     private ComputeEffectShader downsampleEffect;
 
     private Texture captureCube;
     private Texture[] captureMips;
     private Texture captureAtlas;
-    private readonly Texture[] accumulatedAtlas = new Texture[2];
-    private int accumulatedIndex;
-    private bool accumulatedValid;
+    // (the capture's faces are averaged over the captures: which were captured yet; the step of the capture this frame)
+    private readonly bool[] facesCaptured = new bool[6];
+    private int captureStep;
     private int captureIndex;
     private Texture publishedCube;
     private Texture[] publishedMips;
     private int captureSize;
-    private int captureFrame;
     private Buffer previousHarmonics;
     private bool hasHarmonics;
     private Skybox publishedSkybox;
@@ -101,9 +99,10 @@ internal sealed class SkyRenderer : RendererCoreBase
     public float CaptureBlend { get; set; } = 0.25f;
 
     /// <summary>
-    /// Frames between two captures of the sky.
+    /// Faces of the sky captured per frame (1 to 6): the capture takes that many frames for the faces, one for the cube's
+    /// mips and spherical harmonics and one for the reflection levels, the same cost every frame.
     /// </summary>
-    public int CaptureInterval { get; set; } = 4;
+    public int CaptureFacesPerFrame { get; set; } = 1;
 
     /// <summary>
     /// Kilometers covered by one slice of the aerial perspective volume (32 slices, distributed quadratically).
@@ -130,8 +129,8 @@ internal sealed class SkyRenderer : RendererCoreBase
         transmittanceEffect = ToLoadAndUnload(new ImageEffectShader("AtmosphereTransmittanceLut"));
         multiScatterEffect = ToLoadAndUnload(new ImageEffectShader("AtmosphereMultiScatterLut"));
         skyViewEffect = ToLoadAndUnload(new ImageEffectShader("AtmosphereSkyViewLut"));
-        captureEffect = ToLoadAndUnload(new ImageEffectShader("SkyCubeCapture"));
-        accumulateEffect = ToLoadAndUnload(new ImageEffectShader("SkyCaptureAccumulate"));
+        // (blended into the average of the previous captures: the weight of this one in alpha)
+        captureEffect = ToLoadAndUnload(new ImageEffectShader("SkyCubeCapture") { BlendState = new BlendStateDescription(Blend.SourceAlpha, Blend.InverseSourceAlpha) });
         downsampleEffect = new ComputeEffectShader(Context) { ShaderSourceName = "SkyCubeDownsample", ThreadNumbers = new Int3(8, 8, 1) };
         ambientEffect = new ComputeEffectShader(Context) { ShaderSourceName = "SkyAmbient", ThreadNumbers = new Int3(64, 1, 1), ThreadGroupCounts = new Int3(1, 1, 1) };
         cameraVolumeEffect = new ComputeEffectShader(Context) { ShaderSourceName = "AtmosphereCameraVolume", ThreadNumbers = new Int3(8, 8, 1), ThreadGroupCounts = new Int3(VolumeSize / 8, VolumeSize / 8, VolumeSize) };
@@ -258,48 +257,72 @@ internal sealed class SkyRenderer : RendererCoreBase
     }
 
     /// <summary>
-    /// Captures the sky when due (every <see cref="CaptureInterval"/> frames; the clouds' parameters set by
-    /// <paramref name="setCloudParameters"/>): all faces in one pass, their mips, the spherical harmonics, published together
-    /// in the atmosphere's sky light.
+    /// Captures the sky (the clouds' parameters set by <paramref name="setCloudParameters"/>) one step per frame, so the
+    /// frames cost the same: <see cref="CaptureFacesPerFrame"/> faces a step, averaged into the previous captures of those
+    /// faces; then the cube with its box filtered mips and the spherical harmonics; then the reflection cube's GGX levels.
+    /// The atmosphere's sky light points at the results, updated in place. A sky light not published yet (a new
+    /// atmosphere, a new size) is captured whole at once.
     /// </summary>
     public void Capture(RenderDrawContext context, RenderAtmosphere atmosphere, float haze, Vector3 eye, Action<ParameterCollection> setCloudParameters)
     {
         EnsureCapture();
-        if (captureFrame++ % Math.Max(CaptureInterval, 1) != 0 && publishedSkybox == atmosphere.Skybox)
+        var facesPerStep = Math.Clamp(CaptureFacesPerFrame, 1, 6);
+        var faceSteps = (6 + facesPerStep - 1) / facesPerStep;
+        if (publishedSkybox != atmosphere.Skybox)
+        {
+            for (int step = 0; step < faceSteps; step++)
+                CaptureFaces(context, atmosphere, haze, eye, setCloudParameters, step * facesPerStep, facesPerStep);
+            FilterCapture(context);
+            PrefilterReflections(context);
+            Publish(atmosphere.Skybox);
+            captureStep = 0;
             return;
+        }
 
+        if (captureStep < faceSteps)
+            CaptureFaces(context, atmosphere, haze, eye, setCloudParameters, captureStep * facesPerStep, facesPerStep);
+        else if (captureStep == faceSteps)
+            FilterCapture(context);
+        else
+            PrefilterReflections(context);
+        captureStep = captureStep >= faceSteps + 1 ? 0 : captureStep + 1;
+    }
+
+    // Faces [first, first + count) into the capture's faces, averaged with their previous captures (blended: the weight in
+    // alpha). Each capture samples another point of every texel and another march jitter
+    private void CaptureFaces(RenderDrawContext context, RenderAtmosphere atmosphere, float haze, Vector3 eye, Action<ParameterCollection> setCloudParameters, int first, int count)
+    {
+        count = Math.Min(count, 6 - first);
         var parameters = captureEffect.Parameters;
         SetParameters(parameters, atmosphere, haze);
-        var clouds = setCloudParameters != null;
         setCloudParameters?.Invoke(parameters);
-        parameters.Set(SkyCubeCaptureKeys.CaptureClouds, clouds ? 1 : 0);
+        parameters.Set(SkyCubeCaptureKeys.CaptureClouds, setCloudParameters != null ? 1 : 0);
         parameters.Set(SkyCubeCaptureKeys.CaptureOrigin, eye);
-        // (another point of each texel and another march jitter per capture, averaged: smooth edges, no march noise)
         captureIndex = (captureIndex + 1) % 1024;
         parameters.Set(SkyCubeCaptureKeys.CaptureFrame, (float)captureIndex);
         parameters.Set(SkyCubeCaptureKeys.CaptureJitter, new Vector2(Halton(captureIndex % 16 + 1, 2) - 0.5f, Halton(captureIndex % 16 + 1, 3) - 0.5f));
         parameters.Set(SkyCubeCaptureKeys.CaptureSize, (float)captureSize);
+        parameters.Set(SkyCubeCaptureKeys.CaptureFaceStart, (float)first);
+        parameters.Set(SkyCubeCaptureKeys.CaptureFaceCount, (float)count);
+        // (a face never captured takes this capture whole)
+        parameters.Set(SkyCubeCaptureKeys.CaptureWeight, facesCaptured[first] ? CaptureBlend : 1.0f);
         captureEffect.SetOutput(captureAtlas);
+        captureEffect.SetViewport(new Viewport(first * captureSize, 0, count * captureSize, captureSize));
         captureEffect.Draw(context, "SkyCubeCapture");
+        for (int face = first; face < first + count; face++)
+            facesCaptured[face] = true;
+    }
 
-        var previous = accumulatedAtlas[accumulatedIndex];
-        accumulatedIndex = 1 - accumulatedIndex;
-        var accumulated = accumulatedAtlas[accumulatedIndex];
-        accumulateEffect.Parameters.Set(SkyCaptureAccumulateKeys.AccumulateBlend, accumulatedValid ? CaptureBlend : 1.0f);
-        accumulateEffect.SetInput(0, captureAtlas);
-        accumulateEffect.SetInput(1, previous);
-        accumulateEffect.SetOutput(accumulated);
-        accumulateEffect.Draw(context, "SkyCaptureAccumulate");
-        accumulatedValid = true;
-
+    // The faces into the cube, its box filtered mips (what the prefilter reads) and the spherical harmonics
+    private void FilterCapture(RenderDrawContext context)
+    {
         using var _ = context.QueryManager.BeginProfile(Color.SkyBlue, AtmosphereRenderer.SkyFilterKey);
         var commandList = context.CommandList;
         commandList.ResetTargets();
-        // The faces into the cube, then its mips (box filtered: what the prefilter reads, and the spherical harmonics)
         for (int face = 0; face < 6; face++)
         {
             var region = new ResourceRegion(face * captureSize, 0, 0, (face + 1) * captureSize, captureSize, 1);
-            commandList.CopyRegion(accumulated, 0, region, captureCube, face * captureCube.MipLevelCount);
+            commandList.CopyRegion(captureAtlas, 0, region, captureCube, face * captureCube.MipLevelCount);
         }
         // (all faces of a level per dispatch)
         for (int mip = 1; mip < captureCube.MipLevelCount; mip++)
@@ -313,8 +336,23 @@ internal sealed class SkyRenderer : RendererCoreBase
         }
         commandList.ResourceBarrierTransition(captureCube, BarrierLayout.ShaderResource);
 
-        // The sky light's reflections: the sharp capture at the top, then each level convolved with the GGX lobe of the
-        // roughness the materials read it at (perceptual roughness x mip count, see RoughnessCubeMapEnvironmentColor)
+        harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyCaptureCube, captureCube);
+        harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyCaptureMip, (float)Math.Max(0, (int)MathF.Log2(captureSize / 16.0f)));
+        harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyHarmonicsOutput, Harmonics);
+        harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyHarmonicsPrevious, previousHarmonics);
+        // (a few captures to settle: the sky light changes smoothly)
+        harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyHarmonicsBlend, hasHarmonics ? 0.35f : 1.0f);
+        harmonicsEffect.Draw(context, "SkySphericalHarmonics");
+        commandList.Copy(Harmonics, previousHarmonics);
+        hasHarmonics = true;
+    }
+
+    // The sky light's reflections: the sharp capture at the top, then each level convolved with the GGX lobe of the
+    // roughness the materials read it at (perceptual roughness x mip count, see RoughnessCubeMapEnvironmentColor)
+    private void PrefilterReflections(RenderDrawContext context)
+    {
+        using var _ = context.QueryManager.BeginProfile(Color.SkyBlue, AtmosphereRenderer.SkyFilterKey);
+        var commandList = context.CommandList;
         for (int face = 0; face < 6; face++)
             commandList.CopyRegion(captureCube, face * captureCube.MipLevelCount, null, publishedCube, face * publishedCube.MipLevelCount);
         var prefilter = prefilterEffect.Parameters;
@@ -332,27 +370,16 @@ internal sealed class SkyRenderer : RendererCoreBase
             prefilterEffect.Draw(context, "SkyPrefilter");
         }
         commandList.ResourceBarrierTransition(publishedCube, BarrierLayout.ShaderResource);
+    }
 
-        harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyCaptureCube, captureCube);
-        harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyCaptureMip, (float)Math.Max(0, (int)MathF.Log2(captureSize / 16.0f)));
-        harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyHarmonicsOutput, Harmonics);
-        harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyHarmonicsPrevious, previousHarmonics);
-        // (about a quarter of a second to settle at the default interval)
-        harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyHarmonicsBlend, hasHarmonics ? 0.35f : 1.0f);
-        harmonicsEffect.Draw(context, "SkySphericalHarmonics");
-        commandList.Copy(Harmonics, previousHarmonics);
-        hasHarmonics = true;
-
-        // The scene's sky light: set once, the textures it points at are updated in place
-        var skybox = atmosphere.Skybox;
-        if (publishedSkybox != skybox)
-        {
-            publishedSkybox = skybox;
-            skybox.DiffuseLightingParameters.Set(SkyboxKeys.Shader, new Stride.Shaders.ShaderClassSource("SphericalHarmonicsBufferEnvironmentColor"));
-            skybox.DiffuseLightingParameters.Set(SphericalHarmonicsBufferEnvironmentColorKeys.SphericalHarmonicsBuffer, Harmonics);
-            skybox.SpecularLightingParameters.Set(SkyboxKeys.Shader, new Stride.Shaders.ShaderClassSource("RoughnessCubeMapEnvironmentColor"));
-            skybox.SpecularLightingParameters.Set(SkyboxKeys.CubeMap, publishedCube);
-        }
+    // The scene's sky light: set once, the textures it points at are updated in place
+    private void Publish(Skybox skybox)
+    {
+        publishedSkybox = skybox;
+        skybox.DiffuseLightingParameters.Set(SkyboxKeys.Shader, new Stride.Shaders.ShaderClassSource("SphericalHarmonicsBufferEnvironmentColor"));
+        skybox.DiffuseLightingParameters.Set(SphericalHarmonicsBufferEnvironmentColorKeys.SphericalHarmonicsBuffer, Harmonics);
+        skybox.SpecularLightingParameters.Set(SkyboxKeys.Shader, new Stride.Shaders.ShaderClassSource("RoughnessCubeMapEnvironmentColor"));
+        skybox.SpecularLightingParameters.Set(SkyboxKeys.CubeMap, publishedCube);
     }
 
     private static float Halton(int index, int radix)
@@ -383,12 +410,8 @@ internal sealed class SkyRenderer : RendererCoreBase
             captureMips[mip] = captureCube.ToTextureView(ViewType.MipBand, 0, mip);
         captureAtlas = Texture.New2D(device, size * 6, size, PixelFormat.R16G16B16A16_Float, TextureFlags.RenderTarget | TextureFlags.ShaderResource);
         captureAtlas.Name = "AtmosphereSkyCaptureFaces";
-        for (int i = 0; i < 2; i++)
-        {
-            accumulatedAtlas[i] = Texture.New2D(device, size * 6, size, PixelFormat.R16G16B16A16_Float, TextureFlags.RenderTarget | TextureFlags.ShaderResource);
-            accumulatedAtlas[i].Name = "AtmosphereSkyCaptureAccumulated";
-        }
-        accumulatedValid = false;
+        Array.Clear(facesCaptured);
+        captureStep = 0;
         publishedCube = Texture.NewCube(device, size, MipMapCount.Auto, PixelFormat.R16G16B16A16_Float, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
         publishedCube.Name = "AtmosphereSkyLight";
         publishedMips = new Texture[publishedCube.MipLevelCount];
@@ -409,11 +432,6 @@ internal sealed class SkyRenderer : RendererCoreBase
         captureCube = null;
         captureAtlas?.Dispose();
         captureAtlas = null;
-        for (int i = 0; i < 2; i++)
-        {
-            accumulatedAtlas[i]?.Dispose();
-            accumulatedAtlas[i] = null;
-        }
         if (publishedSkybox != null)
         {
             publishedSkybox.SpecularLightingParameters.Set(SkyboxKeys.CubeMap, null);
