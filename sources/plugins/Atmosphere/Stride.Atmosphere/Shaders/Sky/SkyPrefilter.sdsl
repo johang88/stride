@@ -1,0 +1,98 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// One mip of the sky light's reflection cube: the sky convolved with the GGX lobe of the roughness the materials read
+    /// that mip at (RoughnessCubeMapEnvironmentColor: perceptual roughness x mip count), the view along the normal. Few
+    /// samples with filtered importance sampling (Křivánek and Colbert 2008): each sample reads the box-filtered capture at
+    /// the mip whose texels cover its share of the lobe, so the result is smooth without hundreds of samples. Groups of 8x8
+    /// threads, z = the face.
+    /// </summary>
+    shader SkyPrefilter : ComputeShaderBase
+    {
+        stage TextureCube PrefilterSource;
+        stage RWTexture2DArray<float4> PrefilterOutput;
+
+        stage SamplerState PrefilterSampler
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+            AddressW = Clamp;
+        };
+
+        cbuffer PerDispatch
+        {
+            // Size of the mip written
+            stage int PrefilterSize;
+            stage float PrefilterRoughness;
+            // Size of the capture's faces and its mips
+            stage float PrefilterSourceSize;
+            stage float PrefilterSourceLevels;
+            stage int PrefilterSamples;
+        };
+
+        float3 CubeFaceDirection(int face, float2 uv)
+        {
+            float u = uv.x * 2.0 - 1.0;
+            float v = uv.y * 2.0 - 1.0;
+            if (face == 0) return float3(1.0, -v, -u);
+            if (face == 1) return float3(-1.0, -v, u);
+            if (face == 2) return float3(u, 1.0, v);
+            if (face == 3) return float3(u, -1.0, -v);
+            if (face == 4) return float3(u, -v, 1.0);
+            return float3(-u, -v, -1.0);
+        }
+
+        // The Hammersley point i of n
+        float2 Hammersley(uint i, uint n)
+        {
+            uint bits = i;
+            bits = (bits << 16u) | (bits >> 16u);
+            bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+            bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+            bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+            bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+            return float2((i + 0.5) / n, bits * 2.3283064365386963e-10);
+        }
+
+        override void Compute()
+        {
+            uint3 id = streams.DispatchThreadId;
+            if (any(id.xy >= (uint)PrefilterSize))
+                return;
+            float3 n = normalize(CubeFaceDirection((int)id.z, (id.xy + 0.5) / PrefilterSize));
+            float3 tangent = normalize(abs(n.y) < 0.999 ? cross(float3(0, 1, 0), n) : cross(float3(1, 0, 0), n));
+            float3 bitangent = cross(n, tangent);
+
+            float alpha = PrefilterRoughness * PrefilterRoughness;
+            float a2 = alpha * alpha;
+            // (the solid angle of a texel of the capture's top level)
+            float texelAngle = 4.0 * 3.14159265 / (6.0 * PrefilterSourceSize * PrefilterSourceSize);
+            float3 sum = 0.0;
+            float weight = 0.0;
+            for (uint i = 0; i < (uint)PrefilterSamples; i++)
+            {
+                // A half vector from the GGX distribution (view = normal)
+                float2 u = Hammersley(i, (uint)PrefilterSamples);
+                float cosTheta = sqrt((1.0 - u.x) / (1.0 + (a2 - 1.0) * u.x));
+                float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
+                float phi = 6.28318531 * u.y;
+                float3 h = tangent * (sinTheta * cos(phi)) + bitangent * (sinTheta * sin(phi)) + n * cosTheta;
+                float3 l = 2.0 * dot(n, h) * h - n;
+                float nl = dot(n, l);
+                if (nl <= 0.0)
+                    continue;
+                // Its density (D nh / (4 vh), with v = n: D / 4) gives the solid angle it stands for: the mip that covers it
+                float d = a2 / (3.14159265 * pow(cosTheta * cosTheta * (a2 - 1.0) + 1.0, 2.0));
+                float sampleAngle = 1.0 / (PrefilterSamples * d * 0.25 + 1e-6);
+                float level = clamp(0.5 * log2(sampleAngle / texelAngle) + 1.0, 0.0, PrefilterSourceLevels - 1.0);
+                sum += PrefilterSource.SampleLevel(PrefilterSampler, l, level).rgb * nl;
+                weight += nl;
+            }
+            PrefilterOutput[id] = float4(sum / max(weight, 1e-6), 1.0);
+        }
+    };
+}

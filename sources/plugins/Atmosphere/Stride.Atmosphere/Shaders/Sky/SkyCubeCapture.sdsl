@@ -6,7 +6,9 @@ namespace Stride.Atmosphere
     /// <summary>
     /// Renders the faces of the sky capture (the light of the sky for the surfaces) side by side in one target (six times
     /// as wide as tall: one pass, enough pixels to keep the GPU busy): the sky with its clouds (a cheaper march) and
-    /// without the sun disk, whose light comes from the directional light.
+    /// without the sun disk, whose light comes from the directional light. Each capture samples another point of every texel
+    /// and another march jitter; SkyCaptureAccumulate averages the captures (smooth cloud edges and no march noise in mirror
+    /// reflections of the sky).
     /// </summary>
     /// <remarks>
     /// The faces are laid out as Stride's skybox lighting samples them: cube direction (x, y, z) holds world direction
@@ -17,6 +19,9 @@ namespace Stride.Atmosphere
         stage float3 CaptureOrigin;
         stage int CaptureClouds;
         stage float CaptureFrame;
+        // Where in its texel this capture samples (texels, in [-0.5, 0.5]), and the size of a face
+        stage float2 CaptureJitter;
+        stage float CaptureSize;
 
         float3 CubeFaceDirection(int face, float2 uv)
         {
@@ -34,15 +39,15 @@ namespace Stride.Atmosphere
         {
             float faceCoordinate = streams.TexCoord.x * 6.0;
             int face = min((int)faceCoordinate, 5);
-            float2 faceUv = float2(faceCoordinate - face, streams.TexCoord.y);
+            float2 faceUv = saturate(float2(faceCoordinate - face, streams.TexCoord.y) + CaptureJitter / CaptureSize);
             float3 cubeDirection = normalize(CubeFaceDirection(face, faceUv));
             float3 direction = float3(cubeDirection.xy, -cubeDirection.z);
 
             float3 sky = SampleSkyView(direction);
             if (CaptureClouds > 0 && direction.y > -0.02)
             {
-                // (the same samples every capture: a jitter changing between captures makes the light of the sky shimmer)
-                float jitter = Hash12(streams.TexCoord * 1024.0);
+                // (another jitter each capture: the captures are averaged)
+                float jitter = frac(Hash12(streams.TexCoord * 1024.0) + CaptureFrame * 0.6180339887);
                 float meanDistance;
                 float4 clouds = MarchClouds(CaptureOrigin, normalize(float3(direction.x, max(direction.y, 0.0), direction.z)), CaptureOrigin, 18.0, 2, 60000.0, jitter, false, 0.04, meanDistance);
                 sky = sky * clouds.a + clouds.rgb;

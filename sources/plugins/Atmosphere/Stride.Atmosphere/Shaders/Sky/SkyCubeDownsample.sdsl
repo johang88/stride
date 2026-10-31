@@ -1,0 +1,34 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// One mip of the sky capture from the one above, all faces at once: the average of the 2x2 texels above each texel.
+    /// Groups of 8x8 threads, z = the face.
+    /// </summary>
+    shader SkyCubeDownsample : ComputeShaderBase
+    {
+        // The level above (a view of that mip only: its faces as an array)
+        stage Texture2DArray<float4> DownsampleSource;
+        stage RWTexture2DArray<float4> DownsampleOutput;
+
+        cbuffer PerDispatch
+        {
+            stage int DownsampleSize;
+        };
+
+        override void Compute()
+        {
+            int3 id = (int3)streams.DispatchThreadId;
+            if (any(id.xy >= DownsampleSize))
+                return;
+            int2 source = id.xy * 2;
+            float3 sum = DownsampleSource.Load(int4(source, id.z, 0)).rgb
+                       + DownsampleSource.Load(int4(source + int2(1, 0), id.z, 0)).rgb
+                       + DownsampleSource.Load(int4(source + int2(0, 1), id.z, 0)).rgb
+                       + DownsampleSource.Load(int4(source + int2(1, 1), id.z, 0)).rgb;
+            DownsampleOutput[id] = float4(sum * 0.25, 1.0);
+        }
+    };
+}

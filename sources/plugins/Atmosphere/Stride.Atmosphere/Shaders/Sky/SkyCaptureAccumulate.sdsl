@@ -1,0 +1,22 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Atmosphere
+{
+    /// <summary>
+    /// Averages the sky captures over time (each samples other points of its texels with another march jitter): Texture0 =
+    /// this capture, Texture1 = the average so far.
+    /// </summary>
+    shader SkyCaptureAccumulate : ImageEffectShader
+    {
+        // Weight of this capture (1: the average starts over)
+        stage float AccumulateBlend;
+
+        stage override float4 Shading()
+        {
+            float3 current = Texture0.SampleLevel(PointSampler, streams.TexCoord, 0).rgb;
+            float3 history = Texture1.SampleLevel(PointSampler, streams.TexCoord, 0).rgb;
+            return float4(lerp(history, current, AccumulateBlend), 1.0);
+        }
+    };
+}

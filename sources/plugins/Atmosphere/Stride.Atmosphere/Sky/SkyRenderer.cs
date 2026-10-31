@@ -37,12 +37,19 @@ internal sealed class SkyRenderer : RendererCoreBase
     private ComputeEffectShader ambientEffect;
     private ComputeEffectShader cameraVolumeEffect;
     private ComputeEffectShader harmonicsEffect;
-    private ImageScaler downsampler;
+    private ComputeEffectShader prefilterEffect;
+    private ImageEffectShader accumulateEffect;
+    private ComputeEffectShader downsampleEffect;
 
     private Texture captureCube;
-    private Texture[,] captureFaces;
+    private Texture[] captureMips;
     private Texture captureAtlas;
+    private readonly Texture[] accumulatedAtlas = new Texture[2];
+    private int accumulatedIndex;
+    private bool accumulatedValid;
+    private int captureIndex;
     private Texture publishedCube;
+    private Texture[] publishedMips;
     private int captureSize;
     private int captureFrame;
     private Buffer previousHarmonics;
@@ -84,6 +91,16 @@ internal sealed class SkyRenderer : RendererCoreBase
     public int CaptureSize { get; set; } = 64;
 
     /// <summary>
+    /// Samples per texel of the reflection cube's prefilter (each reads the capture's mip covering its share of the lobe).
+    /// </summary>
+    public int PrefilterSamples { get; set; } = 32;
+
+    /// <summary>
+    /// Weight of a capture in the running average of the captures (each samples other points of the sky's texels).
+    /// </summary>
+    public float CaptureBlend { get; set; } = 0.25f;
+
+    /// <summary>
     /// Frames between two captures of the sky.
     /// </summary>
     public int CaptureInterval { get; set; } = 4;
@@ -114,10 +131,12 @@ internal sealed class SkyRenderer : RendererCoreBase
         multiScatterEffect = ToLoadAndUnload(new ImageEffectShader("AtmosphereMultiScatterLut"));
         skyViewEffect = ToLoadAndUnload(new ImageEffectShader("AtmosphereSkyViewLut"));
         captureEffect = ToLoadAndUnload(new ImageEffectShader("SkyCubeCapture"));
-        downsampler = ToLoadAndUnload(new ImageScaler(SamplingPattern.Linear));
+        accumulateEffect = ToLoadAndUnload(new ImageEffectShader("SkyCaptureAccumulate"));
+        downsampleEffect = new ComputeEffectShader(Context) { ShaderSourceName = "SkyCubeDownsample", ThreadNumbers = new Int3(8, 8, 1) };
         ambientEffect = new ComputeEffectShader(Context) { ShaderSourceName = "SkyAmbient", ThreadNumbers = new Int3(64, 1, 1), ThreadGroupCounts = new Int3(1, 1, 1) };
         cameraVolumeEffect = new ComputeEffectShader(Context) { ShaderSourceName = "AtmosphereCameraVolume", ThreadNumbers = new Int3(8, 8, 1), ThreadGroupCounts = new Int3(VolumeSize / 8, VolumeSize / 8, VolumeSize) };
         harmonicsEffect = new ComputeEffectShader(Context) { ShaderSourceName = "SkySphericalHarmonics", ThreadNumbers = new Int3(128, 1, 1), ThreadGroupCounts = new Int3(1, 1, 1) };
+        prefilterEffect = new ComputeEffectShader(Context) { ShaderSourceName = "SkyPrefilter", ThreadNumbers = new Int3(8, 8, 1) };
     }
 
     protected override void Destroy()
@@ -132,6 +151,8 @@ internal sealed class SkyRenderer : RendererCoreBase
         ambientEffect?.Dispose();
         cameraVolumeEffect?.Dispose();
         harmonicsEffect?.Dispose();
+        prefilterEffect?.Dispose();
+        downsampleEffect?.Dispose();
         base.Destroy();
     }
 
@@ -253,33 +274,64 @@ internal sealed class SkyRenderer : RendererCoreBase
         setCloudParameters?.Invoke(parameters);
         parameters.Set(SkyCubeCaptureKeys.CaptureClouds, clouds ? 1 : 0);
         parameters.Set(SkyCubeCaptureKeys.CaptureOrigin, eye);
-        parameters.Set(SkyCubeCaptureKeys.CaptureFrame, (float)(captureFrame % 1024));
+        // (another point of each texel and another march jitter per capture, averaged: smooth edges, no march noise)
+        captureIndex = (captureIndex + 1) % 1024;
+        parameters.Set(SkyCubeCaptureKeys.CaptureFrame, (float)captureIndex);
+        parameters.Set(SkyCubeCaptureKeys.CaptureJitter, new Vector2(Halton(captureIndex % 16 + 1, 2) - 0.5f, Halton(captureIndex % 16 + 1, 3) - 0.5f));
+        parameters.Set(SkyCubeCaptureKeys.CaptureSize, (float)captureSize);
         captureEffect.SetOutput(captureAtlas);
         captureEffect.Draw(context, "SkyCubeCapture");
+
+        var previous = accumulatedAtlas[accumulatedIndex];
+        accumulatedIndex = 1 - accumulatedIndex;
+        var accumulated = accumulatedAtlas[accumulatedIndex];
+        accumulateEffect.Parameters.Set(SkyCaptureAccumulateKeys.AccumulateBlend, accumulatedValid ? CaptureBlend : 1.0f);
+        accumulateEffect.SetInput(0, captureAtlas);
+        accumulateEffect.SetInput(1, previous);
+        accumulateEffect.SetOutput(accumulated);
+        accumulateEffect.Draw(context, "SkyCaptureAccumulate");
+        accumulatedValid = true;
 
         using var _ = context.QueryManager.BeginProfile(Color.SkyBlue, AtmosphereRenderer.SkyFilterKey);
         var commandList = context.CommandList;
         commandList.ResetTargets();
-        // The faces into the cube, then its mips (a box filter: the blurry levels stand for the rough reflections of a sky
-        // that has no sharp detail to lose)
+        // The faces into the cube, then its mips (box filtered: what the prefilter reads, and the spherical harmonics)
         for (int face = 0; face < 6; face++)
         {
             var region = new ResourceRegion(face * captureSize, 0, 0, (face + 1) * captureSize, captureSize, 1);
-            commandList.CopyRegion(captureAtlas, 0, region, captureCube, face * captureCube.MipLevelCount);
+            commandList.CopyRegion(accumulated, 0, region, captureCube, face * captureCube.MipLevelCount);
         }
+        // (all faces of a level per dispatch)
         for (int mip = 1; mip < captureCube.MipLevelCount; mip++)
         {
-            for (int face = 0; face < 6; face++)
-            {
-                downsampler.SetInput(captureFaces[face, mip - 1]);
-                downsampler.SetOutput(captureFaces[face, mip]);
-                downsampler.Draw(context, "SkyCaptureMip");
-            }
+            var mipSize = Math.Max(1, captureSize >> mip);
+            downsampleEffect.Parameters.Set(SkyCubeDownsampleKeys.DownsampleSource, captureMips[mip - 1]);
+            downsampleEffect.Parameters.Set(SkyCubeDownsampleKeys.DownsampleOutput, captureMips[mip]);
+            downsampleEffect.Parameters.Set(SkyCubeDownsampleKeys.DownsampleSize, mipSize);
+            downsampleEffect.ThreadGroupCounts = new Int3((mipSize + 7) / 8, (mipSize + 7) / 8, 6);
+            downsampleEffect.Draw(context, "SkyCaptureMip");
         }
-        commandList.ResetTargets();
-        commandList.Copy(captureCube, publishedCube);
-        commandList.ResourceBarrierTransition(publishedCube, BarrierLayout.ShaderResource);
         commandList.ResourceBarrierTransition(captureCube, BarrierLayout.ShaderResource);
+
+        // The sky light's reflections: the sharp capture at the top, then each level convolved with the GGX lobe of the
+        // roughness the materials read it at (perceptual roughness x mip count, see RoughnessCubeMapEnvironmentColor)
+        for (int face = 0; face < 6; face++)
+            commandList.CopyRegion(captureCube, face * captureCube.MipLevelCount, null, publishedCube, face * publishedCube.MipLevelCount);
+        var prefilter = prefilterEffect.Parameters;
+        prefilter.Set(SkyPrefilterKeys.PrefilterSource, captureCube);
+        prefilter.Set(SkyPrefilterKeys.PrefilterSourceSize, (float)captureSize);
+        prefilter.Set(SkyPrefilterKeys.PrefilterSourceLevels, (float)captureCube.MipLevelCount);
+        prefilter.Set(SkyPrefilterKeys.PrefilterSamples, PrefilterSamples);
+        for (int mip = 1; mip < publishedCube.MipLevelCount; mip++)
+        {
+            var mipSize = Math.Max(1, captureSize >> mip);
+            prefilter.Set(SkyPrefilterKeys.PrefilterOutput, publishedMips[mip]);
+            prefilter.Set(SkyPrefilterKeys.PrefilterSize, mipSize);
+            prefilter.Set(SkyPrefilterKeys.PrefilterRoughness, (float)mip / publishedCube.MipLevelCount);
+            prefilterEffect.ThreadGroupCounts = new Int3((mipSize + 7) / 8, (mipSize + 7) / 8, 6);
+            prefilterEffect.Draw(context, "SkyPrefilter");
+        }
+        commandList.ResourceBarrierTransition(publishedCube, BarrierLayout.ShaderResource);
 
         harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyCaptureCube, captureCube);
         harmonicsEffect.Parameters.Set(SkySphericalHarmonicsKeys.SkyCaptureMip, (float)Math.Max(0, (int)MathF.Log2(captureSize / 16.0f)));
@@ -303,6 +355,19 @@ internal sealed class SkyRenderer : RendererCoreBase
         }
     }
 
+    private static float Halton(int index, int radix)
+    {
+        var result = 0.0f;
+        var fraction = 1.0f / radix;
+        while (index > 0)
+        {
+            result += index % radix * fraction;
+            index /= radix;
+            fraction /= radix;
+        }
+        return result;
+    }
+
     private void EnsureCapture()
     {
         var size = Math.Clamp(MathUtil.NextPowerOfTwo(CaptureSize), 32, 512);
@@ -311,37 +376,54 @@ internal sealed class SkyRenderer : RendererCoreBase
         DisposeCapture();
         captureSize = size;
         var device = Context.GraphicsDevice;
-        captureCube = Texture.NewCube(device, size, MipMapCount.Auto, PixelFormat.R16G16B16A16_Float, TextureFlags.RenderTarget | TextureFlags.ShaderResource);
+        captureCube = Texture.NewCube(device, size, MipMapCount.Auto, PixelFormat.R16G16B16A16_Float, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
         captureCube.Name = "AtmosphereSkyCapture";
-        captureFaces = new Texture[6, captureCube.MipLevelCount];
-        for (int face = 0; face < 6; face++)
-        {
-            for (int mip = 0; mip < captureCube.MipLevelCount; mip++)
-                captureFaces[face, mip] = captureCube.ToTextureView(ViewType.Single, face, mip);
-        }
+        captureMips = new Texture[captureCube.MipLevelCount];
+        for (int mip = 0; mip < captureCube.MipLevelCount; mip++)
+            captureMips[mip] = captureCube.ToTextureView(ViewType.MipBand, 0, mip);
         captureAtlas = Texture.New2D(device, size * 6, size, PixelFormat.R16G16B16A16_Float, TextureFlags.RenderTarget | TextureFlags.ShaderResource);
         captureAtlas.Name = "AtmosphereSkyCaptureFaces";
-        publishedCube = Texture.NewCube(device, size, MipMapCount.Auto, PixelFormat.R16G16B16A16_Float, TextureFlags.ShaderResource);
+        for (int i = 0; i < 2; i++)
+        {
+            accumulatedAtlas[i] = Texture.New2D(device, size * 6, size, PixelFormat.R16G16B16A16_Float, TextureFlags.RenderTarget | TextureFlags.ShaderResource);
+            accumulatedAtlas[i].Name = "AtmosphereSkyCaptureAccumulated";
+        }
+        accumulatedValid = false;
+        publishedCube = Texture.NewCube(device, size, MipMapCount.Auto, PixelFormat.R16G16B16A16_Float, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
         publishedCube.Name = "AtmosphereSkyLight";
+        publishedMips = new Texture[publishedCube.MipLevelCount];
+        for (int mip = 1; mip < publishedCube.MipLevelCount; mip++)
+            publishedMips[mip] = publishedCube.ToTextureView(ViewType.MipBand, 0, mip);
         publishedSkybox = null;
     }
 
     private void DisposeCapture()
     {
-        if (captureFaces != null)
+        if (captureMips != null)
         {
-            foreach (var view in captureFaces)
+            foreach (var view in captureMips)
                 view?.Dispose();
-            captureFaces = null;
+            captureMips = null;
         }
         captureCube?.Dispose();
         captureCube = null;
         captureAtlas?.Dispose();
         captureAtlas = null;
+        for (int i = 0; i < 2; i++)
+        {
+            accumulatedAtlas[i]?.Dispose();
+            accumulatedAtlas[i] = null;
+        }
         if (publishedSkybox != null)
         {
             publishedSkybox.SpecularLightingParameters.Set(SkyboxKeys.CubeMap, null);
             publishedSkybox = null;
+        }
+        if (publishedMips != null)
+        {
+            foreach (var view in publishedMips)
+                view?.Dispose();
+            publishedMips = null;
         }
         publishedCube?.Dispose();
         publishedCube = null;

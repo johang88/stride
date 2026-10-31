@@ -176,12 +176,13 @@ public sealed class AtmosphereRenderer : RendererCoreBase, IAtmosphereRenderer
     public float CloudShadowDistance { get; set; } = 10000.0f;
 
     /// <summary>
-    /// Size of the faces of the sky capture lighting the surfaces (one face is captured each frame).
+    /// Size of the faces of the sky capture lighting the surfaces (all faces every few frames; its mips are the reflections of
+    /// rougher surfaces, prefiltered with their GGX lobe).
     /// </summary>
     [DataMember(90)]
-    [DefaultValue(64)]
+    [DefaultValue(128)]
     [DataMemberRange(32, 512, 32, 64, 0)]
-    public int SkyCaptureSize { get; set; } = 64;
+    public int SkyCaptureSize { get; set; } = 128;
 
     /// <summary>
     /// Debug view of the clouds (0: none, 1-2: shape noise slices, 3: detail noise, 4: weather map).
