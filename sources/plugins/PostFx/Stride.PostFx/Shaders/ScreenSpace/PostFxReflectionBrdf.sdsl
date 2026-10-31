@@ -1,0 +1,79 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// The specular lobe of the reflections (GGX, height-correlated Smith): reflected directions sampled from the normals
+    /// visible from the eye (Dupuy and Benyoub 2023, spherical caps), their density, and the lobe's weight of a direction,
+    /// which the resolve divides by the density a neighbour's ray was sampled with (Stachowiak 2015).
+    /// Roughness: alpha (perceptual roughness squared), no smaller than PostFxMinAlpha (a mirror is a very narrow lobe).
+    /// </summary>
+    shader PostFxReflectionBrdf
+    {
+        stage float PostFxMinAlpha()
+        {
+            return 0.0025;
+        }
+
+        stage float PostFxGgx(float nh, float alpha)
+        {
+            float a2 = alpha * alpha;
+            float d = nh * nh * (a2 - 1.0) + 1.0;
+            return a2 / (3.14159265 * d * d);
+        }
+
+        // Smith's masking of one direction (GGX)
+        stage float PostFxSmithG1(float nx, float alpha)
+        {
+            float a2 = alpha * alpha;
+            return 2.0 * nx / (nx + sqrt(a2 + (1.0 - a2) * nx * nx));
+        }
+
+        // The lobe's weight of a reflected direction l: D x visibility x cos (no Fresnel, close to constant over the lobe)
+        stage float PostFxSpecularWeight(float3 n, float3 v, float3 l, float alpha)
+        {
+            float nl = dot(n, l);
+            float nv = max(dot(n, v), 1e-4);
+            if (nl <= 0.0)
+                return 0.0;
+            float3 h = normalize(v + l);
+            float a2 = alpha * alpha;
+            // (height-correlated: 0.5 / (nl sqrt(nv^2 (1 - a2) + a2) + nv sqrt(nl^2 (1 - a2) + a2)))
+            float visibility = 0.5 / (nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2));
+            return PostFxGgx(saturate(dot(n, h)), alpha) * visibility * nl;
+        }
+
+        // The density of a reflected direction sampled from the visible normals: G1(v) D(h) / (4 nv)
+        stage float PostFxReflectionPdf(float nv, float nh, float alpha)
+        {
+            nv = max(nv, 1e-4);
+            return PostFxSmithG1(nv, alpha) * PostFxGgx(nh, alpha) / (4.0 * nv);
+        }
+
+        // A microfacet normal visible from v (tangent space, z the normal), from two uniform values
+        stage float3 PostFxSampleVisibleNormal(float3 v, float alpha, float2 u)
+        {
+            // The view in the hemisphere configuration (the lobe stretched to roughness 1)
+            float3 stretched = normalize(float3(v.xy * alpha, v.z));
+            // A direction in the spherical cap of the visible normals
+            float phi = 6.28318531 * u.x;
+            float z = (1.0 - u.y) * (1.0 + stretched.z) - stretched.z;
+            float sinTheta = sqrt(saturate(1.0 - z * z));
+            float3 c = float3(sinTheta * cos(phi), sinTheta * sin(phi), z);
+            float3 h = c + stretched;
+            // Back to the ellipsoid
+            return normalize(float3(h.xy * alpha, max(h.z, 0.0)));
+        }
+
+        // A tangent frame about a unit normal (Duff et al. 2017)
+        stage void PostFxTangentFrame(float3 n, out float3 tangent, out float3 bitangent)
+        {
+            float s = n.z >= 0.0 ? 1.0 : -1.0;
+            float a = -1.0 / (s + n.z);
+            float b = n.x * n.y * a;
+            tangent = float3(1.0 + s * n.x * n.x * a, s * b, -s * n.x);
+            bitangent = float3(b, s + n.y * n.y * a, -n.y);
+        }
+    };
+}

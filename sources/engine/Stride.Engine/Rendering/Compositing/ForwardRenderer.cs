@@ -290,6 +290,9 @@ namespace Stride.Rendering.Compositing
                     //       Should use this instead: PixelFormat.R8_UInt
                     renderOutputValidator.Add<MaterialIndexTargetSemantic>(PixelFormat.R16_Float);
                 }
+
+                if (PostEffects is IScreenSpaceLightingEffects screenSpaceLighting)
+                    screenSpaceLighting.ValidateOpaqueStageOutput(renderOutputValidator);
             }
         }
 
@@ -449,7 +452,10 @@ namespace Stride.Rendering.Compositing
                     if (depthPrepassStages.DepthPrepass != null)
                         Decals?.Collect(context, OpaqueRenderStage);
                     if (PostEffects is IScreenSpaceLightingEffects screenSpaceLighting)
+                    {
                         screenSpaceLighting.OpaqueRenderStage = OpaqueRenderStage;
+                        screenSpaceLighting.TransparentRenderStage = TransparentRenderStage;
+                    }
 
                     PostEffects?.Collect(context);
                 }

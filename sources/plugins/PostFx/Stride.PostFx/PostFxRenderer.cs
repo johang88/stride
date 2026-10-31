@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using Stride.Core;
 using Stride.Core.Annotations;
+using Stride.Core.Diagnostics;
 using Stride.Core.Mathematics;
 using Stride.Graphics;
 using Stride.Engine;
@@ -140,6 +141,35 @@ public enum PostFxAmbientOcclusionQuality
     /// Three slices of five steps.
     /// </summary>
     High,
+}
+
+/// <summary>
+/// Quality of the screen-space reflections: rays sampled from each surface's specular lobe (its normal and roughness),
+/// reused by the neighbouring pixels, accumulated over frames. Rougher surfaces than traced keep the sky's reflection.
+/// </summary>
+public enum PostFxReflectionQuality
+{
+    Off,
+
+    /// <summary>
+    /// A ray per 2x2 pixels, short marches, three rays reused per pixel, surfaces up to a roughness of 0.45.
+    /// </summary>
+    Low,
+
+    /// <summary>
+    /// A ray per 2x2 pixels, three rays reused per pixel, surfaces up to a roughness of 0.6.
+    /// </summary>
+    Medium,
+
+    /// <summary>
+    /// A ray per 2x2 pixels, long marches, four rays reused per pixel, surfaces up to a roughness of 0.7.
+    /// </summary>
+    High,
+
+    /// <summary>
+    /// A ray per pixel, four reused, surfaces up to a roughness of 0.7.
+    /// </summary>
+    Ultra,
 }
 
 /// <summary>
@@ -289,12 +319,12 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
     public bool ContactShadows { get; set; } = true;
 
     /// <summary>
-    /// Whether reflections are found on screen (traced after each frame at half resolution, read by the next): they
-    /// replace the sky's where they're found.
+    /// Quality of the reflections found on screen (traced after each frame, read by the next): they replace the sky's where
+    /// they're found. The opaque surfaces write their normal and roughness for them.
     /// </summary>
     [DataMember(47)]
-    [DefaultValue(true)]
-    public bool Reflections { get; set; } = true;
+    [DefaultValue(PostFxReflectionQuality.High)]
+    public PostFxReflectionQuality Reflections { get; set; } = PostFxReflectionQuality.High;
 
     /// <summary>
     /// Whether indirect light is found on screen (a ray per pixel at half resolution, accumulated over frames): light
@@ -410,6 +440,11 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
 
     public bool RequiresSpecularRoughnessBuffer => false;
 
+    /// <summary>
+    /// GPU time of the screen-space reflections.
+    /// </summary>
+    public static readonly ProfilingKey ReflectionsProfilingKey = new("PostFx.Reflections");
+
     /// <inheritdoc/>
     [DataMemberIgnore]
     public RenderStage OpaqueRenderStage
@@ -417,6 +452,30 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         get => screenSpace.OpaqueStage;
         set => screenSpace.OpaqueStage = value;
     }
+
+    /// <inheritdoc/>
+    [DataMemberIgnore]
+    public RenderStage TransparentRenderStage
+    {
+        get => screenSpace.TransparentStage;
+        set => screenSpace.TransparentStage = value;
+    }
+
+    /// <inheritdoc/>
+    public void ValidateOpaqueStageOutput(RenderOutputValidator validator)
+    {
+        // The reflections trace from each surface's own normal and roughness
+        if (Reflections != PostFxReflectionQuality.Off)
+            validator.Add<PostFxNormalRoughnessTargetSemantic>(PixelFormat.R10G10B10A2_UNorm);
+    }
+
+    private static ReflectionTraceSettings ReflectionSettings(PostFxReflectionQuality quality) => quality switch
+    {
+        PostFxReflectionQuality.Low => new ReflectionTraceSettings(TraceScale: 2, Iterations: 32, Samples: 3, MaxRoughness: 0.45f, MaxDistance: 60.0f),
+        PostFxReflectionQuality.Medium => new ReflectionTraceSettings(TraceScale: 2, Iterations: 48, Samples: 3, MaxRoughness: 0.6f, MaxDistance: 80.0f),
+        PostFxReflectionQuality.Ultra => new ReflectionTraceSettings(TraceScale: 1, Iterations: 96, Samples: 4, MaxRoughness: 0.7f, MaxDistance: 150.0f),
+        _ => new ReflectionTraceSettings(TraceScale: 2, Iterations: 64, Samples: 4, MaxRoughness: 0.7f, MaxDistance: 100.0f),
+    };
 
     protected override void InitializeCore()
     {
@@ -536,7 +595,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         Resolve(context, view, state);
 
         // The screen-space lighting of the opaque surfaces
-        screenSpace.Enabled = AmbientOcclusion != PostFxAmbientOcclusionQuality.Off || ContactShadows || Reflections || IndirectLight;
+        screenSpace.Enabled = AmbientOcclusion != PostFxAmbientOcclusionQuality.Off || ContactShadows || Reflections != PostFxReflectionQuality.Off || IndirectLight;
         if (screenSpace.Enabled)
             EnsureScreenSpaceFeatures(context);
 
@@ -574,6 +633,8 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         SetInput(1, inputDepthStencil);
         var velocityIndex = outputValidator.Find<VelocityTargetSemantic>();
         SetInput(2, velocityIndex >= 0 ? inputs[velocityIndex] : null);
+        var surfacesIndex = outputValidator.Find<PostFxNormalRoughnessTargetSemantic>();
+        SetInput(3, surfacesIndex >= 0 ? inputs[surfacesIndex] : null);
         SetOutput(outputTarget);
         Draw(drawContext);
     }
@@ -621,15 +682,31 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
             var targets = state.ScreenSpaceTargets;
             // (the image just resolved is read)
             context.CommandList.ResetTargets();
-            if (Reflections && profile.ScreenSpaceLight.Reflections > 0.0f)
-                screenSpacePass.DrawReflections(context, renderContext.RenderView, targets, scene, frame);
+            var viewProjection = state.Temporal?.ViewProjection ?? renderContext.RenderView.ViewProjection;
+            Matrix.Invert(ref viewProjection, out var inverseViewProjection);
+            var previous = state.Temporal?.HasPrevious == true ? state.Temporal.PreviousUnjitteredViewProjection : viewProjection;
+            var surfaces = GetInput(3);
+            if (Reflections != PostFxReflectionQuality.Off && profile.ScreenSpaceLight.Reflections > 0.0f && surfaces != null
+                && surfaces.ViewWidth == targets.Pyramid.Width && surfaces.ViewHeight == targets.Pyramid.Height)
+            {
+                using (context.QueryManager.BeginProfile(Color.SkyBlue, ReflectionsProfilingKey))
+                {
+                    Matrix.Invert(ref renderContext.RenderView.View, out var inverseView);
+                    var info = new ReflectionFrameInfo(frame, MathF.Pow(2.0f, ExposureEV(profile)), inverseViewProjection, previous, inverseView.TranslationVector,
+                        state.Temporal != null ? state.Temporal.JitterNdc - state.Temporal.PreviousJitterNdc : Vector2.Zero);
+                    screenSpacePass.DrawReflections(context, renderContext.RenderView, targets, scene, surfaces, motion, black, ReflectionSettings(Reflections), info);
+                }
+            }
             else
+            {
                 targets.ReflectionsValid = false;
+                targets.ReflectionHistoryValid = false;
+                // (the player turned them off: their targets go)
+                if (Reflections == PostFxReflectionQuality.Off)
+                    targets.DisposeReflections();
+            }
             if (IndirectLight && profile.ScreenSpaceLight.IndirectLight > 0.0f)
             {
-                var viewProjection = state.Temporal?.ViewProjection ?? renderContext.RenderView.ViewProjection;
-                Matrix.Invert(ref viewProjection, out var inverseViewProjection);
-                var previous = state.Temporal?.HasPrevious == true ? state.Temporal.PreviousUnjitteredViewProjection : viewProjection;
                 screenSpacePass.DrawIndirect(context, renderContext.RenderView, targets, scene, inverseViewProjection, previous, frame, MathF.Pow(2.0f, ExposureEV(profile)));
             }
             else
@@ -697,7 +774,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         {
             PostFxDebugView.AmbientOcclusion => state.ScreenSpaceTargets?.AmbientOcclusion,
             PostFxDebugView.ContactShadows => state.ScreenSpaceTargets?.ContactShadows,
-            PostFxDebugView.Reflections => state.ScreenSpaceTargets?.ReflectionLevelViews[0],
+            PostFxDebugView.Reflections => state.ScreenSpaceTargets?.Reflections,
             PostFxDebugView.IndirectLight => state.ScreenSpaceTargets?.Indirect,
             _ => null,
         };
@@ -705,7 +782,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         {
             debugShader.Parameters.Set(PostFxDebugViewKeys.DebugColor, DebugView is PostFxDebugView.Reflections or PostFxDebugView.IndirectLight);
             debugShader.Parameters.Set(PostFxDebugViewKeys.DebugScale, MathF.Pow(2.0f, ExposureEV(profile)));
-            debugShader.Parameters.Set(PostFxDebugViewKeys.DebugPremultiplied, DebugView is PostFxDebugView.IndirectLight);
+            debugShader.Parameters.Set(PostFxDebugViewKeys.DebugPremultiplied, DebugView is PostFxDebugView.Reflections or PostFxDebugView.IndirectLight);
             debugShader.SetInput(0, debugTexture);
             debugShader.SetOutput(output);
             debugShader.Draw(context, "PostFx.DebugView");
@@ -934,8 +1011,16 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
 
         // The light found on screen after the last frame
         var found = profile.ScreenSpaceLight;
-        data.Reflections = Reflections && found.Reflections > 0.0f && targets.ReflectionsValid ? targets.Reflections : null;
+        var reflecting = Reflections != PostFxReflectionQuality.Off && found.Reflections > 0.0f;
+        data.Reflections = reflecting && targets.ReflectionsValid ? targets.Reflections : null;
         data.ReflectionStrength = Math.Clamp(found.Reflections, 0.0f, 1.0f);
+        data.ReflectionMaxRoughness = ReflectionSettings(Reflections).MaxRoughness;
+        // (the transparent surfaces trace against this frame's pyramid, drawn after the depth prepass, and read the image of
+        // the previous frame)
+        screenSpace.TransparentReflections = reflecting;
+        data.Pyramid = reflecting ? targets.Pyramid : null;
+        data.PyramidLevels = targets.PyramidLevels;
+        data.ReflectionSource = reflecting && targets.ReflectionsValid ? targets.ReflectionSource : null;
         data.Indirect = IndirectLight && found.IndirectLight > 0.0f ? targets.Indirect : null;
         data.IndirectStrength = Math.Clamp(found.IndirectLight, 0.0f, 1.0f);
 

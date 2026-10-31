@@ -1,0 +1,42 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// The light the reflections read, at half the view's resolution (mips follow, PostFxScreenMip): the anti-aliased image
+    /// averaged over each 2x2 of the view's pixels, without NaNs, the brightest light limited (a highlight caught in a
+    /// rough reflection would sparkle). Groups of 8x8 threads. Output: rgb = light, a = 1.
+    /// </summary>
+    shader PostFxReflectionSource : ComputeShaderBase, PostFxCommon
+    {
+        stage Texture2D SourceScene;
+        stage RWTexture2D<float4> SourceOutput;
+
+        stage SamplerState SourceLinearClamp
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        cbuffer PerDispatch
+        {
+            stage int2 SourceSize;
+            // The brightest light kept (scene light)
+            stage float SourceMaxLuminance;
+        };
+
+        override void Compute()
+        {
+            int2 texel = (int2)streams.DispatchThreadId.xy;
+            if (any(texel >= SourceSize))
+                return;
+            float2 uv = (texel + 0.5) / SourceSize;
+            float3 light = SourceScene.SampleLevel(SourceLinearClamp, uv, 0).rgb;
+            light = any(isnan(light)) ? 0.0 : max(light, 0.0);
+            light *= min(1.0, SourceMaxLuminance / max(PostFxLuminance(light), 1e-6));
+            SourceOutput[texel] = float4(light, 1.0);
+        }
+    };
+}

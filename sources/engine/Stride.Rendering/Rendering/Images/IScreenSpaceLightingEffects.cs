@@ -2,6 +2,7 @@
 // Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
 
 using Stride.Graphics;
+using Stride.Rendering.Compositing;
 
 namespace Stride.Rendering.Images;
 
@@ -15,6 +16,17 @@ public interface IScreenSpaceLightingEffects
     /// The render stage of the opaque surfaces (set by the forward renderer): the surfaces lit with the terms.
     /// </summary>
     RenderStage OpaqueRenderStage { get; set; }
+
+    /// <summary>
+    /// The render stage of the transparent surfaces (set by the forward renderer).
+    /// </summary>
+    RenderStage TransparentRenderStage { get; set; }
+
+    /// <summary>
+    /// Adds the render targets the effects need the opaque surfaces to write besides the color (after the forward renderer's
+    /// own: the effects find them by their semantic in the targets they are drawn with).
+    /// </summary>
+    void ValidateOpaqueStageOutput(RenderOutputValidator validator);
 
     /// <summary>
     /// Draws the terms from the depth of the view (the depth buffer is bound to nothing, readable).

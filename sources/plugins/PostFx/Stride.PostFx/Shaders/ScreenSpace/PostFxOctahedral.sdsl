@@ -1,0 +1,26 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// Unit vectors as two values in [-1, 1] (octahedral mapping, Cigolle et al. 2014).
+    /// </summary>
+    shader PostFxOctahedral
+    {
+        stage float2 PostFxOctahedralEncode(float3 n)
+        {
+            n /= abs(n.x) + abs(n.y) + abs(n.z);
+            float2 folded = (1.0 - abs(n.yx)) * float2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+            return n.z >= 0.0 ? n.xy : folded;
+        }
+
+        stage float3 PostFxOctahedralDecode(float2 e)
+        {
+            float3 n = float3(e, 1.0 - abs(e.x) - abs(e.y));
+            float t = saturate(-n.z);
+            n.xy += float2(n.x >= 0.0 ? -t : t, n.y >= 0.0 ? -t : t);
+            return normalize(n);
+        }
+    };
+}

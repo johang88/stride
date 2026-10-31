@@ -1,0 +1,114 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// Screen-space reflections on a transparent surface (water, glass: a mixin of the forward shading of the transparent
+    /// stage, see ForwardShadingKeys.ScreenSpaceLighting). The opaque pass can't write these surfaces' normals, so each pixel
+    /// traces its own ray: a direction from its specular lobe (the temporal anti-aliasing averages the frames' samples),
+    /// marched through this frame's distance pyramid (the opaque surfaces behind and around it, PostFxScreenTrace); the light
+    /// of a hit comes from the previous frame's image (where the hit was then), prefiltered by the ray's cone. The sky light's
+    /// reflection gives way to it by its confidence.
+    /// </summary>
+    shader PostFxTransparentReflections : MaterialPixelShadingStream, ShaderBaseStream, PositionStream4, Transformation, PostFxCommon, PostFxScreenTrace, PostFxReflectionBrdf
+    {
+        rgroup PerView.PostFxTransparentReflections
+        {
+            stage Texture2D PostFxTransparentPyramid;
+            stage Texture2D PostFxTransparentSource;
+        }
+
+        cbuffer PerView.PostFxTransparentReflections
+        {
+            // Size of the pyramid's finest level (the view's, pixels) and its inverse
+            stage float4 PostFxTransparentSize;
+            // World to the previous frame's clip space (the image the light is read from)
+            stage float4x4 PostFxTransparentPreviousViewProjection;
+            stage float PostFxTransparentStrength;
+            stage float PostFxTransparentMaxRoughness;
+            stage int PostFxTransparentMaxLevel;
+            stage float PostFxTransparentFrame;
+            stage float PostFxTransparentSourceLevels;
+        }
+
+        stage SamplerState PostFxTransparentLinear
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        stage override float TraceSceneDistance(int2 cell, int level)
+        {
+            int2 levelSize = max(int2(PostFxTransparentSize.xy) >> level, int2(1, 1));
+            return PostFxTransparentPyramid.Load(int3(clamp(cell, int2(0, 0), levelSize - 1), level)).r;
+        }
+
+        stage override float4 TraceProjectionInfo()
+        {
+            return float4(1.0 / Projection._11, 1.0 / Projection._22, Projection._31, Projection._32);
+        }
+
+        stage override float2 TraceViewSize()
+        {
+            return PostFxTransparentSize.xy;
+        }
+
+        stage override int TraceMaxLevel()
+        {
+            return PostFxTransparentMaxLevel;
+        }
+
+        stage override void ApplyScreenSpaceLighting()
+        {
+            base.ApplyScreenSpaceLighting();
+            float roughness = sqrt(streams.alphaRoughness);
+            if (PostFxTransparentStrength <= 0.0 || roughness > PostFxTransparentMaxRoughness)
+                return;
+
+            // The surface in the passes' view space (x right, y up, z forward)
+            float3 position = mul(float4(streams.PositionWS.xyz, 1.0), View).xyz * float3(1.0, 1.0, -1.0);
+            float3 normal = normalize(mul(streams.normalWS, (float3x3)View) * float3(1.0, 1.0, -1.0));
+            float3 view = normalize(-position);
+            float nv = dot(normal, view);
+            if (nv < 0.01)
+                normal = normalize(normal + view * (0.01 - nv));
+            nv = max(dot(normal, view), 1e-4);
+
+            // A direction from the lobe (the mirror direction if the sample fell below the surface)
+            float alpha = max(streams.alphaRoughness, PostFxMinAlpha());
+            float3 tangent, bitangent;
+            PostFxTangentFrame(normal, tangent, bitangent);
+            float3 noise = PostFxFrameNoise3(int2(streams.ShadingPosition.xy), PostFxTransparentFrame);
+            float3 h = PostFxSampleVisibleNormal(float3(dot(view, tangent), dot(view, bitangent), nv), alpha, noise.xy);
+            float3 direction = reflect(-view, tangent * h.x + bitangent * h.y + normal * h.z);
+            if (dot(direction, normal) <= 0.0)
+                direction = reflect(-view, normal);
+
+            float4 hit = TraceScreen(position + normal * 0.01, direction, 80.0, 48);
+            if (hit.w <= 0.0)
+                return;
+
+            // Where the hit was on the previous frame's image
+            float4 info = TraceProjectionInfo();
+            float2 ndc = float2(hit.x * 2.0 - 1.0, 1.0 - hit.y * 2.0);
+            float3 hitView = float3((ndc + info.zw) * info.xy * hit.z, hit.z);
+            float4 hitWorld = mul(float4(hitView.xy, -hitView.z, 1.0), ViewInverse);
+            float4 previousClip = mul(float4(hitWorld.xyz / hitWorld.w, 1.0), PostFxTransparentPreviousViewProjection);
+            if (previousClip.w <= 0.0)
+                return;
+            float2 previousUv = float2(previousClip.x / previousClip.w * 0.5 + 0.5, 0.5 - previousClip.y / previousClip.w * 0.5);
+
+            // Prefiltered by the lobe's cone over the ray's length (the image is at half resolution: its level 0 spans 2 pixels)
+            float rayLength = length(hitView - position);
+            float pixelAngle = 2.0 * info.y * PostFxTransparentSize.w;
+            float footprint = rayLength * 0.5 * alpha / max(hit.z * pixelAngle, 1e-6);
+            float level = clamp(log2(max(footprint, 1.0)) - 1.0, 0.0, PostFxTransparentSourceLevels - 1.0);
+            float3 light = PostFxTransparentSource.SampleLevel(PostFxTransparentLinear, previousUv, level).rgb;
+            float2 edge = saturate(min(hit.xy, 1.0 - hit.xy) * 25.0) * saturate(min(previousUv, 1.0 - previousUv) * 25.0);
+            float traced = saturate((PostFxTransparentMaxRoughness - roughness) * 10.0);
+            streams.screenSpaceSpecular = float4(light, saturate(edge.x * edge.y * traced * PostFxTransparentStrength));
+        }
+    };
+}

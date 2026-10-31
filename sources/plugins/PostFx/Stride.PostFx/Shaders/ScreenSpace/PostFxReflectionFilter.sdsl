@@ -1,0 +1,78 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// The last pass of the screen-space reflections: what is left of the rays' noise on rough surfaces is averaged with the
+    /// neighbours on the same surface (near its plane, facing the same way, as rough), over a footprint that grows with the
+    /// roughness and shrinks as the history fills (taps on a disc turned per pixel and frame). Smooth surfaces pass unfiltered (their reflection is sharp). Premultiplied
+    /// light, full resolution. Groups of 8x8 threads.
+    /// </summary>
+    shader PostFxReflectionFilter : ComputeShaderBase, PostFxViewSpace, PostFxCommon, PostFxOctahedral
+    {
+        stage Texture2D<float> ReflectionPyramid;
+        stage Texture2D<float4> ReflectionGBuffer;
+        stage Texture2D<float4> ReflectionFilterSource;
+        stage Texture2D<float2> ReflectionFilterInfo;
+        stage RWTexture2D<float4> ReflectionFilterOutput;
+
+        cbuffer PerDispatch
+        {
+            stage float4x4 ReflectionWorldToView;
+            stage float ReflectionFilterFrame;
+        };
+
+        override void Compute()
+        {
+            int2 pixel = (int2)streams.DispatchThreadId.xy;
+            int2 size = int2(ViewSize.xy);
+            if (any(pixel >= size))
+                return;
+            float4 center = ReflectionFilterSource.Load(int3(pixel, 0));
+            float4 surface = ReflectionGBuffer.Load(int3(pixel, 0));
+            float roughness = surface.z;
+            float frames = ReflectionFilterInfo.Load(int3(pixel, 0)).y;
+            // (the footprint's radius, pixels: none below a roughness of 0.1, up to 4 for rough surfaces with a fresh history)
+            float spread = saturate((roughness - 0.1) / 0.4) * lerp(4.0, 2.0, saturate(frames / 16.0));
+            if (frames <= 0.0 || spread < 0.25)
+            {
+                ReflectionFilterOutput[pixel] = center;
+                return;
+            }
+
+            float distance = ReflectionPyramid.Load(int3(pixel, 0));
+            float3 position = ViewPosition((pixel + 0.5) * ViewSize.zw, distance);
+            float3 normal = normalize(mul(float4(PostFxOctahedralDecode(surface.xy * 2.0 - 1.0), 0.0), ReflectionWorldToView).xyz);
+            float tolerance = 0.01 * distance + 0.02;
+
+            // The center and 5 taps on a disc turned differently per pixel and frame (a grid of wide steps would stamp a
+            // lone bright pixel as a pattern; turned taps leave noise the temporal anti-aliasing takes away)
+            float4 sum = center;
+            float weights = 1.0;
+            float turn = PostFxFrameNoise(pixel, ReflectionFilterFrame, 3.0) * 6.28318531;
+            [unroll]
+            for (int i = 0; i < 5; i++)
+            {
+                float r = sqrt((i + 0.5) / 5.0) * spread;
+                float angle = i * 2.39996323 + turn;
+                int2 tap = pixel + int2(round(float2(cos(angle), sin(angle)) * r));
+                if (any(tap < 0) || any(tap >= size) || all(tap == pixel))
+                    continue;
+                float4 tapSurface = ReflectionGBuffer.Load(int3(tap, 0));
+                float tapDistance = ReflectionPyramid.Load(int3(tap, 0));
+                if (tapSurface.w < 0.5 || IsSky(tapDistance))
+                    continue;
+                float3 tapPosition = ViewPosition((tap + 0.5) * ViewSize.zw, tapDistance);
+                float3 tapNormal = mul(float4(PostFxOctahedralDecode(tapSurface.xy * 2.0 - 1.0), 0.0), ReflectionWorldToView).xyz;
+                float plane = abs(dot(normal, tapPosition - position)) / tolerance;
+                float facing = pow(saturate(dot(normal, tapNormal)), 32.0);
+                float rough = saturate(1.0 - abs(tapSurface.z - roughness) * 8.0);
+                float w = exp(-plane * plane) * facing * rough;
+                sum += ReflectionFilterSource.Load(int3(tap, 0)) * w;
+                weights += w;
+            }
+            ReflectionFilterOutput[pixel] = sum / weights;
+        }
+    };
+}

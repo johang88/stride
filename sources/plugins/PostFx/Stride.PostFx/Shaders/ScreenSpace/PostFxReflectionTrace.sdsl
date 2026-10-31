@@ -1,0 +1,123 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// The rays of the screen-space reflections: per traced pixel (all of them, or one of each 2x2 changing every frame), a
+    /// reflected direction sampled from the GGX normals visible from the eye about the surface's shading normal (from the
+    /// opaque surfaces' normal and roughness target), marched through the distance pyramid (PostFxScreenTrace). A hit is
+    /// kept unless it is the back of a surface. Groups of 8x8 threads.
+    /// Output (one texel per traced pixel): a hit = (uv, distance in front of the camera, log2 of the direction's density);
+    /// a miss = (octahedral direction in view space, -1, log2 density); no ray (sky, too rough, below the surface) = 0.
+    /// </summary>
+    shader PostFxReflectionTrace : ComputeShaderBase, PostFxViewSpace, PostFxCommon, PostFxScreenTrace, PostFxReflectionBrdf, PostFxOctahedral
+    {
+        stage Texture2D<float> ReflectionPyramid;
+        stage Texture2D<float4> ReflectionGBuffer;
+        stage RWTexture2D<float4> ReflectionRays;
+
+        cbuffer PerDispatch
+        {
+            // Size of the output: the view's, or half of it
+            stage int2 ReflectionTraceSize;
+            // Pixels of the view per traced texel (1 or 2), and the pixel of each 2x2 traced this frame
+            stage int ReflectionTraceScale;
+            stage int2 ReflectionTraceOffset;
+            // World space normals to the passes' view space (x right, y up, z forward)
+            stage float4x4 ReflectionWorldToView;
+            stage float ReflectionMaxRoughness;
+            stage float ReflectionMaxDistance;
+            stage int ReflectionIterations;
+            stage int ReflectionMaxLevel;
+            stage float ReflectionFrame;
+        };
+
+        stage override float TraceSceneDistance(int2 cell, int level)
+        {
+            int2 levelSize = max(int2(ViewSize.xy) >> level, int2(1, 1));
+            return ReflectionPyramid.Load(int3(clamp(cell, int2(0, 0), levelSize - 1), level));
+        }
+
+        stage override float4 TraceProjectionInfo()
+        {
+            return ViewProjectionInfo;
+        }
+
+        stage override float2 TraceViewSize()
+        {
+            return ViewSize.xy;
+        }
+
+        stage override int TraceMaxLevel()
+        {
+            return ReflectionMaxLevel;
+        }
+
+        override void Compute()
+        {
+            int2 texel = (int2)streams.DispatchThreadId.xy;
+            if (any(texel >= ReflectionTraceSize))
+                return;
+            int2 pixel = min(texel * ReflectionTraceScale + ReflectionTraceOffset, int2(ViewSize.xy) - 1);
+            float distance = ReflectionPyramid.Load(int3(pixel, 0));
+            float4 surface = ReflectionGBuffer.Load(int3(pixel, 0));
+            float roughness = surface.z;
+            if (IsSky(distance) || surface.w < 0.5 || roughness > ReflectionMaxRoughness)
+            {
+                ReflectionRays[texel] = 0.0;
+                return;
+            }
+
+            float3 position = ViewPosition((pixel + 0.5) * ViewSize.zw, distance);
+            float3 view = normalize(-position);
+            float3 normal = normalize(mul(float4(PostFxOctahedralDecode(surface.xy * 2.0 - 1.0), 0.0), ReflectionWorldToView).xyz);
+            // (a normal facing away from the eye, from a normal map or interpolation: bent towards it)
+            float nv = dot(normal, view);
+            if (nv < 0.01)
+                normal = normalize(normal + view * (0.01 - nv));
+            nv = max(dot(normal, view), 1e-4);
+
+            float alpha = max(roughness * roughness, PostFxMinAlpha());
+            float3 tangent, bitangent;
+            PostFxTangentFrame(normal, tangent, bitangent);
+            float3 viewTangent = float3(dot(view, tangent), dot(view, bitangent), nv);
+            float3 noise = PostFxFrameNoise3(texel, ReflectionFrame);
+            // (a sample below the surface is drawn again once)
+            float3 h = PostFxSampleVisibleNormal(viewTangent, alpha, noise.xy);
+            float3 direction = reflect(-view, tangent * h.x + bitangent * h.y + normal * h.z);
+            if (dot(direction, normal) <= 0.0)
+            {
+                h = PostFxSampleVisibleNormal(viewTangent, alpha, frac(noise.yz + float2(0.5, 0.5)));
+                direction = reflect(-view, tangent * h.x + bitangent * h.y + normal * h.z);
+            }
+            float nh = h.z;
+            if (dot(direction, normal) <= 0.0)
+            {
+                ReflectionRays[texel] = 0.0;
+                return;
+            }
+            float logPdf = log2(max(PostFxReflectionPdf(nv, nh, alpha), 1e-8));
+
+            // (off the surface by a little more than the depth's precision)
+            float3 origin = position + normal * (0.005 + 0.001 * distance);
+            // (rough lobes march shorter and less far: their far reflection is blurred into the sky's anyway, and near the
+            // roughest traced they mostly fade to it)
+            float rough = saturate(roughness / ReflectionMaxRoughness);
+            float reach = lerp(1.0, 0.25, rough * rough);
+            float4 hit = TraceScreen(origin, direction, ReflectionMaxDistance * reach, max(12, (int)(ReflectionIterations * reach)));
+            if (hit.w > 0.0)
+            {
+                // The back of a surface (the ray went behind a thin one and met its far side): not what it reflects
+                float4 hitSurface = ReflectionGBuffer.Load(int3(min(int2(hit.xy * ViewSize.xy), int2(ViewSize.xy) - 1), 0));
+                float3 hitNormal = mul(float4(PostFxOctahedralDecode(hitSurface.xy * 2.0 - 1.0), 0.0), ReflectionWorldToView).xyz;
+                if (hitSurface.w < 0.5 || dot(hitNormal, direction) < 0.2)
+                {
+                    ReflectionRays[texel] = float4(hit.xy, hit.z, logPdf);
+                    return;
+                }
+            }
+            ReflectionRays[texel] = float4(PostFxOctahedralEncode(direction), -1.0, logPdf);
+        }
+    };
+}

@@ -25,6 +25,7 @@ namespace Stride.PostFx
             stage float4x4 PostFxPreviousViewProjection;
             stage float PostFxAmbientOcclusionStrength;
             stage float PostFxReflectionStrength;
+            stage float PostFxReflectionMaxRoughness;
             stage float PostFxIndirectStrength;
         }
 
@@ -56,12 +57,13 @@ namespace Stride.PostFx
 
                 if (PostFxReflectionStrength > 0.0)
                 {
-                    // (blurrier for rough surfaces: the reflections' mips; fading out where the sky's cube is as good)
-                    float roughness = streams.alphaRoughness;
-                    float mip = saturate(sqrt(roughness) * 1.4) * 5.0;
-                    float4 reflection = PostFxReflections.SampleLevel(PostFxScreenLinear, previousUv, mip);
-                    float confidence = reflection.a * onScreen * PostFxReflectionStrength * saturate(1.0 - (roughness - 0.45) * 3.0);
-                    streams.screenSpaceSpecular = float4(reflection.rgb, saturate(confidence));
+                    // (resolved for this surface's lobe already; premultiplied by the confidence, so filtering across the
+                    // edge of what was found keeps its light. Fading to the sky's below the roughest surface traced)
+                    float4 reflection = PostFxReflections.SampleLevel(PostFxScreenLinear, previousUv, 0);
+                    float3 light = reflection.rgb / max(reflection.a, 1e-4);
+                    float roughness = sqrt(streams.alphaRoughness);
+                    float traced = saturate((PostFxReflectionMaxRoughness - roughness) * 10.0);
+                    streams.screenSpaceSpecular = float4(light, saturate(reflection.a * onScreen * PostFxReflectionStrength * traced));
                 }
                 if (PostFxIndirectStrength > 0.0)
                 {

@@ -5,7 +5,8 @@ namespace Stride.PostFx
 {
     /// <summary>
     /// The view's distance pyramid for the screen-space passes: level 0 the distance of each pixel from the depth buffer,
-    /// the next ones the closest of each 2x2 (occluders aren't lost at a distance). Groups of 8x8 threads.
+    /// the next ones the closest of each 2x2 (occluders aren't lost at a distance; the last texel of a level below an odd
+    /// size also takes the row or column left over, so every pixel is in a cell of every level). Groups of 8x8 threads.
     /// </summary>
     shader PostFxDepthPyramid : ComputeShaderBase, PostFxViewSpace
     {
@@ -14,8 +15,9 @@ namespace Stride.PostFx
 
         cbuffer PerDispatch
         {
-            // Size of the level written
+            // Size of the level written, and of the level it is made from
             stage int2 PyramidSize;
+            stage int2 PyramidSourceSize;
             // Whether the source is the depth buffer (else the level above)
             stage bool PyramidFromDepth;
         };
@@ -35,7 +37,16 @@ namespace Stride.PostFx
             float b = PyramidSource.Load(int3(source + int2(1, 0), 0));
             float c = PyramidSource.Load(int3(source + int2(0, 1), 0));
             float d = PyramidSource.Load(int3(source + int2(1, 1), 0));
-            PyramidOutput[texel] = min(min(a, b), min(c, d));
+            float closest = min(min(a, b), min(c, d));
+            bool lastColumn = texel.x == PyramidSize.x - 1 && source.x + 2 < PyramidSourceSize.x;
+            bool lastRow = texel.y == PyramidSize.y - 1 && source.y + 2 < PyramidSourceSize.y;
+            if (lastColumn)
+                closest = min(closest, min(PyramidSource.Load(int3(source + int2(2, 0), 0)), PyramidSource.Load(int3(source + int2(2, 1), 0))));
+            if (lastRow)
+                closest = min(closest, min(PyramidSource.Load(int3(source + int2(0, 2), 0)), PyramidSource.Load(int3(source + int2(1, 2), 0))));
+            if (lastColumn && lastRow)
+                closest = min(closest, PyramidSource.Load(int3(source + int2(2, 2), 0)));
+            PyramidOutput[texel] = closest;
         }
     };
 }

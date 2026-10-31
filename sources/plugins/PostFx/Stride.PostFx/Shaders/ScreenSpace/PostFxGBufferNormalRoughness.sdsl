@@ -1,0 +1,17 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// What an opaque surface writes for the screen-space reflections (see PostFxNormalRoughnessTargetSemantic): its shading
+    /// normal (world space, octahedral, in [0, 1]), its perceptual roughness, and 1 (written).
+    /// </summary>
+    shader PostFxGBufferNormalRoughness : ComputeColor, MaterialPixelShadingStream, PostFxOctahedral
+    {
+        override float4 Compute()
+        {
+            return float4(PostFxOctahedralEncode(streams.normalWS) * 0.5 + 0.5, sqrt(streams.alphaRoughness), 1.0);
+        }
+    };
+}

@@ -29,6 +29,13 @@ internal sealed class ScreenSpaceViewData
     public float AmbientOcclusionStrength;
     public float ContactShadowStrength;
     public float ReflectionStrength;
+    // Roughest surface the reflections are traced for (rougher ones fade to the sky's)
+    public float ReflectionMaxRoughness;
+    // What the transparent surfaces trace their reflections with: this frame's distance pyramid and the previous frame's
+    // image (null: none)
+    public Texture Pyramid;
+    public int PyramidLevels;
+    public Texture ReflectionSource;
     public float IndirectStrength;
     // The light the contact shadows were traced towards
     public RenderLight ContactLight;
@@ -48,22 +55,36 @@ internal sealed class PostFxScreenSpace
     public RenderStage OpaqueStage;
 
     /// <summary>
+    /// The render stage of the transparent surfaces.
+    /// </summary>
+    public RenderStage TransparentStage;
+
+    /// <summary>
     /// Whether the opaque surfaces mix in the terms.
     /// </summary>
     public bool Enabled;
+
+    /// <summary>
+    /// Whether the transparent surfaces trace reflections.
+    /// </summary>
+    public bool TransparentReflections;
 }
 
 /// <summary>
 /// Sub render feature of the <see cref="MeshRenderFeature"/> giving the opaque surfaces the screen-space lighting terms of
-/// their view (PostFxScreenSpaceLighting, mixed into the forward shading). Added by the PostFx renderer.
+/// their view (PostFxScreenSpaceLighting, mixed into the forward shading), and the transparent ones their own reflections
+/// (PostFxTransparentReflections). Added by the PostFx renderer.
 /// </summary>
 [DataContract("PostFxScreenSpaceRenderFeature")]
 public sealed class PostFxScreenSpaceRenderFeature : SubRenderFeature
 {
     private static readonly ShaderClassSource Shader = new("PostFxScreenSpaceLighting");
+    private static readonly ShaderClassSource TransparentShader = new("PostFxTransparentReflections");
 
     private readonly Dictionary<ObjectId, ParameterCollection> layoutParameters = new();
+    private readonly Dictionary<ObjectId, ParameterCollection> transparentParameters = new();
     private LogicalGroupReference viewKey;
+    private LogicalGroupReference transparentKey;
 
     internal PostFxScreenSpace ScreenSpace { get; set; }
 
@@ -82,6 +103,7 @@ public sealed class PostFxScreenSpaceRenderFeature : SubRenderFeature
     {
         base.InitializeCore();
         viewKey = ((RootEffectRenderFeature)RootRenderFeature).CreateViewLogicalGroup("PostFxScreenSpace");
+        transparentKey = ((RootEffectRenderFeature)RootRenderFeature).CreateViewLogicalGroup("PostFxTransparentReflections");
     }
 
     public override void PrepareEffectPermutations(RenderDrawContext context)
@@ -91,6 +113,13 @@ public sealed class PostFxScreenSpaceRenderFeature : SubRenderFeature
         if (stage == null || !ScreenSpace.Enabled)
             return;
 
+        Validate(stage, Shader);
+        if (ScreenSpace.TransparentReflections && ScreenSpace.TransparentStage != null)
+            Validate(ScreenSpace.TransparentStage, TransparentShader);
+    }
+
+    private void Validate(RenderStage stage, ShaderClassSource shader)
+    {
         var rootFeature = (RootEffectRenderFeature)RootRenderFeature;
         var renderEffects = RootRenderFeature.RenderData.GetData(rootFeature.RenderEffectKey);
         var effectSlotCount = rootFeature.EffectPermutationSlotCount;
@@ -101,7 +130,7 @@ public sealed class PostFxScreenSpaceRenderFeature : SubRenderFeature
             if (stage.Index >= renderObject.ActiveRenderStages.Length || !renderObject.ActiveRenderStages[stage.Index].Active)
                 return;
             var renderEffect = renderEffects[renderObject.StaticObjectNode * effectSlotCount + effectSlot.Index];
-            renderEffect?.EffectValidator.ValidateParameter(ForwardShadingKeys.ScreenSpaceLighting, Shader);
+            renderEffect?.EffectValidator.ValidateParameter(ForwardShadingKeys.ScreenSpaceLighting, shader);
         });
     }
 
@@ -126,6 +155,7 @@ public sealed class PostFxScreenSpaceRenderFeature : SubRenderFeature
             {
                 if (viewLayout.State != RenderEffectState.Normal)
                     continue;
+                PrepareTransparent(context, view, viewLayout, current ? data : null, black);
                 var group = viewLayout.GetLogicalGroup(viewKey);
                 if (group.Hash == ObjectId.Empty)
                     continue;
@@ -145,10 +175,38 @@ public sealed class PostFxScreenSpaceRenderFeature : SubRenderFeature
                 parameters.Set(PostFxScreenSpaceLightingKeys.PostFxPreviousViewProjection, current ? data.PreviousViewProjection : Matrix.Identity);
                 parameters.Set(PostFxScreenSpaceLightingKeys.PostFxAmbientOcclusionStrength, current && data.AmbientOcclusion != null ? data.AmbientOcclusionStrength : 0.0f);
                 parameters.Set(PostFxScreenSpaceLightingKeys.PostFxReflectionStrength, current && data.Reflections != null ? data.ReflectionStrength : 0.0f);
+                parameters.Set(PostFxScreenSpaceLightingKeys.PostFxReflectionMaxRoughness, current ? data.ReflectionMaxRoughness : 0.0f);
                 parameters.Set(PostFxScreenSpaceLightingKeys.PostFxIndirectStrength, current && data.Indirect != null ? data.IndirectStrength : 0.0f);
                 viewLayout.Entries[view.Index].Resources.UpdateLogicalGroup(ref group, parameters);
             }
         }
+    }
+
+    // The reflections of the transparent surfaces of a view (none without this frame's terms or a previous image)
+    private void PrepareTransparent(RenderDrawContext context, RenderView view, ViewResourceGroupLayout viewLayout, ScreenSpaceViewData data, Texture black)
+    {
+        var group = viewLayout.GetLogicalGroup(transparentKey);
+        if (group.Hash == ObjectId.Empty)
+            return;
+        if (!transparentParameters.TryGetValue(group.Hash, out var parameters))
+        {
+            var layout = new ParameterCollectionLayout();
+            layout.ProcessLogicalGroup(viewLayout, ref group);
+            parameters = new ParameterCollection();
+            parameters.UpdateLayout(layout);
+            transparentParameters.Add(group.Hash, parameters);
+        }
+        var on = data?.Pyramid != null && data.ReflectionSource != null;
+        parameters.Set(PostFxTransparentReflectionsKeys.PostFxTransparentPyramid, on ? data.Pyramid : black);
+        parameters.Set(PostFxTransparentReflectionsKeys.PostFxTransparentSource, on ? data.ReflectionSource : black);
+        parameters.Set(PostFxTransparentReflectionsKeys.PostFxTransparentSize, on ? data.ScreenSize : new Vector4(1, 1, 1, 1));
+        parameters.Set(PostFxTransparentReflectionsKeys.PostFxTransparentPreviousViewProjection, on ? data.PreviousViewProjection : Matrix.Identity);
+        parameters.Set(PostFxTransparentReflectionsKeys.PostFxTransparentStrength, on ? data.ReflectionStrength : 0.0f);
+        parameters.Set(PostFxTransparentReflectionsKeys.PostFxTransparentMaxRoughness, on ? data.ReflectionMaxRoughness : 0.0f);
+        parameters.Set(PostFxTransparentReflectionsKeys.PostFxTransparentMaxLevel, on ? data.PyramidLevels - 1 : 0);
+        parameters.Set(PostFxTransparentReflectionsKeys.PostFxTransparentFrame, (float)(RenderSystem.FrameCounter % 1024));
+        parameters.Set(PostFxTransparentReflectionsKeys.PostFxTransparentSourceLevels, on ? (float)data.ReflectionSource.MipLevelCount : 1.0f);
+        viewLayout.Entries[view.Index].Resources.UpdateLogicalGroup(ref group, parameters);
     }
 }
 

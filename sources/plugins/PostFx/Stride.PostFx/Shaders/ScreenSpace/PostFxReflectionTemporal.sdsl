@@ -1,0 +1,177 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// Accumulates the resolved reflections over frames. The history is found where the surface was (its motion vector, or the
+    /// camera's) and where the reflected point was (the point seen in the mirror lies the ray's length behind the surface,
+    /// which moves with the parallax of the reflection, not the surface's): the second for smooth surfaces, the first for
+    /// rough ones, each tap checked against the distance it was accumulated at. The history is clipped to the spread of this
+    /// frame's neighbourhood (the pixel and its four neighbours) (wider for rough surfaces, where it is noisier), and averaged with this frame over up to a
+    /// number of frames that grows with the roughness. Premultiplied by the confidence. Groups of 8x8 threads.
+    /// Also writes the distance and frames accumulated of each pixel, for the next frame.
+    /// </summary>
+    shader PostFxReflectionTemporal : ComputeShaderBase, PostFxViewSpace
+    {
+        stage Texture2D<float> ReflectionPyramid;
+        stage Texture2D<float4> ReflectionGBuffer;
+        stage Texture2D<float4> ReflectionCurrent;
+        stage Texture2D<float> ReflectionRayLength;
+        stage Texture2D<float2> ReflectionMotion;
+        stage Texture2D<float4> ReflectionHistory;
+        stage Texture2D<float2> ReflectionHistoryInfo;
+        stage RWTexture2D<float4> ReflectionAccumulated;
+        stage RWTexture2D<float2> ReflectionAccumulatedInfo;
+
+        cbuffer PerDispatch
+        {
+            // Current (jittered) clip space to the world, the world to the previous frame's clip space
+            stage float4x4 ReflectionInverseViewProjection;
+            stage float4x4 ReflectionPreviousViewProjection;
+            stage float3 ReflectionEye;
+            // The change of the jitter since the previous frame (NDC), removed from the motion vectors
+            stage float2 ReflectionJitterDelta;
+            stage float ReflectionHistoryValid;
+            stage float ReflectionMaxRoughness;
+            stage bool ReflectionHasMotion;
+        };
+
+        stage float4 ToYCoCg(float4 c)
+        {
+            return float4(dot(c.rgb, float3(0.25, 0.5, 0.25)), dot(c.rgb, float3(0.5, 0.0, -0.5)), dot(c.rgb, float3(-0.25, 0.5, -0.25)), c.a);
+        }
+
+        stage float4 FromYCoCg(float4 c)
+        {
+            return float4(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z, c.w);
+        }
+
+        // The history at a uv of the previous frame (bilinear over the taps that saw a surface at the expected distance):
+        // xyzw = the light, and in info x = the frames it holds, y = the share of the taps that matched
+        stage float4 FetchHistory(float2 previousUv, float expected, float tolerance, out float2 info)
+        {
+            int2 size = int2(ViewSize.xy);
+            float2 previousPixel = previousUv * ViewSize.xy - 0.5;
+            int2 corner = (int2)floor(previousPixel);
+            float2 f = previousPixel - corner;
+            float4 history = 0.0;
+            float frames = 0.0;
+            float weight = 0.0;
+            [unroll]
+            for (int i = 0; i < 4; i++)
+            {
+                int2 offset = int2(i & 1, i >> 1);
+                int2 tap = corner + offset;
+                if (any(tap < 0) || any(tap >= size))
+                    continue;
+                float2 tapInfo = ReflectionHistoryInfo.Load(int3(tap, 0));
+                if (abs(tapInfo.x - expected) > expected * tolerance + 0.05)
+                    continue;
+                float w = (offset.x != 0 ? f.x : 1.0 - f.x) * (offset.y != 0 ? f.y : 1.0 - f.y);
+                history += ReflectionHistory.Load(int3(tap, 0)) * w;
+                frames += tapInfo.y * w;
+                weight += w;
+            }
+            info = float2(weight > 1e-3 ? frames / weight : 0.0, weight);
+            return weight > 1e-3 ? history / weight : 0.0;
+        }
+
+        override void Compute()
+        {
+            int2 pixel = (int2)streams.DispatchThreadId.xy;
+            int2 size = int2(ViewSize.xy);
+            if (any(pixel >= size))
+                return;
+            float distance = ReflectionPyramid.Load(int3(pixel, 0));
+            float4 surface = ReflectionGBuffer.Load(int3(pixel, 0));
+            float roughness = surface.z;
+            if (IsSky(distance) || surface.w < 0.5 || roughness > ReflectionMaxRoughness)
+            {
+                ReflectionAccumulated[pixel] = 0.0;
+                ReflectionAccumulatedInfo[pixel] = float2(distance, 0.0);
+                return;
+            }
+
+            // This frame and its neighbourhood's spread (YCoCg)
+            float4 current = ReflectionCurrent.Load(int3(pixel, 0));
+            float4 mean = 0.0;
+            float4 squares = 0.0;
+            float4 low = 1e9;
+            float4 high = -1e9;
+            // (the pixel and its four direct neighbours)
+            [unroll]
+            for (int i = 0; i < 5; i++)
+            {
+                int2 offset = i == 0 ? int2(0, 0) : (i == 1 ? int2(1, 0) : (i == 2 ? int2(-1, 0) : (i == 3 ? int2(0, 1) : int2(0, -1))));
+                float4 c = ToYCoCg(i == 0 ? current : ReflectionCurrent.Load(int3(clamp(pixel + offset, int2(0, 0), size - 1), 0)));
+                mean += c;
+                squares += c * c;
+                low = min(low, c);
+                high = max(high, c);
+            }
+            mean /= 5.0;
+            float4 deviation = sqrt(max(squares / 5.0 - mean * mean, 0.0));
+
+            // Where the surface was
+            float2 uv = (pixel + 0.5) * ViewSize.zw;
+            float depth = ViewDepthInfo.y / distance - ViewDepthInfo.x;
+            float4 world = mul(float4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0), ReflectionInverseViewProjection);
+            world /= world.w;
+            float4 previousClip = mul(world, ReflectionPreviousViewProjection);
+            float2 surfaceUv = float2(previousClip.x / previousClip.w * 0.5 + 0.5, 0.5 - previousClip.y / previousClip.w * 0.5);
+            float2 motion = ReflectionHasMotion ? ReflectionMotion.Load(int3(pixel, 0)) : 0.0;
+            if (motion.x != 0.0 || motion.y != 0.0)
+            {
+                motion -= ReflectionJitterDelta;
+                surfaceUv = uv - float2(motion.x, -motion.y) * 0.5;
+            }
+            // ...and where the reflected point was (behind the surface by the rays' length, on the line from the eye)
+            float rayLength = ReflectionRayLength.Load(int3(pixel, 0));
+            float3 virtualPoint = world.xyz + normalize(world.xyz - ReflectionEye) * rayLength;
+            float4 virtualClip = mul(float4(virtualPoint, 1.0), ReflectionPreviousViewProjection);
+            float2 virtualUv = float2(virtualClip.x / virtualClip.w * 0.5 + 0.5, 0.5 - virtualClip.y / virtualClip.w * 0.5);
+
+            float4 history = 0.0;
+            float frames = 0.0;
+            if (ReflectionHistoryValid > 0.5 && previousClip.w > 0.0)
+            {
+                float2 surfaceInfo;
+                float4 surfaceHistory = FetchHistory(surfaceUv, previousClip.w, 0.03, surfaceInfo);
+                float2 virtualInfo = 0.0;
+                float4 virtualHistory = 0.0;
+                // (the surface seen at the reflection's uv is another point of it: a looser distance check)
+                if (rayLength > 0.0 && virtualClip.w > 0.0)
+                    virtualHistory = FetchHistory(virtualUv, previousClip.w, 0.15, virtualInfo);
+                float smoothness = saturate(1.0 - roughness / 0.4);
+                float useVirtual = virtualInfo.y > 0.5 ? (surfaceInfo.y > 0.5 ? smoothness : 1.0) : 0.0;
+                if (surfaceInfo.y > 0.5 || virtualInfo.y > 0.5)
+                {
+                    history = lerp(surfaceHistory, virtualHistory, useVirtual);
+                    frames = lerp(surfaceInfo.x, virtualInfo.x, useVirtual);
+                }
+            }
+
+            // Clipped towards the neighbourhood's mean, to its spread
+            if (frames > 0.0)
+            {
+                float4 h = ToYCoCg(history);
+                float4 extent = deviation * lerp(1.0, 2.5, saturate(roughness / 0.5)) + 1e-4;
+                float4 offset = h - mean;
+                float4 ratio = abs(offset / extent);
+                float clipAmount = max(max(ratio.x, ratio.y), max(ratio.z, ratio.w));
+                if (clipAmount > 1.0)
+                    h = mean + offset / clipAmount;
+                history = FromYCoCg(clamp(h, low - extent * 0.5, high + extent * 0.5));
+            }
+
+            // A running average over more frames for rough surfaces (noisier, and their reflection moves less)
+            float maxFrames = lerp(8.0, 24.0, saturate(roughness / 0.5));
+            frames = min(frames + 1.0, maxFrames);
+            float4 accumulated = lerp(history, current, 1.0 / frames);
+            accumulated = float4(max(accumulated.rgb, 0.0), saturate(accumulated.a));
+            ReflectionAccumulated[pixel] = any(isnan(accumulated)) ? current : accumulated;
+            ReflectionAccumulatedInfo[pixel] = float2(distance, frames);
+        }
+    };
+}

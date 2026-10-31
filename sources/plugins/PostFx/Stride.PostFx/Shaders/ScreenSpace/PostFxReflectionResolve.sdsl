@@ -1,0 +1,141 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// The reflection of each pixel from the rays of its neighbours (Stachowiak 2015, stochastic screen-space reflections):
+    /// a ray traced for a nearby pixel on the same surface gives this one the direction to its hit (or, a miss, its
+    /// direction), weighted by this pixel's specular lobe over the density the ray was drawn with. The hits' light comes from
+    /// the anti-aliased image, prefiltered by the ray's cone (its mips, for rough lobes and long rays), averaged with less
+    /// weight on very bright samples (no sparkle). Full resolution. Groups of 8x8 threads.
+    /// Output: rgb = reflected light x confidence, a = confidence (the lobe's share that found something on screen); the
+    /// average length of the rays that hit (for the reprojection of the reflection).
+    /// </summary>
+    shader PostFxReflectionResolve : ComputeShaderBase, PostFxViewSpace, PostFxCommon, PostFxReflectionBrdf, PostFxOctahedral
+    {
+        stage Texture2D<float> ReflectionPyramid;
+        stage Texture2D<float4> ReflectionGBuffer;
+        stage Texture2D<float4> ReflectionRays;
+        // The anti-aliased image, and half of it with mips
+        stage Texture2D ReflectionScene;
+        stage Texture2D ReflectionSource;
+        stage RWTexture2D<float4> ReflectionResolved;
+        stage RWTexture2D<float> ReflectionRayLength;
+
+        stage SamplerState ReflectionLinearClamp
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Clamp;
+            AddressV = Clamp;
+        };
+
+        cbuffer PerDispatch
+        {
+            stage int2 ReflectionTraceSize;
+            stage int ReflectionTraceScale;
+            stage int2 ReflectionTraceOffset;
+            stage float4x4 ReflectionWorldToView;
+            stage float ReflectionMaxRoughness;
+            // Rays reused per pixel (the pixel's own included)
+            stage int ReflectionSamples;
+            // Scene light to screen brightness: bright samples weigh less
+            stage float ReflectionExposure;
+            stage float ReflectionFrame;
+            stage float ReflectionSourceLevels;
+        };
+
+        override void Compute()
+        {
+            int2 pixel = (int2)streams.DispatchThreadId.xy;
+            int2 size = int2(ViewSize.xy);
+            if (any(pixel >= size))
+                return;
+            float distance = ReflectionPyramid.Load(int3(pixel, 0));
+            float4 surface = ReflectionGBuffer.Load(int3(pixel, 0));
+            float roughness = surface.z;
+            if (IsSky(distance) || surface.w < 0.5 || roughness > ReflectionMaxRoughness)
+            {
+                ReflectionResolved[pixel] = 0.0;
+                ReflectionRayLength[pixel] = 0.0;
+                return;
+            }
+
+            float3 position = ViewPosition((pixel + 0.5) * ViewSize.zw, distance);
+            float3 view = normalize(-position);
+            float3 normal = normalize(mul(float4(PostFxOctahedralDecode(surface.xy * 2.0 - 1.0), 0.0), ReflectionWorldToView).xyz);
+            float nv = dot(normal, view);
+            if (nv < 0.01)
+                normal = normalize(normal + view * (0.01 - nv));
+            float alpha = max(roughness * roughness, PostFxMinAlpha());
+            // (the plane the neighbours' surfaces must be near)
+            float tolerance = 0.02 * distance + 0.03;
+
+            // The neighbours: the traced texel of this pixel, then a spiral turning with the noise, wider for rough lobes
+            int2 own = pixel / ReflectionTraceScale;
+            float3 noise = PostFxFrameNoise3(pixel, ReflectionFrame + 311.0);
+            float radius = lerp(1.0, 3.0, saturate(roughness / 0.5)) * (ReflectionTraceScale > 1 ? 1.0 : 0.75);
+            float pixelAngle = 2.0 * ViewProjectionInfo.y * ViewSize.w;
+
+            float3 light = 0.0;
+            float lightWeight = 0.0;
+            float hitWeight = 0.0;
+            float allWeight = 0.0;
+            float travelled = 0.0;
+            float travelledWeight = 0.0;
+            [loop]
+            for (int k = 0; k < ReflectionSamples; k++)
+            {
+                float2 offset = 0.0;
+                if (k > 0)
+                {
+                    float r = sqrt((k - 0.5 + noise.y) / (ReflectionSamples - 1)) * radius + 0.5;
+                    float angle = k * 2.39996323 + noise.x * 6.28318531;
+                    offset = round(float2(cos(angle), sin(angle)) * r);
+                }
+                int2 tap = clamp(own + int2(offset), int2(0, 0), ReflectionTraceSize - 1);
+                float4 ray = ReflectionRays.Load(int3(tap, 0));
+                if (ray.z == 0.0)
+                    continue;
+                // The neighbour's surface: on this one's plane
+                int2 tapPixel = min(tap * ReflectionTraceScale + ReflectionTraceOffset, size - 1);
+                float3 tapPosition = ViewPosition((tapPixel + 0.5) * ViewSize.zw, ReflectionPyramid.Load(int3(tapPixel, 0)));
+                float plane = abs(dot(normal, tapPosition - position)) / tolerance;
+                if (plane >= 1.0)
+                    continue;
+
+                bool hit = ray.z > 0.0;
+                float3 hitPosition = hit ? ViewPosition(ray.xy, ray.z) : 0.0;
+                float3 direction = hit ? hitPosition - position : PostFxOctahedralDecode(ray.xy);
+                float rayLength = hit ? sqrt(dot(direction, direction)) : 0.0;
+                direction = hit ? direction / max(rayLength, 1e-5) : direction;
+                float w = PostFxSpecularWeight(normal, view, direction, alpha) / exp2(ray.w) * (1.0 - plane * plane);
+                if (!(w > 0.0))
+                    continue;
+                allWeight += w;
+                if (!hit)
+                    continue;
+
+                // The light there, prefiltered by the cone of this lobe over the ray's length
+                float footprint = rayLength * 0.5 * alpha / max(ray.z * pixelAngle, 1e-6);
+                float level = log2(max(footprint, 1.0));
+                float3 found = level < 1.0
+                    ? ReflectionScene.SampleLevel(ReflectionLinearClamp, ray.xy, 0).rgb
+                    : ReflectionSource.SampleLevel(ReflectionLinearClamp, ray.xy, min(level - 1.0, ReflectionSourceLevels - 1.0)).rgb;
+                found = any(isnan(found)) ? 0.0 : max(found, 0.0);
+                float2 edge = saturate(min(ray.xy, 1.0 - ray.xy) * 25.0);
+                float brightness = 1.0 / (1.0 + PostFxLuminance(found) * ReflectionExposure);
+                light += found * w * brightness;
+                lightWeight += w * brightness;
+                hitWeight += w * edge.x * edge.y;
+                travelled += rayLength * w;
+                travelledWeight += w;
+            }
+
+            float confidence = allWeight > 0.0 ? saturate(hitWeight / allWeight) : 0.0;
+            float3 reflected = lightWeight > 0.0 ? light / lightWeight : 0.0;
+            ReflectionResolved[pixel] = float4(reflected * confidence, confidence);
+            ReflectionRayLength[pixel] = travelledWeight > 0.0 ? travelled / travelledWeight : 0.0;
+        }
+    };
+}

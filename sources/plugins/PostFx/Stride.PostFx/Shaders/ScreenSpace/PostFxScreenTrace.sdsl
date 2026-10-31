@@ -1,0 +1,133 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.PostFx
+{
+    /// <summary>
+    /// A ray marched through the view's distance pyramid (closest distance of each 2x2, see PostFxDepthPyramid), cell by cell
+    /// and level by level: in screen space the ray is a line along which 1 / distance is linear, so where it crosses a cell's
+    /// boundary or reaches the closest distance in it is exact. A ray in front of everything in a cell skips it and climbs a
+    /// level; one that reaches the closest surface in a cell goes down a level, and at the finest level that is the hit. A ray
+    /// entering a pixel already behind its surface hit its side, unless farther behind than the surface is thick (then it
+    /// passes behind, pixel by pixel). Users give the pyramid and the projection (overrides of the Trace* methods).
+    /// </summary>
+    shader PostFxScreenTrace
+    {
+        // The closest distance in front of the camera of a cell of the pyramid
+        stage float TraceSceneDistance(int2 cell, int level)
+        {
+            return 1e9;
+        }
+
+        // 1 / M11, 1 / M22, M31, M32 of the projection (as the pyramid was drawn: jitter included)
+        stage float4 TraceProjectionInfo()
+        {
+            return 1.0;
+        }
+
+        // Size of the pyramid's finest level (pixels)
+        stage float2 TraceViewSize()
+        {
+            return 1.0;
+        }
+
+        // Coarsest level of the pyramid
+        stage int TraceMaxLevel()
+        {
+            return 0;
+        }
+
+        stage float2 TracePixel(float3 position)
+        {
+            float4 info = TraceProjectionInfo();
+            float2 ndc = position.xy / (info.xy * position.z) - info.zw;
+            return float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5) * TraceViewSize();
+        }
+
+        // Marches a ray from a view space origin (x right, y up, z forward) along a unit direction: xy = the uv of the hit,
+        // z = its distance in front of the camera, w = 1; 0 if the ray found nothing on screen within maxDistance (meters)
+        // and the iterations
+        stage float4 TraceScreen(float3 origin, float3 direction, float maxDistance, int iterations)
+        {
+            float2 size = TraceViewSize();
+            // (clipped to stay in front of the camera)
+            float maxT = maxDistance;
+            if (direction.z < 0.0)
+                maxT = min(maxT, (origin.z - 0.05) / -direction.z);
+            float3 end = origin + direction * maxT;
+            float3 start = float3(TracePixel(origin), 1.0 / origin.z);
+            float3 delta = float3(TracePixel(end), 1.0 / end.z) - start;
+
+            // Where the ray leaves the screen
+            float exitT = 1.0;
+            if (delta.x != 0.0)
+                exitT = min(exitT, ((delta.x > 0.0 ? size.x : 0.0) - start.x) / delta.x);
+            if (delta.y != 0.0)
+                exitT = min(exitT, ((delta.y > 0.0 ? size.y : 0.0) - start.y) / delta.y);
+            float2 inverseDelta = float2(abs(delta.x) > 1e-7 ? 1.0 / delta.x : 1e12, abs(delta.y) > 1e-7 ? 1.0 / delta.y : 1e12);
+            float2 side = float2(delta.x >= 0.0 ? 1.0 : 0.0, delta.y >= 0.0 ? 1.0 : 0.0);
+            // (a point on a boundary belongs to the cell the ray goes into)
+            float2 nudge = float2(delta.x >= 0.0 ? 1e-3 : -1e-3, delta.y >= 0.0 ? 1e-3 : -1e-3);
+
+            // Out of the origin's own pixel first
+            float2 startCell = floor(start.xy);
+            float2 startBoundary = (startCell + side - start.xy) * inverseDelta;
+            float t = min(startBoundary.x, startBoundary.y);
+            int maxLevel = TraceMaxLevel();
+            int level = 0;
+            bool hit = false;
+            [loop]
+            for (int i = 0; i < iterations; i++)
+            {
+                if (t >= exitT)
+                    break;
+                float3 p = start + delta * t;
+                float scale = exp2((float)level);
+                float2 cell = floor((p.xy + nudge) / scale);
+                float2 boundary = ((cell + side) * scale - start.xy) * inverseDelta;
+                float cellT = min(boundary.x, boundary.y);
+                float scene = TraceSceneDistance(int2(cell), level);
+                float sceneInverse = 1.0 / scene;
+                if (p.z > sceneInverse)
+                {
+                    // In front of everything in the cell: where it reaches the closest of it (moving away), if within the cell
+                    float planeT = delta.z < 0.0 ? (sceneInverse - start.z) / delta.z : 1e12;
+                    if (planeT < cellT)
+                    {
+                        t = planeT;
+                        if (level == 0)
+                        {
+                            hit = true;
+                            break;
+                        }
+                        level--;
+                    }
+                    else
+                    {
+                        t = cellT;
+                        level = min(level + 1, maxLevel);
+                    }
+                }
+                else if (level > 0)
+                {
+                    level--;
+                }
+                else
+                {
+                    // Entered the pixel behind its surface: its side, or the gap behind a thin one
+                    float behind = 1.0 / p.z - scene;
+                    if (behind < 0.1 + 0.03 * scene)
+                    {
+                        hit = true;
+                        break;
+                    }
+                    t = cellT;
+                }
+            }
+            if (!hit)
+                return 0.0;
+            float3 found = start + delta * t;
+            return float4(found.xy / size, 1.0 / found.z, 1.0);
+        }
+    };
+}
