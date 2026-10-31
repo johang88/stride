@@ -249,12 +249,7 @@ internal sealed class ScreenSpacePass
         var width = targets.Pyramid.Width;
         var height = targets.Pyramid.Height;
         var frame = (float)(info.Frame % 1024);
-        // World space normals to the passes' view space (z forward)
-        var worldToView = view.View;
-        worldToView.M13 = -worldToView.M13;
-        worldToView.M23 = -worldToView.M23;
-        worldToView.M33 = -worldToView.M33;
-        worldToView.M43 = -worldToView.M43;
+        var worldToView = WorldToView(view);
 
         var source = targets.ReflectionSource;
         var sourceSize = new Int2(source.Width, source.Height);
@@ -432,6 +427,17 @@ internal sealed class ScreenSpacePass
     }
 
     private static Int3 Groups(int width, int height) => new((width + 7) / 8, (height + 7) / 8, 1);
+
+    // World space normals to the passes' view space (x right, y up, z forward)
+    private static Matrix WorldToView(RenderView view)
+    {
+        var worldToView = view.View;
+        worldToView.M13 = -worldToView.M13;
+        worldToView.M23 = -worldToView.M23;
+        worldToView.M33 = -worldToView.M33;
+        worldToView.M43 = -worldToView.M43;
+        return worldToView;
+    }
 
     public void DrawPyramid(RenderDrawContext context, RenderView view, ScreenSpaceTargets targets, Texture depth)
     {
