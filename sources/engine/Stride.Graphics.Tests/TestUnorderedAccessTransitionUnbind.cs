@@ -8,8 +8,8 @@ using Stride.Shaders;
 namespace Stride.Graphics.Tests;
 
 /// <summary>
-/// On Direct3D 11, a transition to unordered access unbinds the shader resource views that read what is about to
-/// be written, a transition to shader resource the compute unordered access views that write what is about to be read,
+/// On Direct3D 11, a transition to unordered access (or render target) unbinds the shader resource views that read what
+/// is about to be written, a transition to shader resource the compute unordered access views that write what is about to be read,
 /// and only those: reading mip-level N while writing mip-level N + 1 stays possible.
 /// </summary>
 public class TestUnorderedAccessTransitionUnbind : GraphicTestGameBase
@@ -69,6 +69,33 @@ public class TestUnorderedAccessTransitionUnbind : GraphicTestGameBase
             commandList.ResourceBarrierTransition(texture, BarrierLayout.UnorderedAccess);
             Assert.False(commandList.IsShaderResourceViewBound(ShaderStage.Compute, 0));
             Assert.False(commandList.IsShaderResourceViewBound(ShaderStage.Pixel, 0));
+#endif
+        });
+    }
+
+    /// <summary>
+    /// A transition to render target unbinds the shader resource views reading the texture too (a compute pass left it
+    /// bound: binding it as a render target makes the runtime null them, with a debug layer warning).
+    /// </summary>
+    [SkippableFact]
+    public void TransitionToRenderTargetUnbindsTheViewsReadingIt()
+    {
+        PerformTest(game =>
+        {
+            Skip.IfNot(GraphicsDevice.Platform == GraphicsPlatform.Direct3D11, "Shader resource unbinding on transitions is Direct3D 11 only.");
+
+#if STRIDE_GRAPHICS_API_DIRECT3D11
+            var device = game.GraphicsDevice;
+            var commandList = game.GraphicsContext.CommandList;
+
+            var target = Texture.New2D(device, 4, 4, PixelFormat.R8G8B8A8_UNorm, TextureFlags.ShaderResource | TextureFlags.RenderTarget);
+            var other = Texture.New2D(device, 4, 4, PixelFormat.R8G8B8A8_UNorm, TextureFlags.ShaderResource);
+            commandList.SetShaderResourceView(ShaderStage.Compute, 0, target);
+            commandList.SetShaderResourceView(ShaderStage.Compute, 1, other);
+
+            commandList.ResourceBarrierTransition(target, BarrierLayout.RenderTarget);
+            Assert.False(commandList.IsShaderResourceViewBound(ShaderStage.Compute, 0));
+            Assert.True(commandList.IsShaderResourceViewBound(ShaderStage.Compute, 1));
 #endif
         });
     }

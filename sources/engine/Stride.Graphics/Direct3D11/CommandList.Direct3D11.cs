@@ -52,6 +52,8 @@ namespace Stride.Graphics
 
         // What the Shader Resource View bound to each slot reads, to find the views of a resource that is to be written
         private readonly BoundResourceView[] boundShaderResources = new BoundResourceView[StageCount * ShaderResourceViewCount];
+        // One past the highest slot of each stage a view was bound to since the last reset (what unbinding scans)
+        private readonly int[] boundShaderResourceEnd = new int[StageCount];
 
         /// <summary>
         ///   The native resource behind a bound View (identity only, no reference kept) and the sub-Resources it
@@ -188,6 +190,7 @@ namespace Stride.Graphics
             Array.Clear(samplerStates);
             Array.Clear(constantBuffers);
             Array.Clear(boundShaderResources);
+            Array.Clear(boundShaderResourceEnd);
 
             Array.Clear(unorderedAccessViews);
             Array.Clear(boundUnorderedAccessViews);
@@ -228,6 +231,17 @@ namespace Stride.Graphics
         /// </exception>
         private partial void SetRenderTargetsImpl(Texture depthStencilView, ReadOnlySpan<Texture> renderTargetViews)
         {
+            // (what is written must not stay bound for reading: the runtime would null those views with a debug layer
+            // warning, for instance a target a compute pass of the previous frame read. A read-only depth-stencil buffer may
+            // be read meanwhile)
+            for (int i = 0; i < renderTargetViews.Length; i++)
+            {
+                if (renderTargetViews[i] != null)
+                    UnbindShaderResource(renderTargetViews[i], uint.MaxValue);
+            }
+            if (depthStencilView != null && !depthStencilView.IsDepthStencilReadOnly)
+                UnbindShaderResource(depthStencilView, uint.MaxValue);
+
             currentRenderTargetViewsActiveCount = renderTargetViews.Length;
 
             for (int i = 0; i < renderTargetViews.Length; i++)
@@ -450,6 +464,8 @@ namespace Stride.Graphics
             var nativeShaderResourceView = shaderResourceView is not null ? shaderResourceView.NativeShaderResourceView : default;
 
             boundShaderResources[((int) stage - 1) * ShaderResourceViewCount + slot] = BoundResourceView.Of(shaderResourceView);
+            if (shaderResourceView is not null && slot >= boundShaderResourceEnd[(int) stage - 1])
+                boundShaderResourceEnd[(int) stage - 1] = slot + 1;
 
             switch (stage)
             {
@@ -686,23 +702,25 @@ namespace Stride.Graphics
         ///   The Direct3D 11 implementation does not have synchronization barriers for Graphics Resource transitions. It
         ///   unbinds what the runtime would otherwise unbind itself: a transition to unordered access unbinds the
         ///   sub-Resources it covers from the shader resource slots they are bound to (binding them for writing while they
-        ///   are bound for reading makes the runtime unbind them, with a debug layer warning), and any other transition
-        ///   unbinds them from the unordered access slots of the compute and pixel stages (otherwise the runtime nulls the
-        ///   read binding, such as a shader resource view or a vertex buffer, and the read sees nothing).
+        ///   are bound for reading makes the runtime unbind them, with a debug layer warning), as does a transition to a
+        ///   render target or a written depth-stencil buffer (a shader resource view left bound from a compute pass, for
+        ///   instance), and any other transition unbinds them from the unordered access slots of the compute and pixel
+        ///   stages (otherwise the runtime nulls the read binding, such as a shader resource view or a vertex buffer, and the
+        ///   read sees nothing).
         /// </remarks>
         public void ResourceBarrierTransition(GraphicsResource resource, BarrierLayout newLayout, uint subresource = uint.MaxValue)
         {
-            if (newLayout == BarrierLayout.UnorderedAccess)
+            if (newLayout is BarrierLayout.UnorderedAccess or BarrierLayout.RenderTarget or BarrierLayout.DepthStencilWrite)
                 UnbindShaderResource(resource, subresource);
-            else
+            if (newLayout != BarrierLayout.UnorderedAccess)
                 UnbindUnorderedAccess(resource, subresource);
         }
 
         public void ResourceBarrierTransition(GraphicsResource resource, GraphicsResourceState newState)
         {
-            if (newState == GraphicsResourceState.UnorderedAccess)
+            if (newState is GraphicsResourceState.UnorderedAccess or GraphicsResourceState.RenderTarget or GraphicsResourceState.DepthWrite)
                 UnbindShaderResource(resource, uint.MaxValue);
-            else
+            if (newState != GraphicsResourceState.UnorderedAccess)
                 UnbindUnorderedAccess(resource, uint.MaxValue);
         }
 
@@ -732,10 +750,13 @@ namespace Stride.Graphics
         private void UnbindShaderResource(GraphicsResource resource, uint subresource)
         {
             var nativeResource = GetTransitionedSubresources(resource, subresource, out var written);
-            for (int i = 0; i < boundShaderResources.Length; i++)
+            for (int stage = 0; stage < StageCount; stage++)
             {
-                if (boundShaderResources[i].Overlaps(nativeResource, written))
-                    SetShaderResourceView((ShaderStage) (i / ShaderResourceViewCount + 1), i % ShaderResourceViewCount, shaderResourceView: null);
+                for (int slot = 0; slot < boundShaderResourceEnd[stage]; slot++)
+                {
+                    if (boundShaderResources[stage * ShaderResourceViewCount + slot].Overlaps(nativeResource, written))
+                        SetShaderResourceView((ShaderStage) (stage + 1), slot, shaderResourceView: null);
+                }
             }
         }
 
