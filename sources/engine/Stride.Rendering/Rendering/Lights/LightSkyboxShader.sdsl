@@ -62,7 +62,10 @@ namespace Stride.Rendering.Lights
             sampleDirection = mul(sampleDirection, (float3x3)SkyMatrix);
             sampleDirection = float3(sampleDirection.xy, -sampleDirection.z);
 
-            streams.envLightSpecularColor = lightSpecularColor.Compute(sampleDirection).rgb * Intensity * ambientAccessibility;
+            // (occluded as the ambient occlusion says for a lobe of this roughness seen from this angle: Lagarde and de
+            // Rousiers 2014, so smooth surfaces keep their grazing reflections in creases and rough ones lose the sky indoors)
+            float specularOcclusion = saturate(pow(abs(streams.NdotV + ambientAccessibility), exp2(-16.0 * streams.alphaRoughness - 1.0)) - 1.0 + ambientAccessibility);
+            streams.envLightSpecularColor = lightSpecularColor.Compute(sampleDirection).rgb * Intensity * specularOcclusion;
             // As do reflections found in screen space
             streams.envLightSpecularColor = lerp(streams.envLightSpecularColor, streams.screenSpaceSpecular.rgb, streams.screenSpaceSpecular.a);
         }
