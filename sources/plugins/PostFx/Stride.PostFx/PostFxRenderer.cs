@@ -183,8 +183,8 @@ public enum PostFxDebugView
     Reflections,
     IndirectLight,
     /// <summary>
-    /// The motion vectors: red/green = horizontal/vertical motion (8 pixels a frame = full), blue where none was written
-    /// (reprojected by the camera).
+    /// The motion vectors: red/green = 0.5 + horizontal/vertical motion (NDC, +y up; 0/1 at 16 pixels a frame), blue
+    /// where none was written (reprojected by the camera).
     /// </summary>
     Motion,
 }
@@ -787,7 +787,7 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
         if (debugTexture != null)
         {
             debugShader.Parameters.Set(PostFxDebugViewKeys.DebugMotion, DebugView == PostFxDebugView.Motion);
-            debugShader.Parameters.Set(PostFxDebugViewKeys.DebugMotionScale, new Vector2(debugTexture.ViewWidth, debugTexture.ViewHeight) * (0.5f / 8.0f));
+            debugShader.Parameters.Set(PostFxDebugViewKeys.DebugMotionScale, new Vector2(debugTexture.ViewWidth, debugTexture.ViewHeight) * (0.5f / 16.0f));
             debugShader.Parameters.Set(PostFxDebugViewKeys.DebugColor, DebugView is PostFxDebugView.Reflections or PostFxDebugView.IndirectLight);
             debugShader.Parameters.Set(PostFxDebugViewKeys.DebugScale, MathF.Pow(2.0f, ExposureEV(profile)));
             debugShader.Parameters.Set(PostFxDebugViewKeys.DebugPremultiplied, DebugView is PostFxDebugView.Reflections or PostFxDebugView.IndirectLight);

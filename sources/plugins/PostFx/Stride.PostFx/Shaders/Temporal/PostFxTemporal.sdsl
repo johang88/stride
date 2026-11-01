@@ -9,7 +9,11 @@ namespace Stride.PostFx
     /// spread of the current neighbourhood in YCoCg (no ghosting), and blended on exposed, luma weighted values (no flicker
     /// of bright pixels). Motion comes from the motion vectors of the meshes (jitter removed), or, where none were written
     /// (the sky, other renderers), from the depth and the camera.
-    /// Texture0 = the scene (jittered), Texture1 = depth, Texture2 = motion vectors, Texture3 = the history.
+    /// History that moved unlike the pixel (the motion vector where it was found differs from the pixel's: a sword swung
+    /// away from the ground now seen there) is dropped, as the colour clip alone keeps it on busy backgrounds (cobblestones
+    /// span from the dark of a blade to bright stone).
+    /// Texture0 = the scene (jittered), Texture1 = depth, Texture2 = motion vectors, Texture3 = the history, Texture4 =
+    /// the previous frame's motion vectors.
     /// </summary>
     shader PostFxTemporal : ImageEffectShader, PostFxCommon
     {
@@ -33,6 +37,8 @@ namespace Stride.PostFx
             stage float TemporalBlend;
             // 0 when there's no valid history (first frame, camera cut)
             stage float TemporalHistoryValid;
+            // 0 when the previous frame's motion vectors aren't known
+            stage float TemporalPreviousMotionValid;
         };
 
         stage SamplerState TemporalLinearClamp
@@ -140,8 +146,9 @@ namespace Stride.PostFx
 
             // Where the pixel was
             float2 motion = Texture2.Load(int3(closest, 0)).xy;
+            bool hasMotion = motion.x != 0.0 || motion.y != 0.0;
             float2 previousUv;
-            if (motion.x != 0.0 || motion.y != 0.0)
+            if (hasMotion)
             {
                 motion -= TemporalJitterDelta;
                 previousUv = uv - float2(motion.x, -motion.y) * 0.5;
@@ -179,6 +186,38 @@ namespace Stride.PostFx
             // Faster to follow in motion (the history is resampled, and blurs) and where the history was rejected
             float pixelsMoved = length((uv - previousUv) / TemporalOutputTexel);
             float blend = saturate(TemporalBlend + pixelsMoved * 0.02 + saturate(clipAmount - 1.0) * 0.1);
+
+            // History that moved unlike this pixel belongs to something else (a sword swung away from where it was found):
+            // dropped by the share of it, over the bilinear footprint it was filtered from, whose motion differs from
+            // this pixel's by more than a frame's change of a motion (in pixels; the previous motion still holds its
+            // frame's jitter change, under a pixel)
+            if (hasMotion && TemporalPreviousMotionValid > 0.5)
+            {
+                float2 inputSize = 1.0 / TemporalInputTexel;
+                float2 previousPosition = previousUv * inputSize - 0.5;
+                int2 previousPixel = (int2)floor(previousPosition);
+                float2 f = previousPosition - previousPixel;
+                float2 pixelMotion = motion * 0.5 * inputSize;
+                float rejected = 0.0;
+                float known = 0.0;
+                [unroll]
+                for (int i = 0; i < 4; i++)
+                {
+                    int2 corner = int2(i & 1, i >> 1);
+                    float weight = (corner.x ? f.x : 1.0 - f.x) * (corner.y ? f.y : 1.0 - f.y);
+                    int2 tap = clamp(previousPixel + corner, 0, int2(inputSize) - 1);
+                    float2 previousMotion = Texture4.Load(int3(tap, 0)).xy;
+                    // (none written there: the sky, other renderers)
+                    if (previousMotion.x == 0.0 && previousMotion.y == 0.0)
+                        continue;
+                    float2 previousPixelMotion = previousMotion * 0.5 * inputSize;
+                    float tolerance = 1.0 + 0.1 * max(length(pixelMotion), length(previousPixelMotion));
+                    rejected += weight * saturate((length(previousPixelMotion - pixelMotion) - tolerance) / tolerance);
+                    known += weight;
+                }
+                if (known > 0.0)
+                    blend = lerp(blend, 1.0, rejected / known);
+            }
             // Upscaling: this frame's samples count as much as one lands on the output pixel (the history fills the rest)
             if (upscale > 1.01)
                 blend *= lerp(0.25, 1.5, exp(-2.29 * nearest * upscale * upscale));

@@ -21,6 +21,10 @@ internal sealed class TemporalHistory : IDisposable
     public readonly Texture[] Textures = new Texture[2];
     public int Index;
     public bool Valid;
+
+    // The previous frame's motion vectors (where the history came from: did it move like this pixel?)
+    public Texture PreviousMotion;
+    public bool PreviousMotionValid;
     public int JitterIndex;
 
     // This frame's jitter (pixels, +y down) and the previous frame's, in normalized device coordinates
@@ -80,6 +84,7 @@ internal sealed class TemporalHistory : IDisposable
         PreviousJitterNdc = JitterNdc;
         HasPrevious = false;
         Valid = false;
+        PreviousMotionValid = false;
     }
 
     public void Dispose()
@@ -89,7 +94,10 @@ internal sealed class TemporalHistory : IDisposable
             Textures[i]?.Dispose();
             Textures[i] = null;
         }
+        PreviousMotion?.Dispose();
+        PreviousMotion = null;
         Valid = false;
+        PreviousMotionValid = false;
     }
 
     private static float Halton(int index, int radix)
@@ -144,6 +152,16 @@ internal sealed class TemporalPass
         var previous = history.Textures[history.Index];
         var output = history.Textures[1 - history.Index];
 
+        // The previous frame's motion (kept below, after this frame's resolve)
+        var previousMotion = history.PreviousMotion;
+        if (previousMotion == null || previousMotion.Width != motion.Width || previousMotion.Height != motion.Height || previousMotion.Format != motion.Format)
+        {
+            previousMotion?.Dispose();
+            history.PreviousMotion = previousMotion = Texture.New2D(device, motion.Width, motion.Height, motion.Format, TextureFlags.ShaderResource);
+            previousMotion.Name = "PostFxPreviousMotion";
+            history.PreviousMotionValid = false;
+        }
+
         Matrix.Invert(ref history.ViewProjection, out var inverseViewProjection);
         var parameters = shader.Parameters;
         parameters.Set(PostFxTemporalKeys.PostFxTemporalAutoExposure, autoExposure);
@@ -156,13 +174,18 @@ internal sealed class TemporalPass
         parameters.Set(PostFxTemporalKeys.TemporalExposure, exposure);
         parameters.Set(PostFxTemporalKeys.TemporalBlend, blend);
         parameters.Set(PostFxTemporalKeys.TemporalHistoryValid, history.Valid ? 1.0f : 0.0f);
+        parameters.Set(PostFxTemporalKeys.TemporalPreviousMotionValid, history.Valid && history.PreviousMotionValid ? 1.0f : 0.0f);
 
         shader.SetInput(0, scene);
         shader.SetInput(1, depth);
         shader.SetInput(2, motion);
         shader.SetInput(3, previous);
+        shader.SetInput(4, previousMotion);
         shader.SetOutput(output);
         shader.Draw(context, "PostFx.Temporal");
+
+        context.CommandList.Copy(motion, previousMotion);
+        history.PreviousMotionValid = true;
 
         history.Index = 1 - history.Index;
         history.Valid = true;

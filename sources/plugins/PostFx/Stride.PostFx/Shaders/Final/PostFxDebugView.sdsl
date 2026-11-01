@@ -6,7 +6,7 @@ namespace Stride.PostFx
     /// <summary>
     /// Shows a buffer of the renderer: a single channel one (ambient occlusion, contact shadows) in grey, or light found on
     /// screen (exposed, weighted by its confidence; DebugPremultiplied: already weighted), or the motion vectors (DebugMotion:
-    /// red/green = horizontal/vertical pixels a frame over DebugMotionScale's, blue where none). Texture0 = the buffer.
+    /// red/green = 0.5 + horizontal/vertical motion (NDC, +y up) over DebugMotionScale's pixels, blue where none). Texture0 = the buffer.
     /// </summary>
     shader PostFxDebugView : ImageEffectShader
     {
@@ -23,8 +23,9 @@ namespace Stride.PostFx
             if (DebugMotion)
             {
                 if (value.x == 0.0 && value.y == 0.0)
-                    return float4(0.0, 0.0, 0.25, 1.0);
-                return float4(saturate(abs(value.xy) * DebugMotionScale), 0.0, 1.0);
+                    return float4(0.5, 0.5, 1.0, 1.0);
+                // (signed: 0.5 = still, the shown range either way)
+                return float4(saturate(0.5 + 0.5 * value.xy * DebugMotionScale), 0.0, 1.0);
             }
             if (DebugColor)
             {
