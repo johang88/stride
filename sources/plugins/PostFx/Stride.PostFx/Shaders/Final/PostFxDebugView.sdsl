@@ -5,17 +5,27 @@ namespace Stride.PostFx
 {
     /// <summary>
     /// Shows a buffer of the renderer: a single channel one (ambient occlusion, contact shadows) in grey, or light found on
-    /// screen (exposed, weighted by its confidence; DebugPremultiplied: already weighted). Texture0 = the buffer.
+    /// screen (exposed, weighted by its confidence; DebugPremultiplied: already weighted), or the motion vectors (DebugMotion:
+    /// red/green = horizontal/vertical pixels a frame over DebugMotionScale's, blue where none). Texture0 = the buffer.
     /// </summary>
     shader PostFxDebugView : ImageEffectShader
     {
         stage bool DebugColor;
         stage float DebugScale;
         stage bool DebugPremultiplied;
+        stage bool DebugMotion;
+        // Normalized device coordinates to the pixels shown at full intensity
+        stage float2 DebugMotionScale;
 
         stage override float4 Shading()
         {
             float4 value = Texture0.SampleLevel(PointSampler, streams.TexCoord, 0);
+            if (DebugMotion)
+            {
+                if (value.x == 0.0 && value.y == 0.0)
+                    return float4(0.0, 0.0, 0.25, 1.0);
+                return float4(saturate(abs(value.xy) * DebugMotionScale), 0.0, 1.0);
+            }
             if (DebugColor)
             {
                 float3 light = value.rgb * (DebugPremultiplied ? 1.0 : value.a) * DebugScale;

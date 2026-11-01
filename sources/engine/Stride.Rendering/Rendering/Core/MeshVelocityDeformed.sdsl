@@ -1,0 +1,21 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+// Screen space velocity of a mesh deformed before drawing (compute skinning, morph targets), whose vertices of the
+// previous frame come as a vertex stream (mesh space): the motion of each vertex, its deformation (a swinging leg)
+// as well as the object's motion
+shader MeshVelocityDeformed : MeshVelocity, Transformation
+{
+    // The vertex's deformed position in the previous frame (mesh space)
+    stage stream float3 PreviousPositionMS : PREVIOUSPOSITION;
+
+    stage override void VSMain()
+    {
+        base.VSMain();
+
+        // The current world position moved back by the vertex's deformation since the previous frame (in the current
+        // world transform: PreviousWorldViewProjection carries it to the previous one)
+        float3 deformation = mul(float4(streams.PreviousPositionMS - streams.Position.xyz, 0.0), World).xyz;
+        streams.PreviousPosition = mul(float4(streams.PositionWS.xyz / streams.PositionWS.w + deformation, 1.0), PreviousWorldViewProjection);
+    }
+};

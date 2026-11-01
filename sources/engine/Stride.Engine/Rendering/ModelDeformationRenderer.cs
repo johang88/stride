@@ -23,6 +23,8 @@ namespace Stride.Rendering;
 // in TransformationMorph. Skinned meshes skin in compute too, so the passes drawing them (depth prepass, opaque, every
 // shadow cascade) draw the deformed vertices instead of each skinning them again with the bones in its draw constants;
 // a mesh whose vertex layout the kernel cannot read keeps vertex shader skinning.
+// Each batch also keeps the previous frame's output (copied on the GPU before the dispatch), drawn as a third vertex
+// stream (PREVIOUSPOSITION): the motion vectors then follow each vertex's deformation, not only the mesh's transform.
 // ModelRenderProcessor schedules every model each frame; MeshRenderFeature then deforms only the models a view
 // collected, after every view is culled and before any is drawn.
 internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
@@ -353,6 +355,9 @@ internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
         poses.Upload(context.GraphicsDevice, command);
         records.Upload(context.GraphicsDevice, command);
         weights.Upload(context.GraphicsDevice, command);
+        // The previous frame's vertices, before this frame's overwrite them
+        foreach (var batch in pending)
+            batch.KeepPrevious(command);
         // Transition every output once before and once after all dispatches, not around each one: the outputs are
         // distinct, so a barrier per dispatch would only stop the GPU from overlapping small dispatches.
         foreach (var batch in pending)
@@ -362,6 +367,9 @@ internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
         foreach (var batch in pending)
         {
             command.ResourceBarrierTransition(batch.Output, BarrierLayout.Common);
+            // Instances not deformed last frame have no previous vertices: they start from this frame's (no motion)
+            batch.StartNewPrevious(command);
+            command.ResourceBarrierTransition(batch.Previous, BarrierLayout.Common);
             batch.EndFrame();
         }
         pending.Clear();
@@ -481,6 +489,8 @@ internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
         // and a compact per-instance output with position, normal and tangent.
         public readonly VertexBufferBinding SourceStream;
         public readonly VertexDeclaration OutputDeclaration;
+        // The previous frame's output, read for the positions only (motion vectors)
+        public readonly VertexDeclaration PreviousDeclaration;
         public readonly int OutputVertexStride;
         public readonly int OutputNormalOffset = -1;
         public readonly int OutputTangentOffset = -1;
@@ -496,8 +506,8 @@ internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
         {
             Source = mesh;
             (Draw, MorphData, Compute, Binding, VertexBytes) = (twin.Draw, twin.MorphData, twin.Compute, twin.Binding, twin.VertexBytes);
-            (SourceStream, OutputDeclaration, OutputVertexStride, OutputNormalOffset, OutputTangentOffset, TangentW) =
-                (twin.SourceStream, twin.OutputDeclaration, twin.OutputVertexStride, twin.OutputNormalOffset, twin.OutputTangentOffset, twin.TangentW);
+            (SourceStream, OutputDeclaration, PreviousDeclaration, OutputVertexStride, OutputNormalOffset, OutputTangentOffset, TangentW) =
+                (twin.SourceStream, twin.OutputDeclaration, twin.PreviousDeclaration, twin.OutputVertexStride, twin.OutputNormalOffset, twin.OutputTangentOffset, twin.TangentW);
             (TargetCount, BoneCount) = (twin.TargetCount, twin.BoneCount);
             (PositionOffset, NormalOffset, TangentOffset, IndicesOffset, WeightsOffset, Index16, MorphFlags) =
                 (twin.PositionOffset, twin.NormalOffset, twin.TangentOffset, twin.IndicesOffset, twin.WeightsOffset, twin.Index16, twin.MorphFlags);
@@ -587,6 +597,7 @@ internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
                 OutputVertexStride += format.SizeInBytes;
             }
             OutputDeclaration = new VertexDeclaration(output.ToArray(), 0, OutputVertexStride);
+            PreviousDeclaration = new VertexDeclaration([new VertexElement(MeshVelocityRenderFeature.PreviousPositionSemantic, 0, PixelFormat.R32G32B32_Float, 0)], 0, OutputVertexStride);
             // Runtime content loading discards serialized vertex bytes. Read them
             // back once when preparing this shared mesh, never during normal updates.
             var bytes = Binding.Buffer.GetSerializationData()?.Content ?? Binding.Buffer.GetData<byte>(context.CommandList);
@@ -639,6 +650,10 @@ internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
         public readonly int SlotBytes;
         public int Capacity;
         public Buffer Output;
+        // The output of the previous frame (same layout)
+        public Buffer Previous;
+        // Per slot: whether it was deformed last frame (Previous holds its vertices)
+        private bool[] deformedLastFrame;
         // Per slot: morph weights, flags, pose offset and inverse mesh world columns, copied into the frame arenas.
         private float[] weightData;
         private uint[] flagData;
@@ -658,6 +673,7 @@ internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
             Shared = shared;
             SlotBytes = checked(shared.Binding.Count * shared.OutputVertexStride);
             occupied = Array.Empty<bool>();
+            deformedLastFrame = Array.Empty<bool>();
             weightData = Array.Empty<float>();
             flagData = Array.Empty<uint>();
             poseData = Array.Empty<uint>();
@@ -669,6 +685,8 @@ internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
         public void Grow(GraphicsDevice device, int capacity)
         {
             Array.Resize(ref occupied, capacity);
+            // (the outputs are new: no slot has previous vertices)
+            deformedLastFrame = new bool[capacity];
             Array.Resize(ref weightData, capacity * Shared.TargetCount);
             Array.Resize(ref flagData, capacity);
             Array.Resize(ref poseData, capacity);
@@ -676,12 +694,41 @@ internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
             Capacity = capacity;
             Dispose();
             Output = Buffer.Raw.New(device, checked(capacity * SlotBytes), BufferFlags.VertexBuffer | BufferFlags.ShaderResource | BufferFlags.UnorderedAccess);
+            Previous = Buffer.New(device, checked(capacity * SlotBytes), BufferFlags.VertexBuffer, GraphicsResourceUsage.Default);
             foreach (var (slot, mesh) in bound)
+            {
                 mesh.Draw.VertexBuffers[1] = Binding(slot);
+                mesh.Draw.VertexBuffers[2] = PreviousBinding(slot);
+            }
         }
 
         public VertexBufferBinding Binding(int slot)
             => new(Output, Shared.OutputDeclaration, Shared.Binding.Count, Shared.OutputVertexStride, slot * SlotBytes);
+
+        public VertexBufferBinding PreviousBinding(int slot)
+            => new(Previous, Shared.PreviousDeclaration, Shared.Binding.Count, Shared.OutputVertexStride, slot * SlotBytes);
+
+        /// <summary>Copies the output of the slots deformed this frame, before the dispatch overwrites it, to <see cref="Previous"/>.</summary>
+        public void KeepPrevious(CommandList command)
+        {
+            if (SlotCount > 0)
+                command.CopyRegion(Output, 0, new ResourceRegion(0, 0, 0, SlotCount * SlotBytes, 1, 1), Previous, 0);
+        }
+
+        /// <summary>Copies this frame's output of the slots that were not deformed last frame to <see cref="Previous"/>.</summary>
+        public void StartNewPrevious(CommandList command)
+        {
+            for (int slot = 0; slot < SlotCount; slot++)
+            {
+                if (flagData[slot] == 0 || deformedLastFrame[slot])
+                    continue;
+                int end = slot + 1;
+                while (end < SlotCount && flagData[end] != 0 && !deformedLastFrame[end])
+                    end++;
+                command.CopyRegion(Output, 0, new ResourceRegion(slot * SlotBytes, 0, 0, end * SlotBytes, 1, 1), Previous, 0, slot * SlotBytes);
+                slot = end;
+            }
+        }
 
         public int Allocate()
         {
@@ -697,6 +744,7 @@ internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
         {
             occupied[slot] = false;
             flagData[slot] = 0;
+            deformedLastFrame[slot] = false;
             bound.Remove(slot);
             Used--;
         }
@@ -729,6 +777,8 @@ internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
         // Slots not prepared next frame keep their last output and are skipped by the dispatch.
         public void EndFrame()
         {
+            for (int slot = 0; slot < flagData.Length; slot++)
+                deformedLastFrame[slot] = flagData[slot] != 0;
             Array.Clear(flagData);
             SlotCount = 0;
             ActiveCount = 0;
@@ -737,6 +787,7 @@ internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
         public void Dispose()
         {
             Output?.Dispose();
+            Previous?.Dispose();
         }
     }
 
@@ -819,7 +870,7 @@ internal sealed class ModelDeformationRenderer : IModelDeformer, IDisposable
                     DrawCount = source.Draw.DrawCount,
                     StartLocation = source.Draw.StartLocation,
                     IndexBuffer = source.Draw.IndexBuffer,
-                    VertexBuffers = [shared.SourceStream, batch.Binding(Slot)]
+                    VertexBuffers = [shared.SourceStream, batch.Binding(Slot), batch.PreviousBinding(Slot)]
                 }
             };
             batch.Bind(Slot, Mesh);

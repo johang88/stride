@@ -22,7 +22,14 @@ namespace Stride.Rendering
     {
         public TransformRenderFeature TransformRenderFeature;
 
+        /// <summary>
+        /// Semantic of a vertex stream holding the mesh's deformed positions of the previous frame (mesh space, e.g. from
+        /// compute skinning): its motion vectors then follow each vertex, not only the mesh's transform.
+        /// </summary>
+        public const string PreviousPositionSemantic = "PREVIOUSPOSITION";
+
         private static readonly ShaderClassSource VelocityShader = new("MeshVelocity");
+        private static readonly ShaderClassSource DeformedVelocityShader = new("MeshVelocityDeformed");
 
         private StaticObjectPropertyKey<StaticObjectInfo> previousTransformationInfoKey;
         private ViewObjectPropertyKey<PreviousObjectViewInfo> previousTransformationViewInfoKey;
@@ -70,6 +77,7 @@ namespace Stride.Rendering
                 var staticObjectNode = renderMesh.StaticObjectNode;
 
                 renderMesh.ActiveMeshDraw = renderMesh.Mesh.Draw;
+                var velocityShader = HasPreviousPositions(renderMesh.ActiveMeshDraw) ? DeformedVelocityShader : VelocityShader;
 
                 foreach (var stage in RenderSystem.RenderStages)
                 {
@@ -81,10 +89,26 @@ namespace Stride.Rendering
 
                     if (renderEffect != null)
                     {
-                        renderEffect.EffectValidator.ValidateParameter(StrideEffectBaseKeys.ComputeVelocityShader, VelocityShader);
+                        renderEffect.EffectValidator.ValidateParameter(StrideEffectBaseKeys.ComputeVelocityShader, velocityShader);
                     }
                 }
             });
+        }
+
+        private static bool HasPreviousPositions(MeshDraw draw)
+        {
+            var vertexBuffers = draw?.VertexBuffers;
+            if (vertexBuffers == null)
+                return false;
+            foreach (var vertexBuffer in vertexBuffers)
+            {
+                foreach (var element in vertexBuffer.Declaration.VertexElements)
+                {
+                    if (element.SemanticName == PreviousPositionSemantic)
+                        return true;
+                }
+            }
+            return false;
         }
 
         public override unsafe void Prepare(RenderDrawContext context)
