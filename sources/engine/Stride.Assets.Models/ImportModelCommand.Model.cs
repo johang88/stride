@@ -74,6 +74,13 @@ namespace Stride.Assets.Models
                 return null;
             }
 
+            // Modifiers that work on the source hierarchy (e.g. picking levels of detail by node name)
+            if (ModelModifiers != null)
+            {
+                foreach (var modifier in ModelModifiers.OfType<ISourceModelModifier>())
+                    modifier.ApplyToSource(commandContext, model, modelSkeleton);
+            }
+
             // Apply materials
             foreach (var modelMaterial in Materials)
             {
