@@ -1,0 +1,53 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+namespace Stride.Rendering.Materials
+{
+    /// <summary>
+    /// Microfacet shading plus a sheen lobe for fabrics: the Charlie distribution (Estevez and Kulla 2017) with Neubelt's visibility,
+    /// light caught by fibres at grazing angles that gives cloth its soft rim. Applied where the surface is a rough dielectric (a
+    /// texture mixing cloth with metal or polished leather keeps plain microfacet shading there), tinted by the albedo.
+    /// </summary>
+    shader MaterialSurfaceShadingSpecularCloth<float Sheen, float RoughnessStart> : MaterialSurfaceShadingSpecularMicrofacet, LightStream
+    {
+        // Sheen colour of this pixel, zero where it isn't cloth
+        float3 SheenColor()
+        {
+            float roughness = 1.0 - streams.matGlossiness;
+            float3 f0 = streams.matSpecularVisible;
+            float dielectric = 1.0 - saturate((max(f0.r, max(f0.g, f0.b)) - 0.06) / 0.15);
+            float cloth = saturate((roughness - RoughnessStart) / 0.25) * dielectric;
+            return sqrt(max(streams.matDiffuseVisible, 0.0)) * Sheen * cloth;
+        }
+
+        float SheenRoughness()
+        {
+            return clamp(1.0 - streams.matGlossiness, 0.3, 1.0);
+        }
+
+        override float3 ComputeDirectLightContribution()
+        {
+            float3 reflected = base.ComputeDirectLightContribution();
+
+            float alpha = SheenRoughness() * SheenRoughness();
+            float sinH = sqrt(saturate(1.0 - streams.NdotH * streams.NdotH));
+            float distribution = (2.0 + 1.0 / alpha) * pow(sinH, 1.0 / alpha) / (2.0 * PI);
+            float nDotL = streams.NdotL;
+            float visibility = 1.0 / max(4.0 * (nDotL + streams.NdotV - nDotL * streams.NdotV), 1e-4);
+
+            return reflected + SheenColor() * distribution * visibility * streams.lightSpecularColorNdotL * streams.matDiffuseSpecularAlphaBlend.y;
+        }
+
+        override float3 ComputeEnvironmentLightContribution()
+        {
+            float3 reflected = base.ComputeEnvironmentLightContribution();
+
+            // The sheen lobe integrated over the hemisphere (fitted to the numerical integral for roughness 0.6-1)
+            float r = SheenRoughness();
+            float a = 1.48 - 1.6 * r + 0.7 * r * r;
+            float b = 7.48 - 11.18 * r + 5.13 * r * r;
+            float response = a * exp(-b * streams.NdotV);
+
+            return reflected + SheenColor() * response * streams.envLightSpecularColor * streams.matDiffuseSpecularAlphaBlend.y;
+        }
+    };
+}
