@@ -1,0 +1,56 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Water
+{
+    /// <summary>
+    /// The opaque scene behind a transparent surface, from the depth buffer the forward renderer binds during the transparent
+    /// stage (ForwardRenderer.BindDepthAsResourceDuringTransparentRendering). Works with reversed or conventional depth and
+    /// with perspective or orthographic views.
+    /// </summary>
+    shader WaterSceneDepth : DepthBase, Transformation, ShaderBaseStream, PositionStream4
+    {
+        bool WaterIsOrthographic()
+        {
+            return Projection._44 > 0.5;
+        }
+
+        // Distance along the view axis (positive) of a depth buffer value
+        float WaterLinearDepth(float depth)
+        {
+            if (WaterIsOrthographic())
+                return (Projection._43 - depth) / Projection._33;
+            // (view z = -P43 / (depth + P33); far plane at infinity with reversed depth: P33 = 0)
+            float denominator = depth + Projection._33;
+            return Projection._43 / (abs(denominator) < 1e-9 ? 1e-9 : denominator);
+        }
+
+        // Linear depth of the opaque scene at a pixel / at a screen position (0..1)
+        float WaterSceneDepthAt(int2 pixel)
+        {
+            return WaterLinearDepth(DepthStencil.Load(int3(pixel, 0)).x);
+        }
+
+        float WaterSceneDepthAtUV(float2 uv)
+        {
+            return WaterLinearDepth(DepthStencil.SampleLevel(PointSampler, uv, 0.0).x);
+        }
+
+        // World position of the opaque surface at the given depth on the view ray through a surface point (view space)
+        float3 WaterScenePositionWS(float3 surfaceVS, float sceneDepth)
+        {
+            float3 sceneVS = WaterIsOrthographic()
+                ? float3(surfaceVS.xy, -sceneDepth)
+                : surfaceVS * (sceneDepth / max(-surfaceVS.z, 1e-6));
+            return mul(float4(sceneVS, 1.0), ViewInverse).xyz;
+        }
+
+        // Size in pixels of the depth buffer (the view's)
+        float2 WaterSceneSize()
+        {
+            float2 size;
+            DepthStencil.GetDimensions(size.x, size.y);
+            return size;
+        }
+    };
+}

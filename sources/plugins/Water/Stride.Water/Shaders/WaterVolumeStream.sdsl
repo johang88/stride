@@ -1,0 +1,20 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Water
+{
+    /// <summary>
+    /// What a water surface sees of the scene behind it (MaterialWaterVolume, before lighting), for its composite after
+    /// lighting (MaterialWaterComposite).
+    /// </summary>
+    shader WaterVolumeStream
+    {
+        // Share of the light from the refracted scene that gets through the water (per channel)
+        stage stream float3 waterTransmittance;
+        // The opaque scene where the refracted ray ends, and right behind the pixel (both already fogged)
+        stage stream float3 waterRefracted;
+        stage stream float3 waterBackground;
+        // 0 at the shoreline, 1 where the water is deeper than its edge fade
+        stage stream float waterEdge;
+    };
+}

@@ -1,0 +1,33 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Water
+{
+    /// <summary>
+    /// How far the opaque scene is behind a transparent surface, as a 0..1 fade: soft intersections of water, fog cards,
+    /// glows and shoreline masks. Measured vertically (depth of the floor under a horizontal surface, independent of the view
+    /// angle) or along the view ray. Transparent stage only (it reads the scene depth).
+    /// </summary>
+    /// <remarks>
+    /// TFade: float4 (1 / fade distance in meters, 1 = vertical / 0 = along the view ray, exponent, unused).
+    /// </remarks>
+    shader ComputeSceneDepthFade<LinkType TFade> : ComputeColor, WaterSceneDepth
+    {
+        cbuffer PerMaterial
+        {
+            [Link("TFade")]
+            stage float4 Fade;
+        }
+
+        override float4 Compute()
+        {
+            float3 positionWS = streams.PositionWS.xyz;
+            float3 surfaceVS = mul(float4(positionWS, 1.0), View).xyz;
+            float sceneDepth = WaterSceneDepthAt(int2(streams.ShadingPosition.xy));
+            float3 sceneWS = WaterScenePositionWS(surfaceVS, sceneDepth);
+            float separation = Fade.y > 0.5 ? positionWS.y - sceneWS.y : sign(sceneDepth + surfaceVS.z) * length(sceneWS - positionWS);
+            float fade = pow(saturate(separation * Fade.x), Fade.z);
+            return float4(fade, fade, fade, fade);
+        }
+    };
+}

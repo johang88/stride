@@ -1,0 +1,90 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Water
+{
+    /// <summary>
+    /// One step of the dynamic ripples: the wave equation on a grid of world cells (isotropic 9-point Laplacian, damped), over
+    /// a window that follows the camera. Texel = world cell modulo the size, so the window moves without copies: cells that
+    /// enter it start flat, and its border absorbs the waves (sponge). Disturbances (wading characters) are added as smooth
+    /// bumps. Groups of 8x8 threads, one per texel.
+    /// </summary>
+    shader WaterRippleStep : ComputeShaderBase
+    {
+        // r = height (m), g = the previous step's
+        stage Texture2D<float2> WaterRipplePrevious;
+        stage RWTexture2D<float2> WaterRippleNext;
+        // xy = world XZ, z = radius (m), w = height added at the center (m)
+        stage StructuredBuffer<float4> WaterRippleSources;
+
+        cbuffer PerDispatch
+        {
+            // First world cell of the window, now and at the previous step
+            stage int2 WaterRippleOrigin;
+            stage int2 WaterRipplePreviousOrigin;
+            // Cells per side (a power of two)
+            stage int WaterRippleSize;
+            // Cell size (m)
+            stage float WaterRippleCell;
+            // (wave speed * time step / cell size)^2
+            stage float WaterRippleWave;
+            // Share of the vertical velocity kept per step
+            stage float WaterRippleDamping;
+            // Width (cells) of the absorbing border
+            stage float WaterRippleSponge;
+            stage int WaterRippleSourceCount;
+        };
+
+        // The texel's world cell in the window starting at the origin
+        int2 CellOf(int2 texel, int2 origin)
+        {
+            return origin + ((texel - origin) & (WaterRippleSize - 1));
+        }
+
+        bool InWindow(int2 cell, int2 origin)
+        {
+            return all(cell >= origin) && all(cell < origin + WaterRippleSize);
+        }
+
+        // The state of a cell at the previous step (flat if it wasn't simulated then, or if it is outside the window now)
+        float2 Read(int2 cell)
+        {
+            if (!InWindow(cell, WaterRipplePreviousOrigin) || !InWindow(cell, WaterRippleOrigin))
+                return 0;
+            return WaterRipplePrevious.Load(int3(cell & (WaterRippleSize - 1), 0));
+        }
+
+        override void Compute()
+        {
+            int2 texel = int2(streams.DispatchThreadId.xy);
+            if (any(texel >= WaterRippleSize))
+                return;
+            int2 cell = CellOf(texel, WaterRippleOrigin);
+
+            float2 center = Read(cell);
+            float axial = Read(cell + int2(1, 0)).x + Read(cell - int2(1, 0)).x + Read(cell + int2(0, 1)).x + Read(cell - int2(0, 1)).x;
+            float diagonal = Read(cell + int2(1, 1)).x + Read(cell + int2(-1, 1)).x + Read(cell + int2(1, -1)).x + Read(cell + int2(-1, -1)).x;
+            float laplacian = (4.0 * axial + diagonal - 20.0 * center.x) / 6.0;
+
+            float height = center.x + (center.x - center.y) * WaterRippleDamping + WaterRippleWave * laplacian;
+
+            // Disturbances
+            float2 world = (float2(cell) + 0.5) * WaterRippleCell;
+            for (int i = 0; i < WaterRippleSourceCount; i++)
+            {
+                float4 source = WaterRippleSources[i];
+                float range = length(world - source.xy);
+                if (range < source.z)
+                    height += source.w * (0.5 + 0.5 * cos(3.14159265 * range / source.z));
+            }
+
+            // Sponge: waves die out before reaching the window's edge
+            int2 local = cell - WaterRippleOrigin;
+            float edge = (float)min(min(local.x, local.y), min(WaterRippleSize - 1 - local.x, WaterRippleSize - 1 - local.y));
+            float absorb = saturate(1.0 - edge / WaterRippleSponge);
+            float keep = 1.0 - 0.12 * absorb * absorb;
+
+            WaterRippleNext[texel] = float2(height * keep, center.x * keep);
+        }
+    };
+}

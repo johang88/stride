@@ -263,6 +263,9 @@
     <Project Path="../sources/plugins/Voxels/Stride.Voxels.Editor/Stride.Voxels.Editor.csproj" />
     <Project Path="../sources/plugins/Voxels/Stride.Voxels/Stride.Voxels.csproj" />
   </Folder>
+  <Folder Name="/80-Plugins/Water/">
+    <Project Path="../sources/plugins/Water/Stride.Water/Stride.Water.csproj" />
+  </Folder>
   <Folder Name="/90-Tools/">
     <Project Path="../sources/tests/Stride.ScreenshotComparator/Stride.ScreenshotComparator.csproj" />
     <Project Path="../sources/tests/xunit.runner.stride/xunit.runner.stride.csproj" />

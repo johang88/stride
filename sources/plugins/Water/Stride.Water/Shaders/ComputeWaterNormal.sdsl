@@ -1,0 +1,126 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Water
+{
+    /// <summary>
+    /// Animated normal of a water surface, for the normal map of a material (tangent space, scaled and biased): three layers
+    /// of a tileable ripple normal map drifting at different scales, angles and speeds, added as slopes (derivative blending),
+    /// patchy calm and rippled areas drifting with the wind (gusts), faded with distance, plus the dynamic ripples of the
+    /// view (characters wading, WaterRippleRenderFeature).
+    /// </summary>
+    /// <remarks>
+    /// TNormalMap: the ripple normal map (X/Y used). TLayer0..2: float4 (direction cos / scale, sin / scale, drift / scale per
+    /// second, strength). TGusts: float4 (1 / patch size, amount, drift per second in patches along X / Z).
+    /// TSettings: float4 (strength, 1 / distance of half strength, dynamic ripple strength, unused).
+    /// TWorldSpace: the layers are laid along world X/Z in meters (else along the mesh's texture coordinates).
+    /// </remarks>
+    shader ComputeWaterNormal<LinkType TNormalMap, LinkType TLayer0, LinkType TLayer1, LinkType TLayer2, LinkType TGusts, LinkType TSettings, bool TWorldSpace>
+        : ComputeColor, DynamicTexture<TNormalMap, PerMaterial>, Texturing, PositionStream4, NormalStream, Transformation, Global, WaterRipples
+    {
+        cbuffer PerMaterial
+        {
+            [Link("TLayer0")]
+            stage float4 Layer0;
+            [Link("TLayer1")]
+            stage float4 Layer1;
+            [Link("TLayer2")]
+            stage float4 Layer2;
+            [Link("TGusts")]
+            stage float4 Gusts;
+            [Link("TSettings")]
+            stage float4 Settings;
+        }
+
+        // Slope of one layer at a point (world meters or texture coordinates), in the point's axes
+        float2 LayerSlope(float2 position, float4 layer, float time)
+        {
+            if (layer.w == 0.0)
+                return 0;
+            float2 axis = layer.xy;
+            float2 uv = float2(dot(position, axis), dot(position, float2(-axis.y, axis.x))) + float2(time * layer.z, 0.0);
+            float2 n = Texture.Sample(AnisotropicRepeatSampler, uv).xy * 2.0 - 1.0;
+            float nz = sqrt(saturate(1.0 - dot(n, n)));
+            float2 slope = -n / max(nz, 0.25);
+            // The layer's axes back to the point's (a rotation: normal maps keep their slopes whatever their tiling)
+            float2 direction = axis * rsqrt(max(dot(axis, axis), 1e-12));
+            return layer.w * float2(direction.x * slope.x - direction.y * slope.y, direction.y * slope.x + direction.x * slope.y);
+        }
+
+        float GustHash(float2 cell)
+        {
+            return frac(sin(dot(cell, float2(127.1, 311.7))) * 43758.5453);
+        }
+
+        float GustNoise(float2 p)
+        {
+            float2 cell = floor(p);
+            float2 f = frac(p);
+            float2 u = f * f * (3.0 - 2.0 * f);
+            float a = GustHash(cell);
+            float b = GustHash(cell + float2(1, 0));
+            float c = GustHash(cell + float2(0, 1));
+            float d = GustHash(cell + float2(1, 1));
+            return lerp(lerp(a, b, u.x), lerp(c, d, u.x), u.y);
+        }
+
+        // Rippled (1) or calm (1 - amount) at a world position: two octaves of value noise drifting with the wind
+        float GustMask(float2 positionXZ, float time)
+        {
+            if (Gusts.y <= 0.0)
+                return 1.0;
+            float2 p = positionXZ * Gusts.x + Gusts.zw * time;
+            float pattern = GustNoise(p) * 0.65 + GustNoise(p * 2.3 + float2(5.2, 1.3) - Gusts.zw * time * 0.7) * 0.35;
+            return lerp(1.0 - Gusts.y, 1.0, smoothstep(0.3, 0.7, pattern));
+        }
+
+        // A world direction to the tangent space of the mesh (inverse of the tangent to world transform, which may be scaled)
+        float3 WorldToTangent(float3 direction)
+        {
+            float3 r0 = streams.tangentToWorld[0];
+            float3 r1 = streams.tangentToWorld[1];
+            float3 r2 = streams.tangentToWorld[2];
+            float3 c0 = cross(r1, r2);
+            float3 c1 = cross(r2, r0);
+            float3 c2 = cross(r0, r1);
+            float determinant = dot(r0, c0);
+            return float3(dot(c0, direction), dot(c1, direction), dot(c2, direction)) * (determinant < 0.0 ? -1.0 : 1.0);
+        }
+
+        // Tilts a world normal by slopes along world X and Z (projected on the surface)
+        float3 TiltWorld(float3 normal, float2 slope)
+        {
+            float3 axisX = normalize(float3(1, 0, 0) - normal * normal.x + float3(0, 1e-5, 0));
+            float3 axisZ = normalize(float3(0, 0, 1) - normal * normal.z + float3(0, 1e-5, 0));
+            return normalize(normal - axisX * slope.x - axisZ * slope.y);
+        }
+
+        override float4 Compute()
+        {
+            float time = Time;
+            float3 positionWS = streams.PositionWS.xyz;
+            float2 position = TWorldSpace ? positionWS.xz : streams.TexCoord;
+
+            float2 slope = LayerSlope(position, Layer0, time) + LayerSlope(position, Layer1, time) + LayerSlope(position, Layer2, time);
+            float distanceFade = 1.0 / (1.0 + length(positionWS - Eye.xyz) * Settings.y);
+            slope *= Settings.x * distanceFade * GustMask(positionWS.xz, time);
+
+            float3 meshNormal = normalize(streams.meshNormalWS);
+            float3 normal;
+            if (TWorldSpace)
+            {
+                normal = TiltWorld(meshNormal, slope);
+            }
+            else
+            {
+                normal = normalize(mul(normalize(float3(-slope, 1.0)), streams.tangentToWorld));
+            }
+
+            if (Settings.z > 0.0)
+                normal = TiltWorld(normal, WaterRippleSlope(positionWS) * Settings.z);
+
+            float3 tangentNormal = normalize(WorldToTangent(normal));
+            return float4(tangentNormal * 0.5 + 0.5, 1.0);
+        }
+    };
+}

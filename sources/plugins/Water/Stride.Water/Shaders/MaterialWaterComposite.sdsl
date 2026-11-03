@@ -1,0 +1,30 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Water
+{
+    /// <summary>
+    /// The water's color after lighting (MaterialTransparencyWaterFeature): its lit surface (reflections, in-scattered light)
+    /// over the refracted scene that gets through the water and the surface (1 - Fresnel), faded out at the shoreline.
+    /// </summary>
+    /// <remarks>
+    /// Output with premultiplied alpha blending over the unrefracted scene: alpha = how much of it the water hides (gray), and
+    /// the color carries the difference to the refracted, colored transmission. Fog of the transparent stage (applied to the
+    /// output) then scales that difference instead of the whole scene seen through the water, which the opaque pass fogged
+    /// already.
+    /// </remarks>
+    shader MaterialWaterComposite : IMaterialSurfacePixel, MaterialPixelShadingStream, MaterialPixelStream, WaterVolumeStream
+    {
+        override void Compute()
+        {
+            float fresnel = 0.02 + 0.98 * pow(1.0 - saturate(streams.NdotV), 5.0);
+            float3 transmitted = streams.waterTransmittance * (1.0 - fresnel);
+            float hidden = 1.0 - dot(transmitted, 1.0 / 3.0);
+            float edge = streams.waterEdge;
+
+            float3 color = streams.shadingColor + transmitted * streams.waterRefracted - (1.0 - hidden) * streams.waterBackground;
+            streams.shadingColor = color * edge;
+            streams.shadingColorAlpha = hidden * edge;
+        }
+    };
+}

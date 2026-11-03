@@ -1,0 +1,53 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Water
+{
+    /// <summary>
+    /// The dynamic ripples of the view (WaterRippleRenderFeature): heights of a wave simulation over a window of the world
+    /// around the camera, stored wrapped (a cell's texel is its world cell index modulo the texture size), so moving the
+    /// window never copies the simulation.
+    /// </summary>
+    shader WaterRipples
+    {
+        rgroup PerView.WaterRipples
+        {
+            // r = height (m), g = the previous step's
+            stage Texture2D WaterRippleHeight;
+        }
+
+        cbuffer PerView.WaterRipples
+        {
+            // x = 1 / world size of the texture (m), y = cell size (m)
+            stage float4 WaterRippleWindow;
+            // xy = center of the window (world XZ), z = half size where the ripples start fading out, w = 1 / fade width (0: no ripples)
+            stage float4 WaterRippleFade;
+        }
+
+        stage SamplerState WaterRippleSampler
+        {
+            Filter = MIN_MAG_MIP_LINEAR;
+            AddressU = Wrap;
+            AddressV = Wrap;
+        };
+
+        // Slope (dh/dx, dh/dz) of the dynamic ripples at a world position, faded out towards the edge of the simulated window
+        float2 WaterRippleSlope(float3 positionWS)
+        {
+            if (WaterRippleFade.w <= 0.0)
+                return 0;
+            float2 offset = abs(positionWS.xz - WaterRippleFade.xy);
+            float fade = saturate((WaterRippleFade.z - max(offset.x, offset.y)) * WaterRippleFade.w);
+            if (fade <= 0.0)
+                return 0;
+
+            float2 uv = positionWS.xz * WaterRippleWindow.x;
+            float texel = WaterRippleWindow.y * WaterRippleWindow.x;
+            float east = WaterRippleHeight.SampleLevel(WaterRippleSampler, uv + float2(texel, 0), 0).r;
+            float west = WaterRippleHeight.SampleLevel(WaterRippleSampler, uv - float2(texel, 0), 0).r;
+            float north = WaterRippleHeight.SampleLevel(WaterRippleSampler, uv + float2(0, texel), 0).r;
+            float south = WaterRippleHeight.SampleLevel(WaterRippleSampler, uv - float2(0, texel), 0).r;
+            return float2(east - west, north - south) * (0.5 / WaterRippleWindow.y) * fade;
+        }
+    };
+}
