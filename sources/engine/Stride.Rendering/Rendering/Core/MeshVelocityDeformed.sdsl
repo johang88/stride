@@ -16,6 +16,6 @@ shader MeshVelocityDeformed : MeshVelocity, Transformation
         // The current world position moved back by the vertex's deformation since the previous frame (in the current
         // world transform: PreviousWorldViewProjection carries it to the previous one)
         float3 deformation = mul(float4(streams.PreviousPositionMS - streams.Position.xyz, 0.0), World).xyz;
-        streams.PreviousPosition = mul(float4(streams.PositionWS.xyz / streams.PositionWS.w + deformation, 1.0), PreviousWorldViewProjection);
+        streams.PreviousPosition = mul(float4(streams.PositionWS.xyz / streams.PositionWS.w + deformation + streams.PreviousPositionOffsetWS, 1.0), PreviousWorldViewProjection);
     }
 };

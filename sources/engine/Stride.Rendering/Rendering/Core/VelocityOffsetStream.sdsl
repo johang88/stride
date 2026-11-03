@@ -1,0 +1,9 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+// Where a vertex animated in the vertex shader (wind, waves) was in the previous frame, relative to where it is now (world
+// space): the velocity pass moves the previous position by it, so motion vectors follow the animation. Zero when unset.
+shader VelocityOffsetStream
+{
+    stage stream float3 PreviousPositionOffsetWS;
+};

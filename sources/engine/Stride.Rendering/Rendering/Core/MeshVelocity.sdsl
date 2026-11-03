@@ -3,7 +3,7 @@
 
 // Computes screen space velocity for meshes, from the final world position (after skinning, instancing and any
 // displacement): the object's motion since the previous frame and the previous view projection
-shader MeshVelocity : PositionStream4, TransformationBase, ScreenPositionBase, VelocityStream
+shader MeshVelocity : PositionStream4, TransformationBase, ScreenPositionBase, VelocityStream, VelocityOffsetStream
 {
     cbuffer PerDraw
     {
@@ -16,9 +16,11 @@ shader MeshVelocity : PositionStream4, TransformationBase, ScreenPositionBase, V
 
     stage override void VSMain()
     {
+        // (vertex animation in TransformPosition sets it)
+        streams.PreviousPositionOffsetWS = float3(0, 0, 0);
         base.VSMain();
 
-        streams.PreviousPosition = mul(float4(streams.PositionWS.xyz / streams.PositionWS.w, 1.0), PreviousWorldViewProjection);
+        streams.PreviousPosition = mul(float4(streams.PositionWS.xyz / streams.PositionWS.w + streams.PreviousPositionOffsetWS, 1.0), PreviousWorldViewProjection);
     }
     
     stage override void PSMain()

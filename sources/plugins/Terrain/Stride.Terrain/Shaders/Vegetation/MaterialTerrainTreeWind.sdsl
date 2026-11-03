@@ -1,0 +1,61 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Sways trees in the wind. The whole tree leans and rocks with the square of the height above its origin (a trunk bends
+    /// more towards the top), branches swing with their distance from the trunk, and leaves (Flutter > 0) shiver. Every material
+    /// of a tree applies the same bend, so bark and leaves stay together. The offset at the previous frame's time goes to the
+    /// velocity pass: motion vectors follow the sway (no TAA smearing of swaying crowns).
+    /// </summary>
+    shader MaterialTerrainTreeWind<float WindStrength, float WindSpeed, float Flutter> : IMaterialSurface, PositionStream4, TransformationBase, Global, VelocityOffsetStream
+    {
+        override void Compute()
+        {
+        }
+
+        // World space offset of a vertex (model space position) of a tree standing at anchor (world XZ)
+        float3 WindOffset(float3 position, float2 anchor, float time)
+        {
+            float2 windDirection = float2(0.957826, 0.287348);
+            float2 across = float2(-windDirection.y, windDirection.x);
+            // One phase per tree: neighbours don't sway in lockstep, gusts roll through the forest along the wind
+            float phase = dot(anchor, windDirection) * 0.06 + frac(sin(dot(anchor, float2(12.9898, 78.233))) * 43758.5453) * 6.2831;
+            float t = time * WindSpeed;
+
+            float height = max(position.y, 0.0);
+            float bend = height * height * 0.004;
+            float lean = 0.45 + sin(t * 0.55 + phase) * 0.4 + sin(t * 1.37 + phase * 1.7) * 0.15;
+            float rock = sin(t * 0.83 + phase * 0.6) * 0.18;
+            float2 trunk = (windDirection * lean + across * rock) * bend;
+
+            // Branches: further from the trunk swings more, out of step along the branch
+            float reach = length(position.xz);
+            float branchPhase = dot(position, float3(0.71, 0.33, 0.52));
+            float branch = sin(t * 2.1 + phase + branchPhase) * reach * saturate(height * 0.25) * 0.06;
+
+            float3 offset = float3(trunk.x + windDirection.x * branch, 0.0, trunk.y + windDirection.y * branch) * WindStrength;
+            // A trunk bending over sinks a little (keeps its length)
+            offset.y = -dot(trunk, trunk) * WindStrength * WindStrength / max(height, 1.0) * 0.5;
+
+            // Leaves shiver: fast, small, different per leaf card, more at the outer crown
+            float3 seed = position * float3(13.1, 7.7, 11.3);
+            float shiver = sin(t * 9.0 + seed.x + seed.y) * 0.6 + sin(t * 13.7 + seed.z) * 0.4;
+            offset += float3(shiver, shiver * 0.6, -shiver * 0.8) * Flutter * WindStrength * 0.12 * saturate(reach * 0.4);
+            return offset;
+        }
+
+        stage override void TransformPosition()
+        {
+            base.TransformPosition();
+
+            // The tree's anchor: its origin in world space (the vertex less its model space reach; instance rotation and scale
+            // change this a little, which only shifts the phase)
+            float2 anchor = streams.PositionWS.xz - streams.Position.xz;
+            float3 offset = WindOffset(streams.Position.xyz, anchor, Time);
+            streams.PositionWS.xyz += offset;
+            streams.PreviousPositionOffsetWS += WindOffset(streams.Position.xyz, anchor, Time - TimeStep) - offset;
+        }
+    };
+}
