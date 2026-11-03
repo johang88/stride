@@ -1,0 +1,37 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Rendering.Materials
+{
+    /// <summary>
+    /// Skin without a screen space blur: light scattered under the skin reaches past the shadow terminator, red the furthest
+    /// (diffuse wrapped per channel), and thin parts (ears, nostrils) glow red when
+    /// lit from behind. Added to the material's diffuse model, whose Lambert term it reshapes.
+    /// </summary>
+    shader MaterialSkinScatteringShading<float WrapR, float WrapG, float WrapB, float Translucency> : IMaterialSurfaceShading, Math, ShaderBaseStream, ShadowStream, NormalStream
+    {
+        override float3 ComputeDirectLightContribution()
+        {
+            float3 light = streams.lightColor * streams.lightAttenuation * streams.shadowColor * streams.lightDirectAmbientOcclusion;
+            float3 albedo = streams.matDiffuseVisible;
+            float nDotL = dot(streams.normalWS, streams.lightDirectionWS);
+
+            // Wrapped diffuse per channel, less the diffuse model's Lambert (it is added separately): equal to Lambert facing the
+            // light, so only the terminator warms
+            float3 wrap = float3(WrapR, WrapG, WrapB);
+            float3 wrapped = saturate((nDotL + wrap) / (1.0 + wrap));
+            float3 scattered = albedo * (wrapped - saturate(nDotL));
+
+            // Through thin parts: looking towards the light, on the side facing away from it
+            float towards = pow(saturate(dot(-streams.viewWS, streams.lightDirectionWS)), 8.0);
+            float3 through = albedo * float3(1.0, 0.35, 0.2) * towards * saturate(-nDotL) * Translucency;
+
+            return (scattered + through) / PI * light * streams.matDiffuseSpecularAlphaBlend.x;
+        }
+
+        override float3 ComputeEnvironmentLightContribution()
+        {
+            return float3(0, 0, 0);
+        }
+    };
+}

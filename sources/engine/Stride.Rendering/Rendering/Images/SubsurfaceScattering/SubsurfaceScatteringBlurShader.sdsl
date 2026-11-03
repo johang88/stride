@@ -109,7 +109,8 @@ namespace Stride.Rendering.SubsurfaceScattering
         stage float IterationNumber;
         stage float4x4 ViewProjectionMatrix;    // This is used for debugging only.
         
-        cbuffer PerDraw
+        // (a resource group: buffers can't be cbuffer members)
+        rgroup PerDraw
         {
             // Filter kernel layout is as follows:
             //   - Weights in the RGB channels.
