@@ -49,6 +49,8 @@ namespace Stride.Assets.Textures
 
             public bool PremultiplyAlpha;
 
+            public float AlphaTestCoverage;
+
             public Color ColorKeyColor;
 
             public bool ColorKeyEnabled;
@@ -77,6 +79,7 @@ namespace Stride.Assets.Textures
                 GenerateMipmaps = asset.GenerateMipmaps;
                 if (asset.Type.Alpha != AlphaFormat.None)
                     PremultiplyAlpha = asset.Type.PremultiplyAlpha;
+                AlphaTestCoverage = (asset.Type as ColorTextureType)?.AlphaTestCoverage ?? 0.0f;
                 ColorKeyColor  = asset.Type.ColorKeyColor;
                 ColorKeyEnabled = asset.Type.ColorKeyEnabled;
                 TextureQuality = textureParameters.TextureQuality;
@@ -393,6 +396,10 @@ namespace Stride.Assets.Textures
             {
                 var boxFilteringIsSupported = !texImage.Format.IsSRgb || (MathUtil.IsPow2(targetSize.Width) && MathUtil.IsPow2(targetSize.Height));
                 textureTool.GenerateMipMaps(texImage, boxFilteringIsSupported? Filter.MipMapGeneration.Box: Filter.MipMapGeneration.Linear);
+
+                // Alpha tested textures keep their coverage down the mip chain
+                if (parameters.AlphaTestCoverage > 0)
+                    textureTool.ScaleAlphaToCoverage(texImage, parameters.AlphaTestCoverage);
             }
 
             if (cancellationToken.IsCancellationRequested) // abort the process if cancellation is demanded

@@ -74,6 +74,20 @@ namespace Stride.Assets.Textures
         [Display("Premultiply alpha", "Transparency")]
         public bool PremultiplyAlpha { get; set; } = true;
 
+        /// <summary>
+        /// Gets or sets the alpha test threshold whose coverage the mip levels keep (0: off).
+        /// </summary>
+        /// <userdoc>
+        /// For textures cut out by an alpha test (leaves, hair, fences): the threshold of that test. Each mip level's alpha is
+        /// scaled so as many texels pass it as in the full size texture, instead of the shapes thinning out or filling in
+        /// with distance.
+        /// </userdoc>
+        [DataMember(85)]
+        [DefaultValue(0.0f)]
+        [DataMemberRange(0, 1, 0.05, 0.1, 2)]
+        [Display("Alpha test coverage", "Transparency")]
+        public float AlphaTestCoverage { get; set; }
+
         TextureHint ITextureType.Hint => TextureHint.Color;
     }
 }

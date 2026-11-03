@@ -669,6 +669,69 @@ namespace Stride.TextureConverter
 
 
         /// <summary>
+        /// Rescales the alpha of every mip level so the fraction of texels passing an alpha test stays what it is in the top
+        /// level. Averaging lowers alpha around the cut out shapes, so without this leaves, hair and fences thin out (or turn
+        /// into solid cards, depending on the threshold) further down the mip chain.
+        /// </summary>
+        /// <param name="image">An uncompressed 32 bits per pixel image with alpha, with its mip levels.</param>
+        /// <param name="cutoff">The alpha test threshold (0-1).</param>
+        public unsafe void ScaleAlphaToCoverage(TexImage image, float cutoff)
+        {
+            if (image.Format.IsCompressed || !image.Format.Is32bppWithAlpha || image.MipmapCount <= 1 || cutoff <= 0)
+                return;
+
+            var threshold = Math.Clamp(cutoff, 0.0f, 1.0f) * 255.0f;
+
+            // Sub images are laid out mip major per array slice / face
+            var slices = image.SubImageArray.Length / image.MipmapCount;
+            for (int slice = 0; slice < slices; slice++)
+            {
+                var top = image.SubImageArray[slice * image.MipmapCount];
+                var target = Coverage(top, 1.0f, threshold);
+                for (int mip = 1; mip < image.MipmapCount; mip++)
+                {
+                    var level = image.SubImageArray[slice * image.MipmapCount + mip];
+                    // Coverage grows with the scale: bisect the scale that matches the top level
+                    float low = 0.0f, high = 4.0f;
+                    for (int i = 0; i < 16; i++)
+                    {
+                        var middle = (low + high) * 0.5f;
+                        if (Coverage(level, middle, threshold) < target)
+                            low = middle;
+                        else
+                            high = middle;
+                    }
+                    ScaleAlpha(level, (low + high) * 0.5f);
+                }
+            }
+
+            static float Coverage(TexImage.SubImage level, float scale, float threshold)
+            {
+                long passed = 0;
+                for (int y = 0; y < level.Height; y++)
+                {
+                    var p = (byte*)level.Data + (long)y * level.RowPitch + 3;
+                    for (int x = 0; x < level.Width; x++, p += 4)
+                    {
+                        if (*p * scale > threshold)
+                            passed++;
+                    }
+                }
+                return (float)passed / Math.Max(1, level.Width * level.Height);
+            }
+
+            static void ScaleAlpha(TexImage.SubImage level, float scale)
+            {
+                for (int y = 0; y < level.Height; y++)
+                {
+                    var p = (byte*)level.Data + (long)y * level.RowPitch + 3;
+                    for (int x = 0; x < level.Width; x++, p += 4)
+                        *p = (byte)Math.Min(255.0f, *p * scale + 0.5f);
+                }
+            }
+        }
+
+        /// <summary>
         /// Premultiplies the alpha.
         /// </summary>
         /// <param name="image">The image.</param>
