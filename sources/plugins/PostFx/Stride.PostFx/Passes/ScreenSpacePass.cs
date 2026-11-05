@@ -260,6 +260,7 @@ internal sealed class ScreenSpacePass
         // The image the hits read, at half resolution with mips (prefiltered for rough lobes and long rays)
         reflectionSource.Parameters.Set(PostFxReflectionSourceKeys.SourceScene, scene);
         reflectionSource.Parameters.Set(PostFxReflectionSourceKeys.SourceOutput, targets.ReflectionSourceViews[0]);
+        reflectionSource.Parameters.Set(PostFxReflectionSourceKeys.SourceDistance, targets.PyramidLevelViews[Math.Min(1, targets.PyramidLevels - 1)]);
         reflectionSource.Parameters.Set(PostFxReflectionSourceKeys.SourceSize, sourceSize);
         reflectionSource.Parameters.Set(PostFxReflectionSourceKeys.SourceMaxLuminance, 64.0f / Math.Max(info.Exposure, 1e-6f));
         reflectionSource.ThreadGroupCounts = Groups(sourceSize.X, sourceSize.Y);

@@ -45,6 +45,28 @@ namespace Stride.Water
             return mul(float4(sceneVS, 1.0), ViewInverse).xyz;
         }
 
+        // View space position of the scene at a screen position (0..1) and linear depth
+        float3 WaterViewPositionAtUV(float2 uv, float depth)
+        {
+            float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+            if (WaterIsOrthographic())
+                return float3((ndc - float2(Projection._41, Projection._42)) / float2(Projection._11, Projection._22), -depth);
+            return float3((ndc + float2(Projection._31, Projection._32)) / float2(Projection._11, Projection._22) * depth, -depth);
+        }
+
+        // Screen position (0..1) of a world position
+        float2 WaterScreenUV(float3 positionWS)
+        {
+            float4 clip = mul(float4(positionWS, 1.0), ViewProjection);
+            return clip.xy / clip.w * float2(0.5, -0.5) + 0.5;
+        }
+
+        // Direction of the view ray through a world position
+        float3 WaterViewDirection(float3 positionWS)
+        {
+            return WaterIsOrthographic() ? -normalize(ViewInverse[2].xyz) : normalize(positionWS - Eye.xyz);
+        }
+
         // Size in pixels of the depth buffer (the view's)
         float2 WaterSceneSize()
         {

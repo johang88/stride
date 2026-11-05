@@ -8,8 +8,8 @@ namespace Stride.PostFx
     /// stage, see ForwardShadingKeys.ScreenSpaceLighting). The opaque pass can't write these surfaces' normals, so each pixel
     /// traces its own ray: a direction from its specular lobe (the temporal anti-aliasing averages the frames' samples),
     /// marched through this frame's distance pyramid (the opaque surfaces behind and around it, PostFxScreenTrace); the light
-    /// of a hit comes from the previous frame's image (where the hit was then), prefiltered by the ray's cone. The sky light's
-    /// reflection gives way to it by its confidence.
+    /// of a hit comes from the previous frame's image (where the hit was then, if it was visible there), prefiltered by the
+    /// ray's cone. The sky light's reflection gives way to it by its confidence.
     /// </summary>
     shader PostFxTransparentReflections : MaterialPixelShadingStream, ShaderBaseStream, PositionStream4, Transformation, PostFxCommon, PostFxScreenTrace, PostFxReflectionBrdf
     {
@@ -100,6 +100,19 @@ namespace Stride.PostFx
                 return;
             float2 previousUv = float2(previousClip.x / previousClip.w * 0.5 + 0.5, 0.5 - previousClip.y / previousClip.w * 0.5);
 
+            // Was the hit what the previous frame showed there? (its closest distance, in the image's alpha) Something in front
+            // then (foreground plants and characters move across the view between frames) or a moving hit would lend the
+            // reflection its colors: the sky light's reflection stays instead
+            float2 sourceSize;
+            float sourceLevels;
+            PostFxTransparentSource.GetDimensions(0, sourceSize.x, sourceSize.y, sourceLevels);
+            int2 sourceTexel = clamp(int2(previousUv * sourceSize), int2(0, 0), int2(sourceSize) - 1);
+            float seen = PostFxTransparentSource.Load(int3(sourceTexel, 0)).a;
+            float tolerance = 0.15 + 0.04 * previousClip.w;
+            float visible = saturate(2.0 - abs(seen - previousClip.w) / tolerance);
+            if (visible <= 0.0)
+                return;
+
             // Prefiltered by the lobe's cone over the ray's length (the image is at half resolution: its level 0 spans 2 pixels)
             float rayLength = length(hitView - position);
             float pixelAngle = 2.0 * info.y * PostFxTransparentSize.w;
@@ -108,7 +121,7 @@ namespace Stride.PostFx
             float3 light = PostFxTransparentSource.SampleLevel(PostFxTransparentLinear, previousUv, level).rgb;
             float2 edge = saturate(min(hit.xy, 1.0 - hit.xy) * 25.0) * saturate(min(previousUv, 1.0 - previousUv) * 25.0);
             float traced = saturate((PostFxTransparentMaxRoughness - roughness) * 10.0);
-            streams.screenSpaceSpecular = float4(light, saturate(edge.x * edge.y * traced * PostFxTransparentStrength));
+            streams.screenSpaceSpecular = float4(light, saturate(edge.x * edge.y * traced * visible * PostFxTransparentStrength));
         }
     };
 }

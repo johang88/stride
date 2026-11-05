@@ -5,10 +5,9 @@ namespace Stride.Water
 {
     /// <summary>
     /// The water between the surface and the opaque scene behind it, before lighting (MaterialTransparencyWaterFeature):
-    /// the scene seen through the surface, displaced by its normal (refraction; objects in front of the water are left out),
-    /// how much of it gets through the water (Beer-Lambert extinction over the light's path down to the floor and up
-    /// along the refracted view), and the fade at
-    /// the shoreline. The in-scattered light builds up where the scene's light doesn't get through: the material's diffuse
+    /// the scene seen through the surface, refracted by its normal (Snell's law, traced down to the floor; what's above the
+    /// water is left out), how much of it gets through the water (Beer-Lambert extinction over the light's path down to the
+    /// floor and up along the refracted view), and the fade at the shoreline. The in-scattered light builds up where the scene's light doesn't get through: the material's diffuse
     /// color (the water's scattering albedo) is scaled by the opacity, then lit like any surface.
     /// Needs the scene depth and color during the transparent stage (ForwardRenderer.BindDepthAsResourceDuringTransparentRendering
     /// and BindOpaqueAsResourceDuringTransparentRendering).
@@ -21,10 +20,21 @@ namespace Stride.Water
             stage float3 WaterExtinction;
             // 1 / depth (m) over which the water fades in from the shoreline
             stage float WaterEdgeFade;
-            // Displacement (m) of the scene seen through a surface tilted by 45 degrees
+            // Scale of the ripples' tilt for the refraction (1: physical)
             stage float WaterRefraction;
-            // 1 / depth (m) at which the refraction reaches its full displacement
-            stage float WaterRefractionDepth;
+        }
+
+        // Where a ray bent into the water at the surface reaches the given depth below it, as found in the scene there: false if
+        // that's off screen or above the water (then nothing under the water is seen there)
+        bool WaterRefractedFloor(float3 positionWS, float3 bent, float below, out float2 floorUV, out float3 floorWS)
+        {
+            floorUV = WaterScreenUV(positionWS + bent * (below / -bent.y));
+            floorWS = 0;
+            if (any(floorUV != saturate(floorUV)))
+                return false;
+            float depth = WaterSceneDepthAtUV(floorUV);
+            floorWS = mul(float4(WaterViewPositionAtUV(floorUV, depth), 1.0), ViewInverse).xyz;
+            return floorWS.y <= positionWS.y;
         }
 
         override void Compute()
@@ -34,30 +44,39 @@ namespace Stride.Water
             float2 size = WaterSceneSize();
             float2 uv = streams.ShadingPosition.xy / size;
             float3 surfaceVS = mul(float4(positionWS, 1.0), View).xyz;
-            float surfaceDepth = -surfaceVS.z;
 
             float sceneDepth = WaterSceneDepthAt(pixel);
             float3 sceneWS = WaterScenePositionWS(surfaceVS, sceneDepth);
             float floorDepth = positionWS.y - sceneWS.y;
             streams.waterEdge = smoothstep(0.0, 1.0, saturate(floorDepth * WaterEdgeFade));
 
-            // The surface's tilt from its geometric normal, in the view plane
+            // Refraction (Snell, water's index): the view ray bends into the water by the surface's normal (the ripples' tilt
+            // from the geometric normal scaled by WaterRefraction), down to the depth of the floor seen straight below, then
+            // once more to the depth of the floor found there. The floor looks shallower, what stands in the water bends at
+            // the surface, ripples make it waver. Where the bent ray finds something above the water, the straight view stays.
+            float3 view = WaterViewDirection(positionWS);
+            float3 flatNormal = normalize(streams.meshNormalWS);
             float3 normalWS = normalize(mul(streams.matNormal, streams.tangentToWorld));
-            float3 tilt = mul(normalWS - normalize(streams.meshNormalWS), (float3x3)View);
-            float displacement = WaterRefraction * saturate(floorDepth * WaterRefractionDepth);
-            float2 offset = tilt.xy * displacement * float2(Projection._11, -Projection._22) * 0.5;
-            if (!WaterIsOrthographic())
-                offset /= max(surfaceDepth, 0.1);
+            float3 bentNormal = normalize(flatNormal + (normalWS - flatNormal) * WaterRefraction);
+            if (dot(view, bentNormal) > 0.0)
+                bentNormal = flatNormal;
+            float3 bent = refract(view, bentNormal, 1.0 / 1.333);
+            bent.y = min(bent.y, -0.05);
 
-            float2 refractedUV = uv + offset;
-            float refractedDepth = WaterSceneDepthAtUV(refractedUV);
-            // (what's in front of the surface isn't under the water: keep the straight view there)
-            if (refractedDepth < surfaceDepth || any(refractedUV != saturate(refractedUV)))
+            float2 refractedUV = uv;
+            float3 refractedWS = sceneWS;
+            float2 candidateUV;
+            float3 candidateWS;
+            if (floorDepth > 0.0 && WaterRefractedFloor(positionWS, bent, floorDepth, candidateUV, candidateWS))
             {
-                refractedUV = uv;
-                refractedDepth = sceneDepth;
+                refractedUV = candidateUV;
+                refractedWS = candidateWS;
+                if (WaterRefractedFloor(positionWS, bent, 0.5 * (floorDepth + positionWS.y - candidateWS.y), candidateUV, candidateWS))
+                {
+                    refractedUV = candidateUV;
+                    refractedWS = candidateWS;
+                }
             }
-            float3 refractedWS = WaterScenePositionWS(surfaceVS, refractedDepth);
             // The light seen through the water travelled down to the floor first (mostly from above), then up along the view
             float path = length(refractedWS - positionWS) + max(positionWS.y - refractedWS.y, 0.0) * 1.2;
 

@@ -13,7 +13,7 @@ using Stride.Shaders;
 namespace Stride.Water.Materials;
 
 /// <summary>
-/// Water seen through its surface: the scene behind it refracted by the surface's normal, dimmed and tinted by the water on
+/// Water seen through its surface: the scene behind it refracted by the surface's normal (Snell's law down to the floor), dimmed and tinted by the water on
 /// the way (extinction over the actual path through the water), light scattered in the water where the scene's doesn't get
 /// through (the material's diffuse color is the water's color, lit like a surface), reflections over it by Fresnel (the
 /// material's specular model, e.g. metalness 0 for water's 2% reflectance), and a soft edge at the shoreline.
@@ -39,17 +39,11 @@ public sealed class MaterialTransparencyWaterFeature : MaterialFeature, IMateria
     [DataMemberRange(0.01, 1000, 0.05, 0.5, 2)]
     public float TransmittanceDistance { get; set; } = 1.5f;
 
-    /// <userdoc>How far (meters) the ripples displace the scene seen through the water.</userdoc>
+    /// <userdoc>How much the ripples bend the view into the water (1: physical, as water's index of refraction does; more exaggerates the wavering of the floor). A flat surface refracts physically whatever this is.</userdoc>
     [DataMember(30)]
-    [DefaultValue(0.08f)]
-    [DataMemberRange(0, 2, 0.005, 0.05, 3)]
-    public float Refraction { get; set; } = 0.08f;
-
-    /// <userdoc>Depth (meters) at which the refraction reaches its full displacement (less at the shoreline, where the floor is close).</userdoc>
-    [DataMember(40)]
-    [DefaultValue(0.4f)]
-    [DataMemberRange(0.01, 100, 0.01, 0.1, 2)]
-    public float RefractionDepth { get; set; } = 0.4f;
+    [DefaultValue(1.0f)]
+    [DataMemberRange(0, 10, 0.05, 0.5, 2)]
+    public float Refraction { get; set; } = 1.0f;
 
     /// <userdoc>Depth (meters) over which the water fades in from the shoreline, reflections included.</userdoc>
     [DataMember(50)]
@@ -68,8 +62,7 @@ public sealed class MaterialTransparencyWaterFeature : MaterialFeature, IMateria
         var extinction = new Vector3(Extinction(TransmittanceColor.R), Extinction(TransmittanceColor.G), Extinction(TransmittanceColor.B)) / distance;
         context.Parameters.Set(MaterialWaterVolumeKeys.WaterExtinction, extinction);
         context.Parameters.Set(MaterialWaterVolumeKeys.WaterEdgeFade, 1.0f / Math.Max(EdgeFade, 1e-4f));
-        context.Parameters.Set(MaterialWaterVolumeKeys.WaterRefraction, Refraction);
-        context.Parameters.Set(MaterialWaterVolumeKeys.WaterRefractionDepth, 1.0f / Math.Max(RefractionDepth, 1e-3f));
+        context.Parameters.Set(MaterialWaterVolumeKeys.WaterRefraction, Math.Max(Refraction, 0.0f));
 
         // After the surface attributes (normal, diffuse), before lighting
         context.AddShaderSource(MaterialShaderStage.Pixel, new ShaderClassSource("MaterialWaterVolume"));
