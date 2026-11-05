@@ -43,9 +43,11 @@ namespace Stride.Atmosphere.Fog
             stage float3 FogApplyEye;
             // Aerial perspective volume (see AtmosphereCameraVolume): x = kilometers per slice, y = distance scale, z = 1 when there is one
             stage float4 FogApplyAerialPerspective;
-            // Distance haze: x = extinction per meter, y = distance it starts at, w = 1 when there is any; FogApplyHazeTint.rgb = tint
+            // Distance haze: x = extinction per meter at the base height, y = distance it starts at, z = height falloff (per meter),
+            // w = 1 when there is any; FogApplyHazeTint: rgb = tint, w = base height; FogApplyHazeMaximum = the most it hides
             stage float4 FogApplyHaze;
             stage float4 FogApplyHazeTint;
+            stage float FogApplyHazeMaximum;
         };
 
         stage SamplerState FogApplySampler
@@ -105,9 +107,14 @@ namespace Stride.Atmosphere.Fog
                 fog.rgb += fog.a * aerial.rgb;
                 fog.a *= aerial.a;
                 // Distance haze: the surface fades into the sky light behind it
-                if (FogApplyHaze.w > 0.0)
+                float rayLength = length(ray);
+                if (FogApplyHaze.w > 0.0 && rayLength > FogApplyHaze.y)
                 {
-                    float haze = 1.0 - exp(-max(length(ray) - FogApplyHaze.y, 0.0) * FogApplyHaze.x);
+                    // (through air thinning with height from the start distance on: hazy valleys, clearer peaks)
+                    float3 direction = ray / rayLength;
+                    float opticalDepth = FogHeightOpticalDepth(FogApplyEye + direction * FogApplyHaze.y, direction * (rayLength - FogApplyHaze.y),
+                                                               FogApplyHaze.x, FogApplyHaze.z, FogApplyHazeTint.w);
+                    float haze = min(1.0 - exp(-opticalDepth), FogApplyHazeMaximum);
                     fog.rgb += fog.a * FogHazeLight(ray) * FogApplyHazeTint.rgb * haze;
                     fog.a *= 1.0 - haze;
                 }

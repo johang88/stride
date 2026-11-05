@@ -102,6 +102,12 @@ public sealed class RenderVolumetricFog
     public float DistanceHazeStart;
 
     public Color3 DistanceHazeTint;
+
+    public float DistanceHazeBaseHeight;
+
+    public float DistanceHazeHeightFalloff;
+
+    public float DistanceHazeMaximum;
 }
 
 /// <summary>

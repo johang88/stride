@@ -334,8 +334,10 @@ public sealed class VolumetricFogRenderer : RendererCoreBase
             Eye = eye,
             AerialPerspective = environment?.AerialPerspective,
             AerialPerspectiveParameters = aerial,
-            Haze = new Vector4(Math.Max(0, fog.DistanceHaze), Math.Max(0, fog.DistanceHazeStart), 0, fog.DistanceHaze > 0 ? 1 : 0),
-            HazeTint = new Vector4((Vector3)fog.DistanceHazeTint, 0),
+            Haze = new Vector4(Math.Max(0, fog.DistanceHaze), Math.Max(0, fog.DistanceHazeStart), Math.Max(0, fog.DistanceHazeHeightFalloff),
+                fog.DistanceHaze > 0 ? 1 : 0),
+            HazeTint = new Vector4((Vector3)fog.DistanceHazeTint, fog.DistanceHazeBaseHeight),
+            HazeMaximum = Math.Clamp(fog.DistanceHazeMaximum, 0, 1),
         };
         renderFeature?.ViewParameters.Remove(view);
         renderFeature?.ViewParameters.Add(view, state.Parameters);
@@ -848,11 +850,14 @@ public struct VolumetricFogViewParameters
     public Vector4 AerialPerspectiveParameters;
 
     /// <summary>
-    /// Distance haze: x = extinction per meter, y = start distance, w = 1 when there is any (see VolumetricFogApplyBase).
+    /// Distance haze: x = extinction per meter, y = start distance, z = height falloff, w = 1 when there is any; tint rgb and the
+    /// base height in w; the most it hides (see VolumetricFogApplyBase).
     /// </summary>
     public Vector4 Haze;
 
     public Vector4 HazeTint;
+
+    public float HazeMaximum;
 
     internal readonly void ApplyTo(ParameterCollection parameters, GraphicsDevice device)
     {
@@ -873,5 +878,6 @@ public struct VolumetricFogViewParameters
         parameters.Set(VolumetricFogApplyBaseKeys.FogApplyAerialPerspective, AerialPerspective != null ? AerialPerspectiveParameters : Vector4.Zero);
         parameters.Set(VolumetricFogApplyBaseKeys.FogApplyHaze, Haze);
         parameters.Set(VolumetricFogApplyBaseKeys.FogApplyHazeTint, HazeTint);
+        parameters.Set(VolumetricFogApplyBaseKeys.FogApplyHazeMaximum, HazeMaximum);
     }
 }

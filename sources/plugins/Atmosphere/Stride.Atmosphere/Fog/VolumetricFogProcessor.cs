@@ -58,6 +58,9 @@ public sealed class VolumetricFogProcessor : EntityProcessor<VolumetricFogCompon
         renderFog.DistanceHaze = active.DistanceHaze * 0.001f;
         renderFog.DistanceHazeStart = active.DistanceHazeStart;
         renderFog.DistanceHazeTint = active.DistanceHazeTint;
+        renderFog.DistanceHazeBaseHeight = active.DistanceHazeBaseHeight;
+        renderFog.DistanceHazeHeightFalloff = active.DistanceHazeHeightFalloff;
+        renderFog.DistanceHazeMaximum = active.DistanceHazeMaximum;
         VisibilityGroup.Tags.Set(VolumetricFogRenderer.CurrentFog, renderFog);
     }
 }

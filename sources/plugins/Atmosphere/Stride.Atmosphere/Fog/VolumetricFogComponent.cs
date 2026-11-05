@@ -173,4 +173,31 @@ public sealed class VolumetricFogComponent : ActivableEntityComponent
     [DataMember(170)]
     [Display("Tint", "Distance haze")]
     public Color3 DistanceHazeTint { get; set; } = new(1.0f, 1.0f, 1.0f);
+
+    /// <summary>
+    /// World height where the distance haze has its density.
+    /// </summary>
+    [DataMember(180)]
+    [DefaultValue(0.0f)]
+    [Display("Base height", "Distance haze")]
+    public float DistanceHazeBaseHeight { get; set; }
+
+    /// <summary>
+    /// How fast the distance haze thins out above its base height (per meter; 0: the same at every height). Hazy valleys and
+    /// mountain feet under clear peaks: 0.003 halves it every 230 m.
+    /// </summary>
+    [DataMember(190)]
+    [DefaultValue(0.0f)]
+    [DataMemberRange(0, 0.1, 0.0005, 0.002, 4)]
+    [Display("Height falloff", "Distance haze")]
+    public float DistanceHazeHeightFalloff { get; set; }
+
+    /// <summary>
+    /// The most the distance haze hides of a surface (0-1): below 1 the farthest ranges keep some of their shape.
+    /// </summary>
+    [DataMember(200)]
+    [DefaultValue(1.0f)]
+    [DataMemberRange(0, 1, 0.01, 0.1, 2)]
+    [Display("Maximum", "Distance haze")]
+    public float DistanceHazeMaximum { get; set; } = 1.0f;
 }
