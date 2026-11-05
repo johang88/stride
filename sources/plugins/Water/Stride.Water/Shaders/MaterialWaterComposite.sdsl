@@ -5,7 +5,7 @@ namespace Stride.Water
 {
     /// <summary>
     /// The water's color after lighting (MaterialTransparencyWaterFeature): its lit surface (reflections, in-scattered light)
-    /// over the refracted scene that gets through the water and the surface (1 - Fresnel), faded out at the shoreline.
+    /// over the refracted scene that gets through the water, the surface (1 - Fresnel) and the foam, faded out at the shoreline.
     /// </summary>
     /// <remarks>
     /// Output with premultiplied alpha blending over the unrefracted scene: alpha = how much of it the water hides (gray), and
@@ -18,7 +18,7 @@ namespace Stride.Water
         override void Compute()
         {
             float fresnel = 0.02 + 0.98 * pow(1.0 - saturate(streams.NdotV), 5.0);
-            float3 transmitted = streams.waterTransmittance * (1.0 - fresnel);
+            float3 transmitted = streams.waterTransmittance * (1.0 - fresnel) * (1.0 - streams.waterFoam);
             float hidden = 1.0 - dot(transmitted, 1.0 / 3.0);
             float edge = streams.waterEdge;
 

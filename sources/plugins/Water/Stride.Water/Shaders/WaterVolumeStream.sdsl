@@ -16,5 +16,7 @@ namespace Stride.Water
         stage stream float3 waterBackground;
         // 0 at the shoreline, 1 where the water is deeper than its edge fade
         stage stream float waterEdge;
+        // Foam covering the surface (0..1)
+        stage stream float waterFoam;
     };
 }

@@ -110,6 +110,26 @@ public sealed class ComputeWaterNormal : ComputeNode, IComputeColor
     [DataMemberRange(0, 4, 0.01, 0.1, 2)]
     public float DynamicRipples { get; set; } = 1.0f;
 
+    /// <userdoc>The water flows along the mesh's V texture coordinate (e.g. downstream on a river ribbon from a terrain spline): the ripples are carried by it instead of drifting with the wind. Laid out in world meters whatever the Space.</userdoc>
+    [DataMember(130)]
+    [DefaultValue(false)]
+    [Display("Flow along V", "Flow")]
+    public bool Flow { get; set; }
+
+    /// <userdoc>Speed of the flow (m/s) along increasing V; negative flows the other way.</userdoc>
+    [DataMember(140)]
+    [DefaultValue(0.8f)]
+    [DataMemberRange(-20, 20, 0.05, 0.25, 2)]
+    [Display("Speed", "Flow")]
+    public float FlowSpeed { get; set; } = 0.8f;
+
+    /// <userdoc>How much slower the water flows at the edges of the mesh (U 0 and 1) than in its middle (0: same speed, 1: still at the edges).</userdoc>
+    [DataMember(150)]
+    [DefaultValue(0.6f)]
+    [DataMemberRange(0, 1, 0.05, 0.1, 2)]
+    [Display("Edge slowdown", "Flow")]
+    public float FlowEdgeSlowdown { get; set; } = 0.6f;
+
     public bool HasChanged => false;
 
     public override ShaderSource GenerateShaderSource(ShaderGeneratorContext context, MaterialComputeColorKeys baseKeys)
@@ -131,7 +151,8 @@ public sealed class ComputeWaterNormal : ComputeNode, IComputeColor
             WaterMaterialKeys.Set(context, WaterMaterialKeys.NormalLayer2, layer2),
             WaterMaterialKeys.Set(context, WaterMaterialKeys.NormalGusts, gusts),
             WaterMaterialKeys.Set(context, WaterMaterialKeys.NormalSettings, settings),
-            Space == WaterNormalSpace.World);
+            WaterMaterialKeys.Set(context, WaterMaterialKeys.NormalFlow, new Vector4(FlowSpeed, Math.Clamp(FlowEdgeSlowdown, 0, 1), 0, 0)),
+            Space == WaterNormalSpace.World || Flow, Flow);
     }
 
     private static Vector4 Layer(float scale, float angle, float speed, float strength)

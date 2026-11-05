@@ -1,0 +1,33 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Water
+{
+    /// <summary>
+    /// Water flowing along a mesh: the direction its texture V coordinate runs (the mesh's bitangent, e.g. downstream on a
+    /// river ribbon), slower towards the edges (U 0 and 1). Textures are carried along by the flow with two phases (flow
+    /// mapping): each phase drifts for a period and fades out as it restarts, half a period apart, so the pattern never
+    /// stretches out where the speed varies.
+    /// </summary>
+    shader WaterFlow : NormalStream, Texturing, Global
+    {
+        // World velocity (XZ, m/s) of the water at the pixel: speed along V, edge slowdown 0 (none) to 1 (still at the edges)
+        float2 WaterFlowVelocity(float speed, float edgeSlowdown)
+        {
+            float3 along = streams.tangentToWorld[1];
+            float2 direction = along.xz * rsqrt(max(dot(along.xz, along.xz), 1e-8));
+            float across = streams.TexCoord.x * 2.0 - 1.0;
+            return direction * speed * (1.0 - edgeSlowdown * across * across);
+        }
+
+        // The two phases at a time: how far (in periods, -0.5..0.5) each has drifted, and their weights (summing to 1)
+        void WaterFlowPhases(float period, out float2 drift, out float2 weights)
+        {
+            float t = Time / max(period, 1e-3);
+            float2 phase = frac(float2(t, t + 0.5));
+            drift = phase - 0.5;
+            weights.x = 1.0 - abs(2.0 * phase.x - 1.0);
+            weights.y = 1.0 - weights.x;
+        }
+    };
+}

@@ -7,16 +7,18 @@ namespace Stride.Water
     /// Animated normal of a water surface, for the normal map of a material (tangent space, scaled and biased): three layers
     /// of a tileable ripple normal map drifting at different scales, angles and speeds, added as slopes (derivative blending),
     /// patchy calm and rippled areas drifting with the wind (gusts), faded with distance, plus the dynamic ripples of the
-    /// view (characters wading, WaterRippleRenderFeature).
+    /// view (characters wading, WaterRippleRenderFeature). Flowing water (TFlow): the layers are carried along the mesh's V
+    /// direction instead of drifting with the wind (WaterFlow, two phases each).
     /// </summary>
     /// <remarks>
     /// TNormalMap: the ripple normal map (X/Y used). TLayer0..2: float4 (direction cos / scale, sin / scale, drift / scale per
     /// second, strength). TGusts: float4 (1 / patch size, amount, drift per second in patches along X / Z).
     /// TSettings: float4 (strength, 1 / distance of half strength, dynamic ripple strength, unused).
     /// TWorldSpace: the layers are laid along world X/Z in meters (else along the mesh's texture coordinates).
+    /// TFlowSettings: float4 (speed m/s along V, edge slowdown, unused, unused); TFlow: flowing.
     /// </remarks>
-    shader ComputeWaterNormal<LinkType TNormalMap, LinkType TLayer0, LinkType TLayer1, LinkType TLayer2, LinkType TGusts, LinkType TSettings, bool TWorldSpace>
-        : ComputeColor, DynamicTexture<TNormalMap, PerMaterial>, Texturing, PositionStream4, NormalStream, Transformation, Global, WaterRipples
+    shader ComputeWaterNormal<LinkType TNormalMap, LinkType TLayer0, LinkType TLayer1, LinkType TLayer2, LinkType TGusts, LinkType TSettings, LinkType TFlowSettings, bool TWorldSpace, bool TFlow>
+        : ComputeColor, DynamicTexture<TNormalMap, PerMaterial>, Texturing, PositionStream4, NormalStream, Transformation, Global, WaterRipples, WaterFlow
     {
         cbuffer PerMaterial
         {
@@ -30,21 +32,36 @@ namespace Stride.Water
             stage float4 Gusts;
             [Link("TSettings")]
             stage float4 Settings;
+            [Link("TFlowSettings")]
+            stage float4 FlowSettings;
         }
 
-        // Slope of one layer at a point (world meters or texture coordinates), in the point's axes
-        float2 LayerSlope(float2 position, float4 layer, float time)
+        // Slope of one layer at a point (world meters or texture coordinates), in the point's axes; shift: added to the layer's
+        // texture coordinates
+        float2 LayerSlope(float2 position, float4 layer, float2 shift)
         {
-            if (layer.w == 0.0)
-                return 0;
             float2 axis = layer.xy;
-            float2 uv = float2(dot(position, axis), dot(position, float2(-axis.y, axis.x))) + float2(time * layer.z, 0.0);
+            float2 uv = float2(dot(position, axis), dot(position, float2(-axis.y, axis.x))) + shift;
             float2 n = Texture.Sample(AnisotropicRepeatSampler, uv).xy * 2.0 - 1.0;
             float nz = sqrt(saturate(1.0 - dot(n, n)));
             float2 slope = -n / max(nz, 0.25);
             // The layer's axes back to the point's (a rotation: normal maps keep their slopes whatever their tiling)
             float2 direction = axis * rsqrt(max(dot(axis, axis), 1e-12));
             return layer.w * float2(direction.x * slope.x - direction.y * slope.y, direction.y * slope.x + direction.x * slope.y);
+        }
+
+        // A layer drifting with the wind, or carried by the flow (two phases)
+        float2 LayerSlopeAt(float2 position, float4 layer, float2 velocity, float period, float2 seed, float time)
+        {
+            if (layer.w == 0.0)
+                return 0;
+            if (!TFlow)
+                return LayerSlope(position, layer, float2(time * layer.z, 0.0));
+            float2 drift;
+            float2 weights;
+            WaterFlowPhases(period, drift, weights);
+            return LayerSlope(position - velocity * (drift.x * period), layer, seed) * weights.x
+                 + LayerSlope(position - velocity * (drift.y * period), layer, seed + float2(0.43, 0.29)) * weights.y;
         }
 
         float GustHash(float2 cell)
@@ -101,7 +118,10 @@ namespace Stride.Water
             float3 positionWS = streams.PositionWS.xyz;
             float2 position = TWorldSpace ? positionWS.xz : streams.TexCoord;
 
-            float2 slope = LayerSlope(position, Layer0, time) + LayerSlope(position, Layer1, time) + LayerSlope(position, Layer2, time);
+            float2 velocity = TFlow ? WaterFlowVelocity(FlowSettings.x, FlowSettings.y) : 0;
+            float2 slope = LayerSlopeAt(position, Layer0, velocity, 1.9, float2(0.0, 0.0), time)
+                         + LayerSlopeAt(position, Layer1, velocity, 1.3, float2(0.31, 0.77), time)
+                         + LayerSlopeAt(position, Layer2, velocity, 2.7, float2(0.62, 0.15), time);
             float distanceFade = 1.0 / (1.0 + length(positionWS - Eye.xyz) * Settings.y);
             slope *= Settings.x * distanceFade * GustMask(positionWS.xz, time);
 

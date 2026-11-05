@@ -1,0 +1,67 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Water
+{
+    /// <summary>
+    /// Foam coverage (0..1) of a water surface: a tileable foam pattern at two scales, carried by the flow (WaterFlow) or
+    /// drifting, thresholded by how close the floor is under the surface (scene depth: banks, rocks, posts, legs), dense at
+    /// the shore and breaking up into lace further out, plus a little everywhere. Transparent stage only.
+    /// </summary>
+    /// <remarks>
+    /// TFoamMap: the foam pattern (red). TShape: float4 (1 / pattern size m, 1 / depth of the shore band m, shore amount,
+    /// softness). TFlowSettings: float4 (flow speed along V m/s, edge slowdown, open water amount, drift along X m/s when
+    /// not flowing). TFlow: carried by the flow along the mesh's V.
+    /// </remarks>
+    shader ComputeWaterFoam<LinkType TFoamMap, LinkType TShape, LinkType TFlowSettings, bool TFlow>
+        : ComputeColor, DynamicTexture<TFoamMap, PerMaterial>, WaterSceneDepth, WaterFlow
+    {
+        cbuffer PerMaterial
+        {
+            [Link("TShape")]
+            stage float4 FoamShape;
+            [Link("TFlowSettings")]
+            stage float4 FoamFlowSettings;
+        }
+
+        float FoamPattern(float2 position)
+        {
+            float coarse = Texture.Sample(AnisotropicRepeatSampler, position * FoamShape.x).r;
+            float fine = Texture.Sample(AnisotropicRepeatSampler, position * (FoamShape.x * 2.7) + float2(0.37, 0.61)).r;
+            return coarse * 0.65 + fine * 0.35;
+        }
+
+        override float4 Compute()
+        {
+            float3 positionWS = streams.PositionWS.xyz;
+            float3 surfaceVS = mul(float4(positionWS, 1.0), View).xyz;
+            float sceneDepth = WaterSceneDepthAt(int2(streams.ShadingPosition.xy));
+            float floorDepth = positionWS.y - WaterScenePositionWS(surfaceVS, sceneDepth).y;
+            float shore = 1.0 - saturate(floorDepth * FoamShape.y);
+
+            float2 position = positionWS.xz;
+            float pattern;
+            if (TFlow)
+            {
+                float2 velocity = WaterFlowVelocity(FoamFlowSettings.x, FoamFlowSettings.y);
+                float period = 3.1;
+                float2 drift;
+                float2 weights;
+                WaterFlowPhases(period, drift, weights);
+                pattern = FoamPattern(position - velocity * (drift.x * period)) * weights.x
+                        + FoamPattern(position - velocity * (drift.y * period) + float2(1.7, 3.1)) * weights.y;
+                // (two phases of a pattern average towards gray: restore its contrast)
+                float spread = sqrt(weights.x * weights.x + weights.y * weights.y);
+                pattern = 0.5 + (pattern - 0.5) / spread;
+            }
+            else
+            {
+                pattern = FoamPattern(position - float2(FoamFlowSettings.w * Time, 0.0));
+            }
+
+            float level = saturate(shore * shore * FoamShape.z + FoamFlowSettings.z);
+            float foam = smoothstep(1.0 - level, 1.0 - level + FoamShape.w, pattern) * step(0.001, level);
+            return float4(foam, foam, foam, foam);
+        }
+    };
+}

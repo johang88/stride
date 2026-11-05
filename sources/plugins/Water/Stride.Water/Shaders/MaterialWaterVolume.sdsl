@@ -8,14 +8,20 @@ namespace Stride.Water
     /// the scene seen through the surface, refracted by its normal (Snell's law, traced down to the floor; what's above the
     /// water is left out), how much of it gets through the water (Beer-Lambert extinction over the light's path down to the
     /// floor and up along the refracted view), and the fade at the shoreline. The in-scattered light builds up where the scene's light doesn't get through: the material's diffuse
-    /// color (the water's scattering albedo) is scaled by the opacity, then lit like any surface.
+    /// color (the water's scattering albedo) is scaled by the opacity, then lit like any surface. Foam (WaterFoam coverage)
+    /// covers it with its own color, rough.
     /// Needs the scene depth and color during the transparent stage (ForwardRenderer.BindDepthAsResourceDuringTransparentRendering
     /// and BindOpaqueAsResourceDuringTransparentRendering).
     /// </summary>
     shader MaterialWaterVolume : IMaterialSurfacePixel, MaterialPixelStream, NormalStream, WaterSceneDepth, OpaqueBase, WaterVolumeStream
     {
+        // Foam coverage (red, 0..1)
+        compose ComputeColor WaterFoam;
+
         cbuffer PerMaterial
         {
+            // Color of the foam
+            stage float3 WaterFoamColor;
             // Extinction coefficient per channel (1/m)
             stage float3 WaterExtinction;
             // 1 / depth (m) over which the water fades in from the shoreline
@@ -84,7 +90,10 @@ namespace Stride.Water
             streams.waterRefracted = OpaqueRenderTarget.SampleLevel(LinearSampler, refractedUV, 0.0).rgb;
             streams.waterBackground = OpaqueRenderTarget.Load(int3(pixel, 0)).rgb;
 
-            streams.matDiffuse.rgb *= 1.0 - streams.waterTransmittance;
+            float foam = saturate(WaterFoam.Compute().r);
+            streams.waterFoam = foam;
+            streams.matDiffuse.rgb = lerp(streams.matDiffuse.rgb * (1.0 - streams.waterTransmittance), WaterFoamColor, foam);
+            streams.matGlossiness = lerp(streams.matGlossiness, 0.3, foam);
         }
     };
 }

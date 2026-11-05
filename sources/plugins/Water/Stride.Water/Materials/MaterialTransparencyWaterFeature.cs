@@ -8,6 +8,7 @@ using Stride.Core.Annotations;
 using Stride.Core.Mathematics;
 using Stride.Graphics;
 using Stride.Rendering.Materials;
+using Stride.Rendering.Materials.ComputeColors;
 using Stride.Shaders;
 
 namespace Stride.Water.Materials;
@@ -51,6 +52,17 @@ public sealed class MaterialTransparencyWaterFeature : MaterialFeature, IMateria
     [DataMemberRange(0.001, 10, 0.005, 0.05, 3)]
     public float EdgeFade { get; set; } = 0.06f;
 
+    /// <userdoc>Foam coverage of the surface (0..1), e.g. a Water Foam node. None: no foam.</userdoc>
+    [DataMember(60)]
+    [Display("Foam", "Foam")]
+    public IComputeScalar Foam { get; set; }
+
+    /// <userdoc>Color of the foam.</userdoc>
+    [DataMember(70)]
+    [InlineProperty]
+    [Display("Color", "Foam")]
+    public Color3 FoamColor { get; set; } = new(0.75f, 0.75f, 0.72f);
+
     public override void GenerateShader(MaterialGeneratorContext context)
     {
         if (context.MaterialPass.BlendState == null)
@@ -65,7 +77,12 @@ public sealed class MaterialTransparencyWaterFeature : MaterialFeature, IMateria
         context.Parameters.Set(MaterialWaterVolumeKeys.WaterRefraction, Math.Max(Refraction, 0.0f));
 
         // After the surface attributes (normal, diffuse), before lighting
-        context.AddShaderSource(MaterialShaderStage.Pixel, new ShaderClassSource("MaterialWaterVolume"));
+        context.Parameters.Set(MaterialWaterVolumeKeys.WaterFoamColor, (Vector3)FoamColor);
+        var volume = new ShaderMixinSource();
+        volume.Mixins.Add(new ShaderClassSource("MaterialWaterVolume"));
+        var foam = Foam ?? new ComputeFloat(0.0f);
+        volume.AddComposition("WaterFoam", foam.GenerateShaderSource(context, new MaterialComputeColorKeys(WaterMaterialKeys.FoamAmountMap, WaterMaterialKeys.FoamAmountValue, Color.Black)));
+        context.AddShaderSource(MaterialShaderStage.Pixel, volume);
         if (!context.Tags.Get(HasFinalCallback))
         {
             context.Tags.Set(HasFinalCallback, true);

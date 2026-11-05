@@ -21,6 +21,12 @@ public static class WaterMaterialKeys
     public static readonly ValueParameterKey<Vector4> NormalLayer2 = ParameterKeys.NewValue<Vector4>();
     public static readonly ValueParameterKey<Vector4> NormalGusts = ParameterKeys.NewValue<Vector4>();
     public static readonly ValueParameterKey<Vector4> NormalSettings = ParameterKeys.NewValue<Vector4>();
+    public static readonly ValueParameterKey<Vector4> NormalFlow = ParameterKeys.NewValue<Vector4>();
+    public static readonly ObjectParameterKey<Texture> FoamMap = ParameterKeys.NewObject<Texture>();
+    public static readonly ValueParameterKey<Vector4> FoamShape = ParameterKeys.NewValue<Vector4>();
+    public static readonly ValueParameterKey<Vector4> FoamFlow = ParameterKeys.NewValue<Vector4>();
+    public static readonly ObjectParameterKey<Texture> FoamAmountMap = ParameterKeys.NewObject<Texture>();
+    public static readonly ValueParameterKey<float> FoamAmountValue = ParameterKeys.NewValue<float>();
     public static readonly ValueParameterKey<Vector4> DepthFade = ParameterKeys.NewValue<Vector4>();
 
     internal static ValueParameterKey<Vector4> Set(ShaderGeneratorContext context, ValueParameterKey<Vector4> baseKey, Vector4 value)
