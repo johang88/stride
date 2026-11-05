@@ -146,4 +146,31 @@ public sealed class VolumetricFogComponent : ActivableEntityComponent
     [DataMember(140)]
     [DefaultValue(true)]
     public bool FogSky { get; set; } = true;
+
+    /// <summary>
+    /// Distance haze (a look, not a medium): beyond <see cref="DistanceHazeStart"/>, surfaces fade into the sky light behind
+    /// them, losing this much per kilometer (0: none; 1 keeps 37% at 1 km past the start, 3 about 5%). Mountains on the horizon
+    /// melt into the sky by day and into the night.
+    /// </summary>
+    [DataMember(150)]
+    [DefaultValue(0.0f)]
+    [DataMemberRange(0, 20, 0.05, 0.25, 2)]
+    [Display("Density (per km)", "Distance haze")]
+    public float DistanceHaze { get; set; }
+
+    /// <summary>
+    /// Distance from the camera (meters) where the distance haze begins.
+    /// </summary>
+    [DataMember(160)]
+    [DefaultValue(300.0f)]
+    [DataMemberRange(0, 100000, 10, 100, 0)]
+    [Display("Start", "Distance haze")]
+    public float DistanceHazeStart { get; set; } = 300.0f;
+
+    /// <summary>
+    /// Tint of the distance haze (multiplies the sky light it fades into; above 1 brightens it).
+    /// </summary>
+    [DataMember(170)]
+    [Display("Tint", "Distance haze")]
+    public Color3 DistanceHazeTint { get; set; } = new(1.0f, 1.0f, 1.0f);
 }

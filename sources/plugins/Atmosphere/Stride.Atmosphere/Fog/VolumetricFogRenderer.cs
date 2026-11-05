@@ -322,7 +322,7 @@ public sealed class VolumetricFogRenderer : RendererCoreBase
             Integrated = volumetric ? state.Integrated : null,
             Grid = state.Grid,
             Height = new Vector4(fog.Density * densityScale, fog.HeightFalloff, fog.BaseHeight, volumetric ? 1 : 0),
-            Ambient = new Vector4((Vector3)state.Ambient, hasFog || aerial.Z > 0 ? 1 : 0),
+            Ambient = new Vector4((Vector3)state.Ambient, hasFog || aerial.Z > 0 || fog.DistanceHaze > 0 ? 1 : 0),
             Albedo = new Vector4((Vector3)fog.Albedo, Math.Clamp(fog.MultipleScattering, 0, 1)),
             Ground = new Vector4((Vector3)(ground * fog.AmbientScattering), 0),
             Emissive = new Vector4((Vector3)fog.Emissive, 0),
@@ -334,6 +334,8 @@ public sealed class VolumetricFogRenderer : RendererCoreBase
             Eye = eye,
             AerialPerspective = environment?.AerialPerspective,
             AerialPerspectiveParameters = aerial,
+            Haze = new Vector4(Math.Max(0, fog.DistanceHaze), Math.Max(0, fog.DistanceHazeStart), 0, fog.DistanceHaze > 0 ? 1 : 0),
+            HazeTint = new Vector4((Vector3)fog.DistanceHazeTint, 0),
         };
         renderFeature?.ViewParameters.Remove(view);
         renderFeature?.ViewParameters.Add(view, state.Parameters);
@@ -845,6 +847,13 @@ public struct VolumetricFogViewParameters
 
     public Vector4 AerialPerspectiveParameters;
 
+    /// <summary>
+    /// Distance haze: x = extinction per meter, y = start distance, w = 1 when there is any (see VolumetricFogApplyBase).
+    /// </summary>
+    public Vector4 Haze;
+
+    public Vector4 HazeTint;
+
     internal readonly void ApplyTo(ParameterCollection parameters, GraphicsDevice device)
     {
         parameters.Set(VolumetricFogApplyBaseKeys.FogIntegrated, Integrated ?? VolumetricFogRenderFeature.GetEmptyVolume(device));
@@ -862,5 +871,7 @@ public struct VolumetricFogViewParameters
         parameters.Set(VolumetricFogApplyBaseKeys.FogApplyEye, Eye);
         parameters.Set(VolumetricFogApplyBaseKeys.FogAerialPerspective, AerialPerspective ?? VolumetricFogRenderFeature.GetEmptyVolume(device));
         parameters.Set(VolumetricFogApplyBaseKeys.FogApplyAerialPerspective, AerialPerspective != null ? AerialPerspectiveParameters : Vector4.Zero);
+        parameters.Set(VolumetricFogApplyBaseKeys.FogApplyHaze, Haze);
+        parameters.Set(VolumetricFogApplyBaseKeys.FogApplyHazeTint, HazeTint);
     }
 }

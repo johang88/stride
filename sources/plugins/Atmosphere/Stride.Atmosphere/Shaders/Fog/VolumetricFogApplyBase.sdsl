@@ -43,6 +43,9 @@ namespace Stride.Atmosphere.Fog
             stage float3 FogApplyEye;
             // Aerial perspective volume (see AtmosphereCameraVolume): x = kilometers per slice, y = distance scale, z = 1 when there is one
             stage float4 FogApplyAerialPerspective;
+            // Distance haze: x = extinction per meter, y = distance it starts at, w = 1 when there is any; FogApplyHazeTint.rgb = tint
+            stage float4 FogApplyHaze;
+            stage float4 FogApplyHazeTint;
         };
 
         stage SamplerState FogApplySampler
@@ -63,6 +66,18 @@ namespace Stride.Atmosphere.Fog
             sampleDirection.z = -sampleDirection.z;
             float3 sky = FogSkyCubeMap.SampleLevel(FogApplySampler, sampleDirection, FogApplySky.x).rgb * FogApplySky.y;
             return lerp(FogApplyGround.rgb, sky, FogApplySky.w);
+        }
+
+        // The light the distance haze fades into: the sky at the horizon in the direction of the view (not the ground's light:
+        // looking down at distant land, it still fades into the horizon's haze)
+        stage float3 FogHazeLight(float3 direction)
+        {
+            if (FogApplySky.z <= 0.0)
+                return FogApplyAmbient.rgb;
+            direction.y = clamp(direction.y, 0.02, 0.25);
+            float3 sampleDirection = mul(normalize(direction), (float3x3)FogApplySkyMatrix);
+            sampleDirection.z = -sampleDirection.z;
+            return FogSkyCubeMap.SampleLevel(FogApplySampler, sampleDirection, FogApplySky.x).rgb * FogApplySky.y;
         }
 
         // The atmosphere between the camera and a point at a distance (meters) on the screen: rgb = light scattered towards the
@@ -89,6 +104,13 @@ namespace Stride.Atmosphere.Fog
                 float4 aerial = EvaluateAerialPerspective(uv, length(ray));
                 fog.rgb += fog.a * aerial.rgb;
                 fog.a *= aerial.a;
+                // Distance haze: the surface fades into the sky light behind it
+                if (FogApplyHaze.w > 0.0)
+                {
+                    float haze = 1.0 - exp(-max(length(ray) - FogApplyHaze.y, 0.0) * FogApplyHaze.x);
+                    fog.rgb += fog.a * FogHazeLight(ray) * FogApplyHazeTint.rgb * haze;
+                    fog.a *= 1.0 - haze;
+                }
             }
             return fog;
         }

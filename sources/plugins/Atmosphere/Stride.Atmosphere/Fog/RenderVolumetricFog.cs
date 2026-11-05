@@ -93,6 +93,15 @@ public sealed class RenderVolumetricFog
     /// Whether the sky is fogged (as if it were at the camera's far plane).
     /// </summary>
     public bool FogSky;
+
+    /// <summary>
+    /// Distance haze: extinction per meter (0: none), the distance it begins at (meters), its tint.
+    /// </summary>
+    public float DistanceHaze;
+
+    public float DistanceHazeStart;
+
+    public Color3 DistanceHazeTint;
 }
 
 /// <summary>

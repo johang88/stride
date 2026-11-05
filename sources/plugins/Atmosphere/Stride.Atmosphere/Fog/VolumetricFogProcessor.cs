@@ -55,6 +55,9 @@ public sealed class VolumetricFogProcessor : EntityProcessor<VolumetricFogCompon
         renderFog.NoiseScale = active.NoiseScale;
         renderFog.Wind = active.Wind;
         renderFog.FogSky = active.FogSky;
+        renderFog.DistanceHaze = active.DistanceHaze * 0.001f;
+        renderFog.DistanceHazeStart = active.DistanceHazeStart;
+        renderFog.DistanceHazeTint = active.DistanceHazeTint;
         VisibilityGroup.Tags.Set(VolumetricFogRenderer.CurrentFog, renderFog);
     }
 }
