@@ -220,8 +220,13 @@ public class CharacterComponent : CharacterComponentAbstract
                 var targetVelocity = MathF.Min(currentVelocity + airAccelerationDt, maximumAirSpeed);
                 //While we shouldn't allow the character to continue accelerating in the air indefinitely, trying to move in a given direction should never slow us down in that direction.
                 var velocityChangeAlongMovementDirection = MathF.Max(0, targetVelocity - currentVelocity);
-                characterBody.Velocity.Linear += worldMovementDirection * velocityChangeAlongMovementDirection;
-                Debug.Assert(characterBody.Awake || wakeupBody, "Velocity changes don't automatically update objects; the character should have already been woken up before applying air control.");
+                if (velocityChangeAlongMovementDirection > 0)
+                {
+                    characterBody.Velocity.Linear += worldMovementDirection * velocityChangeAlongMovementDirection;
+                    // Velocity changes don't wake a body: a sleeping character in the air (an unchanged move input, e.g. just placed
+                    // by a teleport) would otherwise keep sleeping and lose the change
+                    wakeupBody |= !characterBody.Awake;
+                }
             }
         }
     }

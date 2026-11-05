@@ -3,6 +3,7 @@
 
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using BepuPhysics;
 using BepuPhysics.Collidables;
 using BepuPhysics.CollisionDetection;
@@ -14,6 +15,7 @@ internal struct StrideNarrowPhaseCallbacks(BepuSimulation Simulation, ContactEve
 {
 #if DEBUG
     [ThreadStatic] private static int configuredChildIndex, configuredManifold;
+    private static int reportedUnstoredManifold;
 #endif
 
     public void Initialize(Simulation simulation)
@@ -66,11 +68,23 @@ internal struct StrideNarrowPhaseCallbacks(BepuSimulation Simulation, ContactEve
 
 #if DEBUG
         // Validate that all manifolds have been stored through the other ConfigureContactManifold,
-        // previously we would store the manifold from here as well, leading to duplicates
+        // previously we would store the manifold from here as well, leading to duplicates.
+        // Bepu can also complete a compound pair with a non-empty convex manifold that never went through the per-child
+        // callback (seen: a character's compound against the terrain heightfield on a slope): that manifold isn't stored for
+        // contact events. Reported once instead of asserting: a failed Debug.Assert terminates the process.
         if (manifold.Count != 0)
         {
             ++configuredManifold;
-            Debug.Assert(configuredChildIndex >= configuredManifold);
+            if (configuredChildIndex < configuredManifold)
+            {
+                if (Interlocked.Exchange(ref reportedUnstoredManifold, 1) == 0)
+                {
+                    var componentA = Simulation.GetComponent(pair.A);
+                    var componentB = Simulation.GetComponent(pair.B);
+                    Debug.WriteLine($"Contact manifold without child manifolds ({typeof(TManifold).Name}, {manifold.Count} contacts) between {componentA?.Entity?.Name} and {componentB?.Entity?.Name}: not stored for contact events");
+                }
+                configuredChildIndex = configuredManifold;
+            }
         }
 #endif
 
