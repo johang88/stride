@@ -53,7 +53,8 @@ public class RpgContent : IUITest
         foreach (var (type, count) in counts)
             Check(count > 0, $"{count} {type} assets loaded");
         var templates = await session.Dispatcher.InvokeAsync(() => session.FindTemplates(TemplateScope.Asset).OfType<TemplateAssetDescription>().Where(x => x.Group == "RPG").ToList());
-        Check(templates.Count == GameDataTypes.Length, $"RPG templates listed: {string.Join(", ", templates.Select(x => x.Name))}");
+        // At least one per game data type (the game adds others, e.g. the world map)
+        Check(templates.Count >= GameDataTypes.Length, $"RPG templates listed: {string.Join(", ", templates.Select(x => x.Name))}");
 
         // Terrain content made with the fork's terrain module
         var blendLayer = await session.Dispatcher.InvokeAsync(() =>
