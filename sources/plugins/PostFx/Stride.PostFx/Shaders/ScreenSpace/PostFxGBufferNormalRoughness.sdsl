@@ -5,13 +5,14 @@ namespace Stride.PostFx
 {
     /// <summary>
     /// What an opaque surface writes for the screen-space reflections (see PostFxNormalRoughnessTargetSemantic): its shading
-    /// normal (world space, octahedral, in [0, 1]), its perceptual roughness, and 1 (written).
+    /// normal (world space, octahedral, in [0, 1]), its perceptual roughness, and 1 (written) or 2/3 (written, a thin surface:
+    /// blades and leaves, see matThinSurface; read as written by testing > 0.5).
     /// </summary>
     shader PostFxGBufferNormalRoughness : ComputeColor, MaterialPixelShadingStream, PostFxOctahedral
     {
         override float4 Compute()
         {
-            return float4(PostFxOctahedralEncode(streams.normalWS) * 0.5 + 0.5, sqrt(streams.alphaRoughness), 1.0);
+            return float4(PostFxOctahedralEncode(streams.normalWS) * 0.5 + 0.5, sqrt(streams.alphaRoughness), streams.matThinSurface > 0.5 ? 2.0 / 3.0 : 1.0);
         }
     };
 }

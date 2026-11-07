@@ -53,7 +53,8 @@ namespace Stride.Assets.Materials
             public MaterialCompileCommand(string url, AssetItem assetItem, MaterialAsset value, AssetCompilerContext context)
                 : base(url, value, assetItem.Package)
             {
-                Version = 7;
+                // (8: material features may add pixel stage shaders, e.g. the thin surface mark of the vegetation features)
+                Version = 8;
                 this.assetItem = assetItem;
                 colorSpace = context.GetColorSpace();
                 assetUrl = new UFile(url);

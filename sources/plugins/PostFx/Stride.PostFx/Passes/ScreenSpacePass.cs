@@ -359,7 +359,7 @@ internal sealed class ScreenSpacePass
     /// Traces the indirect light of the frame, accumulates it over frames and filters it, for the next frame.
     /// </summary>
     /// <param name="exposure">Scene light to screen brightness: the light a ray brings is limited on screen.</param>
-    public void DrawIndirect(RenderDrawContext context, RenderView view, ScreenSpaceTargets targets, Texture scene, Matrix inverseViewProjection, Matrix previousViewProjection, int frame, float exposure)
+    public void DrawIndirect(RenderDrawContext context, RenderView view, ScreenSpaceTargets targets, Texture scene, Texture surfaces, Matrix inverseViewProjection, Matrix previousViewProjection, int frame, float exposure)
     {
         var width = targets.Pyramid.Width;
         var height = targets.Pyramid.Height;
@@ -368,6 +368,8 @@ internal sealed class ScreenSpacePass
         SetView(parameters, view, width, height);
         parameters.Set(PostFxIndirectKeys.IndirectDistance, targets.Pyramid);
         parameters.Set(PostFxIndirectKeys.IndirectScene, scene);
+        // (none: every surface solid)
+        parameters.Set(PostFxIndirectKeys.IndirectSurfaces, surfaces ?? context.GraphicsDevice.GetSharedWhiteTexture());
         parameters.Set(PostFxIndirectKeys.IndirectOutput, targets.IndirectRaw);
         parameters.Set(PostFxIndirectKeys.IndirectNormal, targets.IndirectNormal);
         parameters.Set(PostFxIndirectKeys.IndirectSize, size);

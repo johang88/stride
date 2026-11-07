@@ -712,7 +712,8 @@ public sealed class PostFxRenderer : ImageEffect, IPostProcessingEffects, IScree
             }
             if (IndirectLight && profile.ScreenSpaceLight.IndirectLight > 0.0f)
             {
-                screenSpacePass.DrawIndirect(context, renderContext.RenderView, targets, scene, inverseViewProjection, previous, frame, MathF.Pow(2.0f, ExposureEV(profile)));
+                var indirectSurfaces = surfaces != null && surfaces.ViewWidth == targets.Pyramid.Width && surfaces.ViewHeight == targets.Pyramid.Height ? surfaces : null;
+                screenSpacePass.DrawIndirect(context, renderContext.RenderView, targets, scene, indirectSurfaces, inverseViewProjection, previous, frame, MathF.Pow(2.0f, ExposureEV(profile)));
             }
             else
             {

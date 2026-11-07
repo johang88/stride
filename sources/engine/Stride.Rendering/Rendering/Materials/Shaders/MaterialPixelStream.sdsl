@@ -31,6 +31,8 @@ namespace Stride.Rendering.Materials
         // specular direction) and indirect (diffuse) light
         stage stream float4 screenSpaceSpecular;
         stage stream float4 screenSpaceDiffuse;
+        // 1 on thin surfaces (blades, leaves): screen-space effects don't take them for solids behind their depth
+        stage stream float matThinSurface;
         stage stream float  matAmbientOcclusionDirectLightingFactor;
         stage stream float  matCavity;
         stage stream float  matCavityDiffuse;
@@ -85,6 +87,7 @@ namespace Stride.Rendering.Materials
             streams.matAmbientOcclusion = 1.0f;  // 0.0: occluded, 1.0: not occluded
             streams.screenSpaceSpecular = 0.0f;
             streams.screenSpaceDiffuse = 0.0f;
+            streams.matThinSurface = 0.0f;
             streams.matAmbientOcclusionDirectLightingFactor = 0.0f;
 
             streams.matCavity = 1.0f;

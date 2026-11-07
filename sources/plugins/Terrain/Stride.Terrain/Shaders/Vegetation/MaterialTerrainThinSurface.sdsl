@@ -1,0 +1,16 @@
+// Copyright (c) .NET Foundation and Contributors (https://dotnetfoundation.org/ & https://stride3d.net)
+// Distributed under the MIT license. See the LICENSE.md file in the project root for more information.
+
+namespace Stride.Terrain
+{
+    /// <summary>
+    /// Marks the surface as thin (blades, leaves): screen-space effects don't take it for a solid behind its depth.
+    /// </summary>
+    shader MaterialTerrainThinSurface : IMaterialSurfacePixel
+    {
+        override void Compute()
+        {
+            streams.matThinSurface = 1.0;
+        }
+    };
+}

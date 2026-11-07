@@ -60,6 +60,8 @@ public sealed class MaterialTerrainVegetationSubsurfaceFeature : MaterialFeature
 
         var shaderBuilder = context.AddShading(this);
         shaderBuilder.LightDependentSurface = shaderSource;
+        // (leaves and blades: thin, for the screen-space effects)
+        context.AddShaderSource(MaterialShaderStage.Pixel, new ShaderClassSource("MaterialTerrainThinSurface"));
     }
 
     /// <remarks>

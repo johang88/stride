@@ -36,6 +36,8 @@ public sealed class MaterialTerrainGrassWindFeature : MaterialFeature, IMaterial
     public override void GenerateShader(MaterialGeneratorContext context)
     {
         context.AddShaderSource(MaterialShaderStage.Vertex, new ShaderClassSource("MaterialTerrainGrassWind", Strength.ToString("R", CultureInfo.InvariantCulture), Speed.ToString("R", CultureInfo.InvariantCulture)));
+        // (blades: thin, for the screen-space effects)
+        context.AddShaderSource(MaterialShaderStage.Pixel, new ShaderClassSource("MaterialTerrainThinSurface"));
     }
 }
 
