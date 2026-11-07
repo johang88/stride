@@ -71,7 +71,7 @@ namespace Stride.Core.Assets.Editor.ViewModel
     public abstract class AssetViewModel : SessionObjectViewModel, IChildViewModel, ISessionObjectViewModel, IAssetPropertyProviderViewModel, IDisposable
     {
         protected internal IAssetObjectNode AssetRootNode => PropertyGraph?.RootNode;
-        protected readonly ObservableList<MenuCommandInfo> assetCommands;
+        private ObservableList<MenuCommandInfo> assetCommands;
         protected readonly SessionNodeContainer NodeContainer;
         protected readonly bool Initializing;
         private readonly AnonymousCommand clearArchetypeCommand;
@@ -110,35 +110,10 @@ namespace Stride.Core.Assets.Editor.ViewModel
             RegisterMemberCollectionForActionStack(nameof(Tags), Tags);
             Tags.CollectionChanged += TagsCollectionChanged;
 
-            assetCommands = new ObservableList<MenuCommandInfo>();
             createDerivedAssetCommand = new AnonymousCommand(ServiceProvider, CreateDerivedAsset) { IsEnabled = CanDerive };
             createReplacingAssetCommand = new AnonymousCommand(ServiceProvider, CreateReplacingAsset) { IsEnabled = CanReplace };
             clearArchetypeCommand = new AnonymousCommand(ServiceProvider, ClearArchetype) { IsEnabled = Asset.Archetype != null };
             clearReplacesCommand = new AnonymousCommand(ServiceProvider, ClearReplaces) { IsEnabled = IsReplacing };
-            // TODO: make the view model independent of the view (ie. MenuCommandInfo.Icon and remove this dispatcher call.
-            Dispatcher.InvokeAsync(() =>
-            {
-                assetCommands.Add(new MenuCommandInfo(ServiceProvider, createDerivedAssetCommand)
-                {
-                    DisplayName = "Create derived asset",
-                    Icon = new Image { Source = new BitmapImage(new Uri("/Stride.Core.Assets.Editor.Wpf;component/Resources/Icons/copy_link-32.png", UriKind.RelativeOrAbsolute)) },
-                });
-                assetCommands.Add(new MenuCommandInfo(ServiceProvider, createReplacingAssetCommand)
-                {
-                    DisplayName = "Create replacing asset",
-                    Icon = new Image { Source = new BitmapImage(new Uri("/Stride.Core.Assets.Editor.Wpf;component/Resources/Icons/copy_link-32.png", UriKind.RelativeOrAbsolute)) },
-                });
-                assetCommands.Add(new MenuCommandInfo(ServiceProvider, clearArchetypeCommand)
-                {
-                    DisplayName = "Clear archetype",
-                    Icon = new Image { Source = new BitmapImage(new Uri("/Stride.Core.Assets.Editor.Wpf;component/Resources/Icons/delete_link-32.png", UriKind.RelativeOrAbsolute)) },
-                });
-                assetCommands.Add(new MenuCommandInfo(ServiceProvider, clearReplacesCommand)
-                {
-                    DisplayName = "Clear replaces",
-                    Icon = new Image { Source = new BitmapImage(new Uri("/Stride.Core.Assets.Editor.Wpf;component/Resources/Icons/delete_link-32.png", UriKind.RelativeOrAbsolute)) },
-                });
-            }).Forget();
             NodeContainer = parameters.Container;
             PropertyGraph = Session.GraphContainer.TryGetGraph(assetItem.Id);
             if (PropertyGraph != null)
@@ -282,7 +257,51 @@ namespace Stride.Core.Assets.Editor.ViewModel
             Dependencies.NotifyReplacedStateChanged();
         }
 
-        public IReadOnlyObservableCollection<MenuCommandInfo> AssetCommands => assetCommands;
+        /// <summary>
+        /// The commands of this asset's menu, created on first access (from the view, on the UI thread: they carry icons).
+        /// </summary>
+        /// <remarks>
+        /// Created on demand: only the selected asset shows them, and creating them with every asset view model queued
+        /// thousands of icon decodes on the UI thread while a session loaded.
+        /// </remarks>
+        public IReadOnlyObservableCollection<MenuCommandInfo> AssetCommands
+        {
+            get
+            {
+                if (assetCommands is null)
+                {
+                    var commands = new ObservableList<MenuCommandInfo>();
+                    AddAssetCommands(commands);
+                    assetCommands = commands;
+                }
+                return assetCommands;
+            }
+        }
+
+        /// <summary>
+        /// Adds the commands of this asset's menu (see <see cref="AssetCommands"/>); an override adds its own before calling the base.
+        /// </summary>
+        // TODO: make the view model independent of the view (ie. MenuCommandInfo.Icon)
+        protected virtual void AddAssetCommands([NotNull] IList<MenuCommandInfo> commands)
+        {
+            commands.Add(new MenuCommandInfo(ServiceProvider, createDerivedAssetCommand) { DisplayName = "Create derived asset", Icon = new Image { Source = CopyLinkIcon.Value } });
+            commands.Add(new MenuCommandInfo(ServiceProvider, createReplacingAssetCommand) { DisplayName = "Create replacing asset", Icon = new Image { Source = CopyLinkIcon.Value } });
+            commands.Add(new MenuCommandInfo(ServiceProvider, clearArchetypeCommand) { DisplayName = "Clear archetype", Icon = new Image { Source = DeleteLinkIcon.Value } });
+            commands.Add(new MenuCommandInfo(ServiceProvider, clearReplacesCommand) { DisplayName = "Clear replaces", Icon = new Image { Source = DeleteLinkIcon.Value } });
+        }
+
+        /// <summary>
+        /// A menu icon decoded once and frozen, for any thread.
+        /// </summary>
+        protected static Lazy<BitmapImage> MenuIcon(string uri) => new(() =>
+        {
+            var image = new BitmapImage(new Uri(uri, UriKind.RelativeOrAbsolute));
+            image.Freeze();
+            return image;
+        });
+
+        private static readonly Lazy<BitmapImage> CopyLinkIcon = MenuIcon("/Stride.Core.Assets.Editor.Wpf;component/Resources/Icons/copy_link-32.png");
+        private static readonly Lazy<BitmapImage> DeleteLinkIcon = MenuIcon("/Stride.Core.Assets.Editor.Wpf;component/Resources/Icons/delete_link-32.png");
 
         public override IEnumerable<IDirtiable> Dirtiables => Directory != null ? base.Dirtiables.Concat(Directory.Dirtiables) : base.Dirtiables;
 

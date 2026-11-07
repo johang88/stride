@@ -30,17 +30,23 @@ namespace Stride.Assets.Presentation.ViewModel
             : base(parameters)
         {
             CreateSkeletonCommand = new AnonymousCommand(ServiceProvider, CreateSkeleton);
-
-            // FIXME: tooltip, icons, etc. should not be created on the view model side (see PDX-2952)
-            Dispatcher.Invoke(() => assetCommands.Add(new MenuCommandInfo(ServiceProvider, CreateSkeletonCommand)
-            {
-                DisplayName = "Create Skeleton",
-                Tooltip = "Create a skeleton asset",
-                Icon = new Image { Source = new BitmapImage(new Uri("/Stride.Assets.Presentation.Wpf;component/Resources/Icons/create_skeleton-16.png", UriKind.RelativeOrAbsolute))},
-            }));
         }
 
         public ICommandBase CreateSkeletonCommand { get; }
+
+        private static readonly Lazy<BitmapImage> CreateSkeletonIcon = MenuIcon("/Stride.Assets.Presentation.Wpf;component/Resources/Icons/create_skeleton-16.png");
+
+        // FIXME: tooltip, icons, etc. should not be created on the view model side (see PDX-2952)
+        protected override void AddAssetCommands(IList<MenuCommandInfo> commands)
+        {
+            commands.Add(new MenuCommandInfo(ServiceProvider, CreateSkeletonCommand)
+            {
+                DisplayName = "Create Skeleton",
+                Tooltip = "Create a skeleton asset",
+                Icon = new Image { Source = CreateSkeletonIcon.Value },
+            });
+            base.AddAssetCommands(commands);
+        }
 
         protected override IAssetImporter GetImporter()
         {

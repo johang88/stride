@@ -35,7 +35,6 @@ namespace Stride.Assets.Presentation.ViewModel
             : base(parameters)
         {
             SetAsDefaultCommand = new AnonymousCommand(ServiceProvider, SetAsDefault);
-            assetCommands.Add(new MenuCommandInfo(ServiceProvider, SetAsDefaultCommand) { DisplayName = "Set as default", Tooltip = "Set as default scene" });
             UpdateCommands();
 
             Session.SessionStateChanged += SessionStateChanged;
@@ -56,6 +55,12 @@ namespace Stride.Assets.Presentation.ViewModel
 
         [NotNull]
         internal ICommandBase SetAsDefaultCommand { get; }
+
+        protected override void AddAssetCommands(IList<MenuCommandInfo> commands)
+        {
+            commands.Add(new MenuCommandInfo(ServiceProvider, SetAsDefaultCommand) { DisplayName = "Set as default", Tooltip = "Set as default scene" });
+            base.AddAssetCommands(commands);
+        }
 
         /// <summary>
         /// Checks whether this scene can be a parent of the provided <paramref name="child"/> scene.

@@ -32,6 +32,9 @@ namespace Stride.Core.Presentation.ViewModel
 
         private int updateInterval = DefaultUpdateInterval;
         private bool updatePending;
+        // Kept by MessagesCollectionChanged: a scan of the messages on every removal made clearing a log quadratic
+        private int warningCount;
+        private int errorCount;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="LoggerViewModel"/> class.
@@ -102,13 +105,13 @@ namespace Stride.Core.Presentation.ViewModel
         /// Gets whether the monitored logs have warnings.
         /// </summary>
         /// <remarks>This property does not raise the <see cref="INotifyPropertyChanging.PropertyChanging"/> and <see cref="INotifyPropertyChanged.PropertyChanged"/> events.</remarks>
-        public bool HasWarnings { get; private set; }
+        public bool HasWarnings => warningCount > 0;
 
         /// <summary>
         /// Gets whether the monitored logs have errors.
         /// </summary>
         /// <remarks>This property does not raise the <see cref="INotifyPropertyChanging.PropertyChanging"/> and <see cref="INotifyPropertyChanged.PropertyChanged"/> events.</remarks>
-        public bool HasErrors { get; private set; }
+        public bool HasErrors => errorCount > 0;
 
         /// <summary>
         /// Gets whether the monitored logs have new messages.
@@ -225,13 +228,15 @@ namespace Stride.Core.Presentation.ViewModel
         /// </summary>
         public void ClearMessages([NotNull] Logger logger)
         {
-            List<ILogMessage> messagesToRemove;
-            if (Loggers.TryGetValue(logger, out messagesToRemove))
+            if (!Loggers.TryGetValue(logger, out var messagesToRemove) || messagesToRemove.Count == 0)
+                return;
+
+            // One pass from the end, not a search of the whole list per message
+            var toRemove = new HashSet<ILogMessage>(messagesToRemove, ReferenceEqualityComparer.Instance);
+            for (var i = messages.Count - 1; i >= 0 && toRemove.Count > 0; --i)
             {
-                foreach (var messageToRemove in messagesToRemove)
-                {
-                    messages.Remove(messageToRemove);
-                }
+                if (toRemove.Remove(messages[i]))
+                    messages.RemoveAt(i);
             }
         }
 
@@ -294,31 +299,33 @@ namespace Stride.Core.Presentation.ViewModel
         /// </summary>
         private void MessagesCollectionChanged(object sender, [NotNull] NotifyCollectionChangedEventArgs e)
         {
-            if (e.Action == NotifyCollectionChangedAction.Add)
+            if (e.Action == NotifyCollectionChangedAction.Reset)
             {
-                if (e.NewItems != null)
-                {
-                    foreach (ILogMessage newMessage in e.NewItems)
-                    {
-                        switch (newMessage.Type)
-                        {
-                            case LogMessageType.Warning:
-                                HasWarnings = true;
-                                break;
-                            case LogMessageType.Error:
-                            case LogMessageType.Fatal:
-                                HasErrors = true;
-                                break;
-                        }
-                    }
-                }
-                HasNewMessages = true;
+                warningCount = messages.Count(x => IsWarning(x));
+                errorCount = messages.Count(x => IsError(x));
+                return;
             }
-            else
+            if (e.OldItems != null)
+                Count(e.OldItems, -1);
+            if (e.NewItems != null)
+                Count(e.NewItems, 1);
+            if (e.Action == NotifyCollectionChangedAction.Add)
+                HasNewMessages = true;
+
+            void Count(System.Collections.IList items, int delta)
             {
-                HasWarnings = messages.Any(x => x.Type == LogMessageType.Warning);
-                HasErrors = messages.Any(x => x.Type == LogMessageType.Error || x.Type == LogMessageType.Fatal);
+                foreach (ILogMessage message in items)
+                {
+                    if (IsWarning(message))
+                        warningCount += delta;
+                    else if (IsError(message))
+                        errorCount += delta;
+                }
             }
         }
+
+        private static bool IsWarning(ILogMessage message) => message.Type == LogMessageType.Warning;
+
+        private static bool IsError(ILogMessage message) => message.Type is LogMessageType.Error or LogMessageType.Fatal;
     }
 }
