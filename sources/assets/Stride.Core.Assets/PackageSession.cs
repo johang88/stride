@@ -1745,9 +1745,14 @@ public sealed partial class PackageSession : IDisposable, IAssetFinder
                 }
             }
 
-            // Load assemblies. Set the package filename to the path on disk, in case of renaming.
-            // TODO: Could referenced projects be associated to other packages than this one?
-            newLoadParameters.ExtraCompileProperties.Add("StrideCurrentPackagePath", package.FullPath);
+            // Load assemblies. Point the build at the package file only when the targets wouldn't find it on their own
+            // (an sdpkg not named after its project): a global property flows into every project reference, so passing it
+            // always built each project's references in a configuration of their own (another package path for their
+            // asset constants), recompiling the shared libraries once per project on every session load and again on the
+            // next command-line build. The targets take the conventional sdpkg next to the project, and ignore a path
+            // that doesn't exist (an implicit package).
+            if (package.FullPath is { } packagePath && File.Exists(packagePath.ToOSPath()) && !IsConventionalPackagePath(package))
+                newLoadParameters.ExtraCompileProperties.Add("StrideCurrentPackagePath", packagePath);
             package.LoadAssemblies(log, newLoadParameters);
 
             info = new AssetLoadingInfo(session, log, package, loadParameters, pendingPackageUpgrades, newLoadParameters);
@@ -1759,6 +1764,11 @@ public sealed partial class PackageSession : IDisposable, IAssetFinder
             return false;
         }
     }
+
+    // The sdpkg the build finds without being told: <project>.sdpkg next to the project file
+    private static bool IsConventionalPackagePath(Package package)
+        => package.Container is SolutionProject { FullPath: { } projectPath }
+            && string.Equals(Path.ChangeExtension(projectPath.ToOSPath(), Package.PackageFileExtension), package.FullPath.ToOSPath(), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Lists the asset files of a package whose assemblies are loaded (see <see cref="TryLoadAssemblies"/>) and upgrades them if needed.

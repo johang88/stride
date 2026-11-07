@@ -648,13 +648,87 @@ public partial class NugetStore : INugetDownloadProgress
     /// Restores exactly <paramref name="version"/> of a package and its dependencies into the global packages folder.
     /// </summary>
     /// <param name="settingsRoot">The directory whose NuGet settings to use; null for the default settings.</param>
+    /// <param name="outputPath">Where the restore's lock file is kept: while every package it lists is still installed
+    /// with the same content, a later restore of the same request reads it back instead of resolving again.</param>
     public async Task<LockFile> RestorePackage(string packageId, PackageVersion version, IEnumerable<string> targetFrameworks, string? settingsRoot, string outputPath)
     {
         var restoreSettings = settingsRoot != null ? NuGet.Configuration.Settings.LoadDefaultSettings(settingsRoot) : settings;
         using (GetLocalRepositoryLock())
         {
+            var installPath = SettingsUtility.GetGlobalPackagesFolder(restoreSettings);
+            var frameworks = targetFrameworks.ToList();
+            var requestKey = string.Join("|", packageId, version, string.Join(";", frameworks), installPath, string.Join(";", SettingsUtility.GetFallbackPackageFolders(restoreSettings)));
+            if (TryReadRestoreCache(outputPath, requestKey) is { } cachedLockFile)
+                return cachedLockFile;
+
             var exactVersion = new VersionRange(version.ToNuGetVersion(), includeMinVersion: true, version.ToNuGetVersion(), includeMaxVersion: true);
-            return await RestorePackageCore(packageId, exactVersion, targetFrameworks, restoreSettings, SettingsUtility.GetGlobalPackagesFolder(restoreSettings), "StrideCompanionPackages", outputPath, null);
+            var lockFile = await RestorePackageCore(packageId, exactVersion, frameworks, restoreSettings, installPath, "StrideCompanionPackages", outputPath, null);
+            WriteRestoreCache(outputPath, requestKey, lockFile);
+            return lockFile;
+        }
+    }
+
+    // The cached restore of RestorePackage: the lock file and the request it answers. A resolve per package and session
+    // load, even with everything installed, was ~300 ms each (Game Studio restores ~20 companion packages).
+    private const string RestoreCacheKeyFile = "stride-restore.key";
+
+    internal static LockFile? TryReadRestoreCache(string outputPath, string requestKey)
+    {
+        try
+        {
+            var keyFile = Path.Combine(outputPath, RestoreCacheKeyFile);
+            var lockFilePath = Path.Combine(outputPath, LockFileFormat.AssetsFileName);
+            if (!File.Exists(keyFile) || !File.Exists(lockFilePath) || File.ReadAllText(keyFile) != requestKey)
+                return null;
+
+            var lockFile = new LockFileFormat().Read(lockFilePath);
+            if (lockFile.LogMessages.Any(x => x.Level == LogLevel.Error))
+                return null;
+
+            // Every package still installed with the content it had: a local build is packed again under the same
+            // version, its dependencies can change with it
+            var folders = lockFile.PackageFolders.Select(x => new VersionFolderPathResolver(x.Path)).ToList();
+            foreach (var library in lockFile.Libraries)
+            {
+                if (library.Type != "package" || InstalledContentHash(folders, library.Name, library.Version) != library.Sha512)
+                    return null;
+            }
+            return lockFile;
+        }
+        catch (Exception)
+        {
+            // An unreadable cache is restored again
+            return null;
+        }
+    }
+
+    // The hash a restore records for an installed package: the .nupkg.metadata content hash (a signed package's differs
+    // from its .nupkg.sha512), else the .nupkg.sha512; null when it isn't installed in any of the folders
+    private static string? InstalledContentHash(List<VersionFolderPathResolver> folders, string id, NuGetVersion version)
+    {
+        foreach (var folder in folders)
+        {
+            var metadataPath = folder.GetNupkgMetadataPath(id, version);
+            if (File.Exists(metadataPath))
+                return NupkgMetadataFileFormat.Read(metadataPath).ContentHash;
+            var hashPath = folder.GetHashPath(id, version);
+            if (File.Exists(hashPath))
+                return File.ReadAllText(hashPath).Trim();
+        }
+        return null;
+    }
+
+    internal static void WriteRestoreCache(string outputPath, string requestKey, LockFile lockFile)
+    {
+        try
+        {
+            Directory.CreateDirectory(outputPath);
+            new LockFileFormat().Write(Path.Combine(outputPath, LockFileFormat.AssetsFileName), lockFile);
+            File.WriteAllText(Path.Combine(outputPath, RestoreCacheKeyFile), requestKey);
+        }
+        catch (Exception)
+        {
+            // Without a cache the next load restores again
         }
     }
 
