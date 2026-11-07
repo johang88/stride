@@ -61,9 +61,8 @@ namespace Stride.PostFx
                 float3 sample = position + ContactLightDirection * (stepLength * (i + jitter) + bias);
                 if (sample.z <= 0.05)
                     break;
-                float2 sampleUv = ViewToUv(sample);
-                if (any(sampleUv < 0.0) || any(sampleUv > 1.0))
-                    break;
+                // (past the edge of the screen: what lies at the edge, the closest guess, rather than nothing)
+                float2 sampleUv = clamp(ViewToUv(sample), 0.0, 1.0);
                 float scene = ContactDistance.SampleLevel(ContactPointClamp, sampleUv, 0);
                 float behind = sample.z - scene;
                 if (behind > bias && behind < ContactThickness * sample.z + 0.05)
@@ -74,10 +73,10 @@ namespace Stride.PostFx
                 }
             }
 
-            // Faded out far away and at the edges of the screen (the march leaves it)
+            // Faded out far away. (Not at the edges of the screen: a march leaving it goes on against the edge, and fading
+            // every pixel near the edges lit a band around the screen)
             float fade = saturate((ContactFadeDistance - distance) / (ContactFadeDistance * 0.3));
-            float2 edge = saturate(min(uv, 1.0 - uv) * 20.0);
-            ContactOutput[pixel] = lerp(1.0, lit, fade * edge.x * edge.y);
+            ContactOutput[pixel] = lerp(1.0, lit, fade);
         }
     };
 }

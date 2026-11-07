@@ -7,7 +7,8 @@ namespace Stride.PostFx
     /// Ground truth ambient occlusion (Jimenez et al. 2016, after Intel's XeGTAO): for a few slice directions around each
     /// pixel, the horizons on both sides are found in the distance pyramid, and the visible arc between them integrated
     /// against the normal (projected in the slice). The normal comes from the depth (the smaller step on each axis: no
-    /// halos at edges). The noise changes every frame: temporal anti-aliasing averages it. Groups of 8x8 threads.
+    /// halos at edges). Occluders far in front of the pixel count less (thin occluder compensation, as in XeGTAO: grass
+    /// and leaves aren't walls). The noise changes every frame: temporal anti-aliasing averages it. Groups of 8x8 threads.
     /// </summary>
     shader PostFxGtao : ComputeShaderBase, PostFxViewSpace, PostFxCommon
     {
@@ -27,6 +28,8 @@ namespace Stride.PostFx
             stage float GtaoRadius;
             // Strength (an exponent on the visibility)
             stage float GtaoPower;
+            // How much less an occluder in front counts (0: as far as it is; its distance towards the eye is stretched)
+            stage float GtaoThinOccluders;
             stage int GtaoSlices;
             stage int GtaoSteps;
             stage float GtaoFrame;
@@ -118,8 +121,11 @@ namespace Stride.PostFx
                     float length1 = length(delta1);
                     float cos0 = dot(delta0 / max(length0, 1e-4), viewVector);
                     float cos1 = dot(delta1 / max(length1, 1e-4), viewVector);
-                    float weight0 = saturate(length0 * falloffMul + falloffAdd);
-                    float weight1 = saturate(length1 * falloffMul + falloffAdd);
+                    // (the falloff with the distance towards the eye stretched: thin occluders in front fade sooner)
+                    float falloff0 = length(delta0 + viewVector * (max(dot(delta0, viewVector), 0.0) * GtaoThinOccluders));
+                    float falloff1 = length(delta1 + viewVector * (max(dot(delta1, viewVector), 0.0) * GtaoThinOccluders));
+                    float weight0 = saturate(falloff0 * falloffMul + falloffAdd);
+                    float weight1 = saturate(falloff1 * falloffMul + falloffAdd);
                     horizonCos0 = max(horizonCos0, lerp(lowCos0, cos0, weight0));
                     horizonCos1 = max(horizonCos1, lerp(lowCos1, cos1, weight1));
                 }

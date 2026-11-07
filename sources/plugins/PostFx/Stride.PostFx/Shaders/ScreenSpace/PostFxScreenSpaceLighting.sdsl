@@ -40,11 +40,19 @@ namespace Stride.PostFx
         {
             base.ApplyScreenSpaceLighting();
             float2 uv = streams.ShadingPosition.xy * PostFxScreenSize.zw;
+            // (the material's own occlusion: the indirect light found on screen has the screen's occlusion in it already)
+            float materialOcclusion = streams.matAmbientOcclusion;
 
             if (PostFxAmbientOcclusionStrength > 0.0)
             {
-                float occlusion = PostFxAmbientOcclusion.SampleLevel(PostFxScreenLinear, uv, 0).r;
-                streams.matAmbientOcclusion *= lerp(1.0, occlusion, PostFxAmbientOcclusionStrength);
+                float occlusion = lerp(1.0, PostFxAmbientOcclusion.SampleLevel(PostFxScreenLinear, uv, 0).r, PostFxAmbientOcclusionStrength);
+                // The light bouncing around within the occluded spots (Jimenez et al. 2016: bright surfaces darken less)
+                float albedo = dot(streams.matDiffuseVisible, float3(0.2126, 0.7152, 0.0722));
+                float a = 2.0404 * albedo - 0.3324;
+                float b = -4.7951 * albedo + 0.6417;
+                float c = 2.7552 * albedo + 0.6903;
+                occlusion = max(occlusion, ((occlusion * a + b) * occlusion + c) * occlusion);
+                streams.matAmbientOcclusion *= occlusion;
             }
 
             if (PostFxReflectionStrength > 0.0 || PostFxIndirectStrength > 0.0)
@@ -54,6 +62,9 @@ namespace Stride.PostFx
                 float2 previousUv = float2(previousClip.x / previousClip.w * 0.5 + 0.5, 0.5 - previousClip.y / previousClip.w * 0.5);
                 float2 edge = saturate(min(previousUv, 1.0 - previousUv) * 16.0);
                 float onScreen = previousClip.w > 0.0 ? edge.x * edge.y : 0.0;
+                // (the indirect light holds up to the edge: only what was off screen the frame before has none)
+                float2 indirectEdge = saturate(min(previousUv, 1.0 - previousUv) * PostFxScreenSize.xy * 0.125);
+                float indirectOnScreen = previousClip.w > 0.0 ? indirectEdge.x * indirectEdge.y : 0.0;
 
                 if (PostFxReflectionStrength > 0.0)
                 {
@@ -71,7 +82,7 @@ namespace Stride.PostFx
                     // pixels that didn't keeps the light found)
                     float4 indirect = PostFxIndirect.SampleLevel(PostFxScreenLinear, previousUv, 0);
                     float3 light = indirect.rgb / max(indirect.a, 1e-4);
-                    streams.screenSpaceDiffuse = float4(light * streams.matAmbientOcclusion, saturate(indirect.a * onScreen * PostFxIndirectStrength));
+                    streams.screenSpaceDiffuse = float4(light * materialOcclusion, saturate(indirect.a * indirectOnScreen * PostFxIndirectStrength));
                 }
             }
         }

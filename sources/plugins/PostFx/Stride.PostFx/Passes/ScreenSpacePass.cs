@@ -470,6 +470,7 @@ internal sealed class ScreenSpacePass
         parameters.Set(PostFxGtaoKeys.GtaoOutput, targets.AmbientOcclusionRaw);
         parameters.Set(PostFxGtaoKeys.GtaoRadius, Math.Max(settings.Radius, 0.05f));
         parameters.Set(PostFxGtaoKeys.GtaoPower, 1.5f);
+        parameters.Set(PostFxGtaoKeys.GtaoThinOccluders, 1.0f);
         parameters.Set(PostFxGtaoKeys.GtaoSlices, slices);
         parameters.Set(PostFxGtaoKeys.GtaoSteps, steps);
         parameters.Set(PostFxGtaoKeys.GtaoFrame, (float)(frame % 1024));
