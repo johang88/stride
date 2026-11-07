@@ -1173,6 +1173,10 @@ public sealed partial class PackageSession : IDisposable, IAssetFinder
         // types defined in another package's assembly (e.g. a content package referencing its game's
         // design-time library), and files of unknown types would be silently skipped
         assetLoadInfos.RemoveAll(assetInfo => !TryListAssetFiles(assetInfo));
+        // An upgrade of a package listed above can change what the others find on disk; otherwise listing again finds
+        // the same files (every assembly was loaded before the first listing) and costs a walk of every asset folder
+        // and an MSBuild evaluation per project
+        var listAgain = assetLoadInfos.Any(x => x.pendingPackageUpgrades.Count > 0);
         foreach (AssetLoadingInfo assetInfo in assetLoadInfos)
         {
             // Check if the same package exists in the list but with a newer version.
@@ -1184,21 +1188,23 @@ public sealed partial class PackageSession : IDisposable, IAssetFinder
                 continue;
             }
 
-            // Asset types come from every package's assemblies (e.g. a companion package loaded after this one), so
-            // list the files again now that all of them are loaded; files already listed keep their upgraded content
-            var previousFiles = assetInfo.newLoadParameters.AssetFiles?.ToDictionary(f => f.FilePath.FullPath, StringComparer.OrdinalIgnoreCase);
-            var assetFiles = Package.ListAssetFiles(assetInfo.package, true, false, loadParameters.LoadAssetsOfUnknownType);
-            if (previousFiles is not null)
+            // List the files again after an upgrade; files already listed keep their upgraded content
+            if (listAgain)
             {
-                for (var i = 0; i < assetFiles.Count; i++)
+                var previousFiles = assetInfo.newLoadParameters.AssetFiles?.ToDictionary(f => f.FilePath.FullPath, StringComparer.OrdinalIgnoreCase);
+                var assetFiles = Package.ListAssetFiles(assetInfo.package, true, false, loadParameters.LoadAssetsOfUnknownType);
+                if (previousFiles is not null)
                 {
-                    if (previousFiles.Remove(assetFiles[i].FilePath.FullPath, out var previousFile))
-                        assetFiles[i] = previousFile;
+                    for (var i = 0; i < assetFiles.Count; i++)
+                    {
+                        if (previousFiles.Remove(assetFiles[i].FilePath.FullPath, out var previousFile))
+                            assetFiles[i] = previousFile;
+                    }
+                    assetFiles.AddRange(previousFiles.Values);
                 }
-                assetFiles.AddRange(previousFiles.Values);
+                assetFiles.Sort(PackageLoadingAssetFile.FileSizeComparer.Default);
+                assetInfo.newLoadParameters.AssetFiles = assetFiles;
             }
-            assetFiles.Sort(PackageLoadingAssetFile.FileSizeComparer.Default);
-            assetInfo.newLoadParameters.AssetFiles = assetFiles;
 
             LoadAssets(assetInfo.session, assetInfo.log, assetInfo.package, assetInfo.loadParameters, assetInfo.pendingPackageUpgrades, assetInfo.newLoadParameters);
         }

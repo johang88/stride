@@ -52,6 +52,11 @@ public class TypeDescriptorFactory : ITypeDescriptorFactory
         if (type is null)
             return null;
 
+        // Without a lock once a descriptor is ready: visitors on many threads (validating thousands of assets in
+        // parallel) contended on this lock for every object they visited
+        if (readyDescriptors.TryGetValue(type, out var ready))
+            return ready;
+
         // Caching is integrated in this class, avoiding a ChainedTypeDescriptorFactory
         ITypeDescriptor? descriptor;
         lock (registeredDescriptors)
@@ -62,14 +67,35 @@ public class TypeDescriptorFactory : ITypeDescriptorFactory
 
                 // Register this descriptor (before initializing!)
                 registeredDescriptors.Add(type, descriptor);
+                pendingDescriptors.Add((type, descriptor));
 
-                // Make sure the descriptor is initialized
-                descriptor.Initialize(keyComparer);
+                // Make sure the descriptor is initialized. Initializing can create the descriptors of other types, which
+                // can see this one before it is initialized: all of them become ready once the outermost one is.
+                ++creationDepth;
+                try
+                {
+                    descriptor.Initialize(keyComparer);
+                }
+                finally
+                {
+                    if (--creationDepth == 0)
+                    {
+                        foreach (var created in pendingDescriptors)
+                            readyDescriptors.TryAdd(created.Type, created.Descriptor);
+                        pendingDescriptors.Clear();
+                    }
+                }
             }
         }
 
         return descriptor;
     }
+
+    // The descriptors fully initialized, read without the lock; and, under the lock, the nesting of descriptor creations
+    // with the descriptors they created
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Type, ITypeDescriptor> readyDescriptors = new();
+    private readonly List<(Type Type, ITypeDescriptor Descriptor)> pendingDescriptors = [];
+    private int creationDepth;
 
     /// <summary>
     /// Creates a type descriptor for the specified type.

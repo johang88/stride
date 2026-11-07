@@ -907,15 +907,22 @@ public sealed partial class Package : IFileSynchronizable, IAssetFinder
             foreach (var item in outputItems)
             {
                 Assets.Add(item);
+            }
 
-                // Fix collection item ids
+            // Fix collection item ids and duplicate identifiable objects: each asset on its own (thousands in a session
+            // load), marked dirty afterwards since that notifies the package
+            var modified = new bool[outputItems.Count];
+            Parallel.For(0, outputItems.Count, i =>
+            {
+                var item = outputItems[i];
                 AssetCollectionItemIdHelper.GenerateMissingItemIds(item.Asset);
                 CollectionItemIdsAnalysis.FixupItemIds(item, log);
-
-                // Fix duplicate identifiable objects
-                var hasBeenModified = IdentifiableObjectAnalysis.Visit(item.Asset, true, log);
-                if (hasBeenModified)
-                    item.IsDirty = true;
+                modified[i] = IdentifiableObjectAnalysis.Visit(item.Asset, true, log);
+            });
+            for (var i = 0; i < outputItems.Count; i++)
+            {
+                if (modified[i])
+                    outputItems[i].IsDirty = true;
             }
 
             // Don't delete SourceCodeAssets as their files are handled by the package upgrader

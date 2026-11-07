@@ -42,15 +42,18 @@ public static class AssetCollision
         var items = inputItems;
         if (cloneInput)
         {
-            items = inputItems.Select(item => item.Clone(flags: removeUnloadableObjects ? AssetClonerFlags.RemoveUnloadableObjects : AssetClonerFlags.None)).ToList();
+            // Each asset clones on its own (a session load cleans thousands)
+            items = inputItems.AsParallel().AsOrdered().Select(item => item.Clone(flags: removeUnloadableObjects ? AssetClonerFlags.RemoveUnloadableObjects : AssetClonerFlags.None)).ToList();
         }
 
         // idRemap should contain only assets that have either 1) their id remapped or 2) their location remapped
         var idRemap = new Dictionary<AssetId, Tuple<AssetId, UFile>>();
         var itemRemap = new Dictionary<AssetItem, Tuple<AssetId, UFile>>();
+        // The items already output (as Contains on a list, it was quadratic in the number of assets)
+        var output = new HashSet<AssetItem>(outputItems, ReferenceEqualityComparer.Instance);
         foreach (var item in items)
         {
-            if (outputItems.Contains(item))
+            if (!output.Add(item))
             {
                 continue;
             }
