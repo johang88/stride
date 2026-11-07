@@ -6,7 +6,10 @@ namespace Stride.Atmosphere
     /// <summary>
     /// Projects the sky capture onto order 3 spherical harmonics convolved with the cosine lobe, in the conventions of
     /// Stride's skybox lighting (SphericalHarmonicsBufferEnvironmentColor: coefficients premultiplied by their basis
-    /// constants, cube directions).
+    /// constants, cube directions). They give the irradiance itself, not the irradiance / pi of a Stride sky box: the
+    /// atmosphere's key light has the sun's illuminance as its color, and the shading scales direct light by pi, so the
+    /// light of the sky on the surfaces matches the sun's (with a sky box's / pi the shade was a third as bright as it
+    /// should be next to the sunlight, and a cloud over the sun darkened the land to almost nothing).
     /// Output: [0-8] = the coefficients, [9] = the radiance averaged over the sphere, [10] = over the upper hemisphere (world),
     /// [11] = over the lower one. One group of 128 threads.
     /// </summary>
@@ -54,12 +57,12 @@ namespace Stride.Atmosphere
             float4 lower = 0.0;
 
             // Squared basis constants (Stride's coefficients are premultiplied by the signed constants, which square them)
-            // times the cosine lobe's bands (1, 2/3, 1/4)
-            float b0 = 1.0 / (4.0 * pi);
-            float b1 = 3.0 / (4.0 * pi) * (2.0 / 3.0);
-            float b4 = 15.0 / (4.0 * pi) * 0.25;
-            float b6 = 5.0 / (16.0 * pi) * 0.25;
-            float b8 = 15.0 / (16.0 * pi) * 0.25;
+            // times the cosine lobe's bands (pi, 2 pi/3, pi/4: the irradiance)
+            float b0 = 1.0 / (4.0 * pi) * pi;
+            float b1 = 3.0 / (4.0 * pi) * (2.0 * pi / 3.0);
+            float b4 = 15.0 / (4.0 * pi) * (pi / 4.0);
+            float b6 = 5.0 / (16.0 * pi) * (pi / 4.0);
+            float b8 = 15.0 / (16.0 * pi) * (pi / 4.0);
 
             for (int texel = index; texel < 6 * n * n; texel += 128)
             {

@@ -36,7 +36,7 @@ namespace Stride.Atmosphere.Fog
         stage Buffer<float4> FogParticles;
         // The sky capture's averages (see SkySphericalHarmonics: [10] = upper hemisphere, [11] = lower)
         stage Buffer<float4> FogSkyLighting;
-        stage Texture2D<float> FogCloudShadow;
+        stage Texture2D<float2> FogCloudShadow;
 
         stage SamplerState FogLinearClamp
         {
@@ -251,7 +251,8 @@ namespace Stride.Atmosphere.Fog
             float3 L = FogCloudShadowLight.xyz;
             float2 xz = position.xz - L.xz / max(L.y, 0.01) * (position.y - FogCloudShadowLight.w);
             float2 uv = (xz - FogCloudShadowRegion.xy) * FogCloudShadowRegion.z;
-            float transmittance = FogCloudShadow.SampleLevel(FogLinearClamp, uv, 0);
+            // (the direct beam: the shafts between the clouds)
+            float transmittance = FogCloudShadow.SampleLevel(FogLinearClamp, uv, 0).y;
             return lerp(1.0, transmittance, FogCloudShadowRegion.w);
         }
 

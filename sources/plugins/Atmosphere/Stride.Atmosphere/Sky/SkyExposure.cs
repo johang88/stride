@@ -55,7 +55,7 @@ internal sealed class SkyExposure : IDisposable
         parameters.Set(SkyExposureMeterKeys.SkyExposureHarmonics, harmonics);
         var shadows = cloudShadows.Texture;
         parameters.Set(SkyExposureMeterKeys.SkyExposureCloudShadow, shadows ?? context.GraphicsDevice.GetSharedWhiteTexture());
-        parameters.Set(SkyExposureMeterKeys.SkyExposureShadowRegion, shadows != null ? new Vector4(cloudShadows.Region.X, cloudShadows.Region.Y, cloudShadows.Region.Z, 1) : Vector4.Zero);
+        parameters.Set(SkyExposureMeterKeys.SkyExposureShadowRegion, shadows != null ? cloudShadows.Region : Vector4.Zero);
         parameters.Set(SkyExposureMeterKeys.SkyExposureLight, new Vector4(lightDirection, lightLuminance));
         parameters.Set(SkyExposureMeterKeys.SkyExposureEye, eye);
         parameters.Set(SkyExposureMeterKeys.SkyExposureSeaLevel, cloudShadows.LightDirection.W);

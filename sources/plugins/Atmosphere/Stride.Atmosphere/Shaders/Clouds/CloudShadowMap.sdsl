@@ -6,10 +6,12 @@ namespace Stride.Atmosphere
     /// <summary>
     /// Top-down map of the transmittance of the light through the clouds around the camera: each texel marches from the
     /// ground at sea level up along the light through the low and middle layers (without the fine detail).
+    /// R = the light reaching the ground (the beam and the light the clouds scatter on down), G = the beam (the shafts in
+    /// the fog between the clouds).
     /// </summary>
     shader CloudShadowMap : ComputeShaderBase, CloudCommon
     {
-        stage RWTexture2D<float> CloudShadowOutput;
+        stage RWTexture2D<float2> CloudShadowOutput;
 
         cbuffer PerDispatch
         {
@@ -28,7 +30,7 @@ namespace Stride.Atmosphere
             float3 L = CloudLightDirection;
             if (L.y < 0.01)
             {
-                CloudShadowOutput[texel] = 1.0;
+                CloudShadowOutput[texel] = float2(1.0, 1.0);
                 return;
             }
 
@@ -48,9 +50,13 @@ namespace Stride.Atmosphere
                 density += MidDensity(position, altitude, 150.0, false, heightFraction, profile) * CloudMidShape.x;
                 opticalDepth += density * dt;
             }
-            // Light scattered on through the clouds keeps some brightness under even deep ones (multiple scattering)
-            float transmittance = max(exp(-opticalDepth), 0.18 * exp(-opticalDepth * 0.08));
-            CloudShadowOutput[texel] = transmittance;
+            float beam = exp(-opticalDepth);
+            // Clouds scatter the light they stop rather than absorb it: much of it still reaches the ground below them, from
+            // the bright cloud base (a share that only the deepest storm clouds swallow)
+            float reaching = beam + (1.0 - beam) * 0.45 * exp(-opticalDepth * 0.05);
+            // (in the fog: the beam, with a little multiple scattering, so the shafts between the clouds stand out)
+            float shafts = max(beam, 0.18 * exp(-opticalDepth * 0.08));
+            CloudShadowOutput[texel] = float2(reaching, shafts);
         }
     };
 }

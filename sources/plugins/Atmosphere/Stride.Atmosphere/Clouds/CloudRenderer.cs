@@ -55,7 +55,8 @@ internal sealed class CloudRenderer : RendererCoreBase
     private double lastTime = double.NaN;
 
     /// <summary>
-    /// Top-down transmittance of the sunlight through the clouds around the camera (see <see cref="ShadowRegion"/>).
+    /// Top-down transmittance of the sunlight through the clouds around the camera (see <see cref="ShadowRegion"/>):
+    /// R = the light reaching the ground (scattered light included), G = the direct beam.
     /// </summary>
     public Texture ShadowMap => shadowMap;
 
@@ -200,7 +201,7 @@ internal sealed class CloudRenderer : RendererCoreBase
         if (shadowMap == null || shadowMap.Width != size)
         {
             shadowMap?.Dispose();
-            shadowMap = Texture.New2D(Context.GraphicsDevice, size, size, PixelFormat.R16_Float, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
+            shadowMap = Texture.New2D(Context.GraphicsDevice, size, size, PixelFormat.R16G16_Float, TextureFlags.ShaderResource | TextureFlags.UnorderedAccess);
             shadowMap.Name = "CloudShadowMap";
         }
 
