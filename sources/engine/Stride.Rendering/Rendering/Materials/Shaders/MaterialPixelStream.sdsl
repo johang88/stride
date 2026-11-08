@@ -27,11 +27,12 @@ namespace Stride.Rendering.Materials
         // Occlusion attributes
         stage stream float  matAmbientOcclusion;
 
-        // Light found in screen space (rgb radiance, a confidence 0-1), which the sky light blends towards: reflected (the
-        // specular direction) and indirect (diffuse) light
+        // Light found in screen space. Reflected (the specular direction): rgb radiance, a confidence 0-1, which the sky's
+        // reflection blends towards. Indirect (diffuse): rgb the light found around, a the share of the sky's light still
+        // coming through
         stage stream float4 screenSpaceSpecular;
         stage stream float4 screenSpaceDiffuse;
-        // 1 on thin surfaces (blades, leaves): screen-space effects don't take them for solids behind their depth
+        // 1 on thin surfaces (blades, leaves): screen-space indirect light passes them, the ambient occlusion counts half on them
         stage stream float matThinSurface;
         stage stream float  matAmbientOcclusionDirectLightingFactor;
         stage stream float  matCavity;
@@ -86,7 +87,7 @@ namespace Stride.Rendering.Materials
 
             streams.matAmbientOcclusion = 1.0f;  // 0.0: occluded, 1.0: not occluded
             streams.screenSpaceSpecular = 0.0f;
-            streams.screenSpaceDiffuse = 0.0f;
+            streams.screenSpaceDiffuse = float4(0.0f, 0.0f, 0.0f, 1.0f);
             streams.matThinSurface = 0.0f;
             streams.matAmbientOcclusionDirectLightingFactor = 0.0f;
 

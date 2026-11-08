@@ -32,8 +32,9 @@ namespace Stride.Rendering.Lights
             sampleDirection = float3(sampleDirection.xy, -sampleDirection.z);
 
             streams.envLightDiffuseColor = lightDiffuseColor.Compute(sampleDirection).rgb * Intensity * ambientAccessibility;
-            // Indirect light found in screen space replaces the sky's where it's trusted
-            streams.envLightDiffuseColor = lerp(streams.envLightDiffuseColor, streams.screenSpaceDiffuse.rgb, streams.screenSpaceDiffuse.a);
+            // Indirect light found in screen space: the share of the sky's light still coming through (a), and the light
+            // found around (rgb)
+            streams.envLightDiffuseColor = streams.envLightDiffuseColor * streams.screenSpaceDiffuse.a + streams.screenSpaceDiffuse.rgb;
 
             if (streams.subsurfaceLightingAmount > 0.0)
             {

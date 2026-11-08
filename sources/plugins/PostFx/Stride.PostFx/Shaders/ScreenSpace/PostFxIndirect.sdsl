@@ -129,11 +129,13 @@ namespace Stride.PostFx
                     float3 hit = origin + direction * farT;
                     float2 hitUv = ViewToUv(hit);
                     float behind = hit.z - IndirectDistance.SampleLevel(IndirectPointClamp, hitUv, 0);
-                    // A surface there, not the gap behind a thin one (then the ray goes on). Blades and leaves are thin
-                    // for sure: only a ray meeting one closely stops (taking them for solids blackened the foot of grass)
+                    // A surface there, not the gap behind a thin one (then the ray goes on). Blades and leaves don't stop
+                    // rays at all: the depth only holds the nearest layer of them, and light gets through and between
+                    // them, so taken as solids they hid most of the sky in grass and blackened it from the root up (their
+                    // own light is small; the ambient occlusion keeps the darkening of the clumps)
                     float thin = IndirectSurfaces.Load(int3(min(int2(hitUv * ViewSize.xy), int2(ViewSize.xy) - 1), 0)).a;
-                    float thickness = thin > 0.5 && thin < 0.9 ? 0.02 + 0.002 * hit.z : 0.15 + 0.03 * hit.z + (farT - nearT) * 2.0;
-                    if (behind < thickness)
+                    float thickness = 0.15 + 0.03 * hit.z + (farT - nearT) * 2.0;
+                    if (behind < thickness && !(thin > 0.5 && thin < 0.9))
                     {
                         float3 light = IndirectScene.SampleLevel(IndirectLinearClamp, hitUv, 0).rgb;
                         light = any(isnan(light)) ? 0.0 : max(light, 0.0);

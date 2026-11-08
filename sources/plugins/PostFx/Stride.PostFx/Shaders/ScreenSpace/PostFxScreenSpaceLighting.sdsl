@@ -42,10 +42,14 @@ namespace Stride.PostFx
             float2 uv = streams.ShadingPosition.xy * PostFxScreenSize.zw;
             // (the material's own occlusion: the indirect light found on screen has the screen's occlusion in it already)
             float materialOcclusion = streams.matAmbientOcclusion;
+            float screenOcclusion = 1.0;
 
             if (PostFxAmbientOcclusionStrength > 0.0)
             {
-                float occlusion = lerp(1.0, PostFxAmbientOcclusion.SampleLevel(PostFxScreenLinear, uv, 0).r, PostFxAmbientOcclusionStrength);
+                // (half on thin surfaces: a blade or leaf takes light through both faces, the occlusion only saw around the
+                // one facing the eye)
+                float strength = PostFxAmbientOcclusionStrength * (1.0 - 0.5 * saturate(streams.matThinSurface));
+                float occlusion = lerp(1.0, PostFxAmbientOcclusion.SampleLevel(PostFxScreenLinear, uv, 0).r, strength);
                 // The light bouncing around within the occluded spots (Jimenez et al. 2016: bright surfaces darken less)
                 float albedo = dot(streams.matDiffuseVisible, float3(0.2126, 0.7152, 0.0722));
                 float a = 2.0404 * albedo - 0.3324;
@@ -53,6 +57,7 @@ namespace Stride.PostFx
                 float c = 2.7552 * albedo + 0.6903;
                 occlusion = max(occlusion, ((occlusion * a + b) * occlusion + c) * occlusion);
                 streams.matAmbientOcclusion *= occlusion;
+                screenOcclusion = occlusion;
             }
 
             if (PostFxReflectionStrength > 0.0 || PostFxIndirectStrength > 0.0)
@@ -82,7 +87,12 @@ namespace Stride.PostFx
                     // pixels that didn't keeps the light found)
                     float4 indirect = PostFxIndirect.SampleLevel(PostFxScreenLinear, previousUv, 0);
                     float3 light = indirect.rgb / max(indirect.a, 1e-4);
-                    streams.screenSpaceDiffuse = float4(light * materialOcclusion, saturate(indirect.a * indirectOnScreen * PostFxIndirectStrength));
+                    float found = saturate(indirect.a * indirectOnScreen * PostFxIndirectStrength);
+                    // The sky's light comes through where the rays found nothing. The ambient occlusion sees the same
+                    // surroundings (multiplied, both would darken for the same blades): it only darkens the sky's light
+                    // further where it finds more of it hidden than the rays did
+                    float sky = min(screenOcclusion, 1.0 - found) / max(screenOcclusion, 1e-4);
+                    streams.screenSpaceDiffuse = float4(light * materialOcclusion * found, sky);
                 }
             }
         }
